@@ -1147,6 +1147,33 @@ int d2_native_rect(P_TAG *tag)
     tri_core(&q[1], &q[2], &q[3], activeDrawEnv.tpage, clut);
     return len;
 }
+static void d2_line_segment(short ax, short ay, short bx, short by, uint32_t ca, uint32_t cb, BlendMode bm)
+{
+    if (ax > bx || (ax == bx && ay > by)) { short t=ax; ax=bx; bx=t; t=ay; ay=by; by=t; uint32_t c=ca; ca=cb; cb=c; }
+    const int ox=activeDrawEnv.ofs[0]-activeDispEnv.disp.x, oy=activeDrawEnv.ofs[1]-activeDispEnv.disp.y;
+    int x[4]={ax,bx,bx,ax}, y[4]={ay,by,by,ay};
+    if (bx-ax > (by>ay ? by-ay : ay-by)) { x[1]++; x[2]++; y[2]++; y[3]++; }
+    else { y[1]++; y[2]++; x[2]++; x[3]++; }
+    PV q[4];
+    for(int i=0;i<4;i++){ q[i].X4=((x[i]+ox)*s_ctxSx16)>>14; q[i].Y4=((y[i]+oy)*s_ctxSy16)>>14; q[i].rgba=(i==0||i==3)?ca:cb; q[i].s32=q[i].t32=0; }
+    begin_batch(false,bm); tri_core(&q[0],&q[1],&q[3],0,0); tri_core(&q[1],&q[2],&q[3],0,0);
+}
+int d2_native_line(P_TAG *tag)
+{
+    const int type=tag->code&0xF0, sub=tag->code&0x0C;
+    if ((type!=0x40 && type!=0x50) || (type==0x50 && sub!=0)) return 0;
+    const int len=type==0x50?4:(sub==0?3:sub==8?5:6);
+    if (!activeDrawEnv.dfe || !s_scene || !ensure_slots()) return len;
+    d2_flush_splits();
+    const RECT16 &c=activeDrawEnv.clip;
+    if(c.x!=s_clipKey[0]||c.y!=s_clipKey[1]||c.w!=s_clipKey[2]||c.h!=s_clipKey[3]||(activeDispEnv.disp.x|(activeDispEnv.disp.w<<16))!=s_clipKey[4]||(activeDispEnv.disp.y|(activeDispEnv.disp.h<<16))!=s_clipKey[5]) GR_SetupClipMode(&c,1);
+    const BlendMode bm=(tag->code&2)?(BlendMode)(((activeDrawEnv.tpage>>5)&3)+1):BM_NONE;
+    if(type==0x50){ LINE_G2 *p=(LINE_G2*)tag; d2_line_segment(p->x0,p->y0,p->x1,p->y1,shade_rgba(p->r0,p->g0,p->b0),shade_rgba(p->r1,p->g1,p->b1),bm); }
+    else if(sub==0){ LINE_F2 *p=(LINE_F2*)tag; uint32_t c=shade_rgba(p->r0,p->g0,p->b0); d2_line_segment(p->x0,p->y0,p->x1,p->y1,c,c,bm); }
+    else if(sub==8){ LINE_F3 *p=(LINE_F3*)tag; uint32_t c=shade_rgba(p->r0,p->g0,p->b0); d2_line_segment(p->x0,p->y0,p->x1,p->y1,c,c,bm); d2_line_segment(p->x1,p->y1,p->x2,p->y2,c,c,bm); }
+    else { LINE_F4 *p=(LINE_F4*)tag; uint32_t c=shade_rgba(p->r0,p->g0,p->b0); d2_line_segment(p->x0,p->y0,p->x1,p->y1,c,c,bm); d2_line_segment(p->x1,p->y1,p->x2,p->y2,c,c,bm); d2_line_segment(p->x2,p->y2,p->x3,p->y3,c,c,bm); }
+    return len;
+}
 int d2_direct_poly(P_TAG *tag)
 {
 #ifdef D2_DPROF
