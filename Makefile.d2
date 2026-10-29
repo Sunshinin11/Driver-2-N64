@@ -1,0 +1,101 @@
+# Driver 2 (REDRIVER2) para Nintendo 64 - libdragon.   Uso: make -f Makefile.d2   (ou: bash build.sh)
+# E1: o jogo (Game/**/*.c, compilado como C++ - igual ao premake do projeto original) + camada N64 (port/n64).
+BUILD_DIR = build_d2
+OBJ_DIR   = $(BUILD_DIR)/o
+N64_ROM_SAVETYPE = none
+N64_INST ?= /opt/libdragon
+include $(N64_INST)/include/n64.mk
+N64_CXXFLAGS ?= $(N64_CFLAGS)
+.DEFAULT_GOAL := all
+
+SRC  = port/redriver2/src_rebuild
+FS_DIR = filesystem_d2
+GAME_OPT ?= -Os
+
+# xaplay.c precisa de OpenAL (audio de CD no PC): sera substituido por camada N64 propria.
+GAME_SRCS := $(filter-out $(SRC)/Game/C/xaplay.c,$(wildcard $(SRC)/Game/C/*.c)) \
+             $(wildcard $(SRC)/Game/ASM/*.c) $(wildcard $(SRC)/Game/Frontend/*.c) $(wildcard $(SRC)/Game/*.c)
+GAME_OBJS := $(patsubst %.c,$(OBJ_DIR)/%.o,$(GAME_SRCS))
+# Partes do PsyCross (emulacao das bibliotecas do PS1) que ja servem no N64 sem mudanca: matematica 3D (GTE) e utilitarios.
+PSYX_C   := $(addprefix $(SRC)/PsyCross/src/psx/,ABS.C INLINE_C.C LIBGTE.C LIBAPI.C LIBGPU.C LIBPAD.C LIBSN.C LIBMCRD.C LIBSPU.C)
+PSYX_CPP := $(addprefix $(SRC)/PsyCross/src/gte/,PsyX_GTE.cpp half_float.cpp) $(SRC)/PsyCross/src/gpu/PsyX_GPU.cpp
+PSYX_OBJS := $(patsubst %.C,$(OBJ_DIR)/%.o,$(PSYX_C)) $(patsubst %.cpp,$(OBJ_DIR)/%.o,$(PSYX_CPP))
+PLAT_C    := port/n64/main_n64.c port/n64/gen_stubs.c port/n64/psyx_n64.c port/n64/sys_n64.c
+PLAT_CXX  := port/n64/d2_entry.cpp port/n64/psyx_backend.cpp port/n64/libetc_n64.cpp port/n64/libcd_n64.cpp port/n64/fs_n64.cpp port/n64/psyx_rdp.cpp port/n64/stubs_n64.cpp port/n64/gte_native.cpp port/n64/d2_vtxcache.cpp
+PLAT_OBJS := $(patsubst %.c,$(OBJ_DIR)/%.o,$(PLAT_C)) $(patsubst %.cpp,$(OBJ_DIR)/%.o,$(PLAT_CXX))
+OBJS := $(GAME_OBJS) $(PSYX_OBJS) $(PLAT_OBJS)
+
+D2_INC = -I$(SRC)/Game -I$(SRC)/PsyCross/include -I$(SRC)/PsyCross/include/psx -Iport/compat
+N64_LDFLAGS += $(D2_LDEXTRA)
+# funcoes quentes juntas no inicio do .text (o cache de instrucoes do VR4300 tem 16 KB: espalhadas, elas se expulsam). Gerado por tools/hot.py.
+HOT_LD ?= hot.ld
+ifneq ($(wildcard $(HOT_LD)),)
+N64_LDFLAGS += --section-ordering-file=$(HOT_LD)
+endif
+# Otimizacoes de desempenho (ver docs/OTIMIZACAO_N64.md). Para medir sem elas: make ... D2_OPT=
+D2_OPT ?= -DD2_DIRECT -DD2_NOSUBQ -DD2_GTE_NATIVE -DD2_VTXCACHE -DD2_LEANLOAD -DD2_FASTOT
+D2_DEFS = -DUSE_PGXP=0 -DNTSC_VERSION -DD2_N64=1 -DBUILD_CONFIGURATION_STRING=\"n64\" $(D2_OPT) $(D2_EXTRA)
+CXX_GAME = -include port/compat/d2_n64_compat.h -include stdarg.h -x c++ -std=gnu++14 -fpermissive -w -fno-exceptions -fno-rtti $(D2_DEFS) $(D2_INC) -MMD -MP
+
+# Margem de seguranca de video (pontos do VI, base 640x480). 0 = imagem inteira (emulador).
+OVERSCAN_X ?= 36
+OVERSCAN_Y ?= 28
+$(OBJ_DIR)/port/n64/main_n64.o: N64_CFLAGS += -DN64_OVERSCAN_X=$(OVERSCAN_X) -DN64_OVERSCAN_Y=$(OVERSCAN_Y)
+
+# otimizacao -O2 so para alguns arquivos (O2_LIST = nomes base separados por espaco, ex.: "draw mdraw")
+O2_LIST ?= draw mdraw map cell tile models sky shadow overlay
+O2_FLAGS ?= -O2 -fno-strict-aliasing -fwrapv -fno-delete-null-pointer-checks
+O2_OBJS := $(foreach n,$(O2_LIST),$(filter %/$(n).o,$(GAME_OBJS)))
+$(O2_OBJS): GAME_OPT := $(O2_FLAGS)
+# jogo: .c compilado como C++
+$(GAME_OBJS): $(OBJ_DIR)/%.o: %.c
+	@mkdir -p $(dir $@)
+	@echo "    [CXX] $<"
+	$(N64_CXX) $(N64_CXXFLAGS) $(GAME_OPT) $(CXX_GAME) -c $< -o $@
+
+$(filter %.o,$(patsubst %.C,$(OBJ_DIR)/%.o,$(PSYX_C))): $(OBJ_DIR)/%.o: %.C
+	@mkdir -p $(dir $@)
+	@echo "    [CXX] $<"
+	$(N64_CXX) $(N64_CXXFLAGS) $(GAME_OPT) $(CXX_GAME) -c $< -o $@
+
+$(patsubst %.cpp,$(OBJ_DIR)/%.o,$(PSYX_CPP)): $(OBJ_DIR)/%.o: %.cpp
+	@mkdir -p $(dir $@)
+	@echo "    [CXX] $<"
+	$(N64_CXX) $(N64_CXXFLAGS) -O2 $(CXX_GAME) -I$(SRC)/PsyCross/src -c $< -o $@
+
+$(OBJ_DIR)/port/n64/%.o: port/n64/%.c
+	@mkdir -p $(dir $@)
+	@echo "    [CC]  $<"
+	$(N64_CC) $(N64_CFLAGS) -std=gnu11 -MMD -MP -c $< -o $@
+
+$(OBJ_DIR)/port/n64/%.o: port/n64/%.cpp
+	@mkdir -p $(dir $@)
+	@echo "    [CXX] $<"
+	$(N64_CXX) $(N64_CXXFLAGS) $(D2_EXTRA) -std=gnu++14 -fpermissive -w -fno-exceptions -fno-rtti $(D2_DEFS) $(D2_INC) -I$(SRC)/PsyCross/src -include port/compat/d2_n64_compat.h -include stdarg.h -MMD -MP -c $< -o $@
+
+# DragonFS: arquivos do jogo extraidos do seu CD1 (nao entram no git). CITIES = cidades na ROM (CHICAGO,HAVANA,RIO,VEGAS).
+CD1     ?= $(or $(wildcard data/Driver2CD1.bin),$(wildcard data/install/Driver2CD1.bin),../ReDriver 2/data/install/Driver2CD1.bin)
+LANGDIR ?= $(or $(wildcard port/redriver2/data/DRIVER2/LANG),../ReDriver 2/data/DRIVER2/LANG)
+CITIES  ?= CHICAGO
+stage-data:
+	@mkdir -p $(FS_DIR)
+	@if [ -f "$(CD1)" ] || [ ! -d $(FS_DIR)/DRIVER2 ]; then python3 tools/extract_cd.py --cd1 "$(CD1)" --out $(FS_DIR) --cities "$(CITIES)" --lang-from "$(LANGDIR)"; fi
+
+$(BUILD_DIR)/d2_n64.dfs: stage-data
+	@mkdir -p $(dir $@)
+	@echo "    [DFS] $@"
+	$(N64_MKDFS) $@ $(FS_DIR)
+
+$(BUILD_DIR)/d2_n64.elf: $(OBJS)
+
+-include $(OBJS:.o=.d)
+
+d2_n64.z64: N64_ROM_TITLE = "DRIVER 2 N64"
+d2_n64.z64: $(BUILD_DIR)/d2_n64.dfs
+
+all: d2_n64.z64
+
+clean:
+	rm -rf $(BUILD_DIR) d2_n64.z64   # o filesystem_d2 (extraido do CD) fica
+
+.PHONY: all clean stage-data

@@ -1,0 +1,31 @@
+# ---- Compilacao, ROMs e binarios gerados ----
+build_d2/
+build*/
+filesystem_d2/
+filesystem*/
+*.z64
+*.v64
+*.n64
+*.elf
+*.dfs
+*.map
+*.o
+*.d
+*.log
+
+# ---- Arquivos temporarios e capturas do emulador ----
+*.ppm
+*.raw
+run1/
+b_*/
+prof_*/
+tmp*/
+capturas/
+*.bak*
+
+# ---- Motor REDRIVER2 / PsyCross (baixado/gerado via setup_engine.sh) ----
+port/redriver2/
+
+# ---- Formatos de video e midia PS1 irrelevantes ----
+*.str
+*.avi

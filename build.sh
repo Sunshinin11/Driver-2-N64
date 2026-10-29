@@ -1,0 +1,11 @@
+#!/usr/bin/env bash
+# bash build.sh        -> gera d2_n64.z64      bash build.sh clean -> limpa
+set -e
+cd "$(dirname "$0")"
+export N64_INST="${N64_INST:-/opt/libdragon}"
+export PATH="$N64_INST/bin:$PATH"
+[ -d port/redriver2/src_rebuild/Game ] || bash ./setup_engine.sh
+bash ./patch_engine.sh
+python3 tools/gen_stubs.py
+if [ "${1:-}" = "clean" ]; then exec make -f Makefile.d2 clean; fi
+exec make -k -f Makefile.d2 -j"$(nproc)" all "$@"
