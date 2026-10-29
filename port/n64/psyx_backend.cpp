@@ -8,7 +8,9 @@
 #include "PsyX/PsyX_globals.h"
 #include "PsyX/PsyX_render.h"
 #include "../redriver2/src_rebuild/PsyCross/src/audio/PsyX_SPUAL.h"
+#include <libdragon.h>
 #include <string.h>
+#include <stdlib.h>
 
 extern "C" {
 // --- ponte libdragon (sys_n64.c)
@@ -95,22 +97,123 @@ void GR_ReadVRAM(unsigned short *dst, int x, int y, int dst_w, int dst_h)
 }
 void d2_vram_touch(int x, int y, int w, int h);
 
-// --- audio (SPU) : mudo por enquanto
-int PsyX_SPUAL_InitSound() { return 1; }
-void PsyX_SPUAL_ShutdownSound() {}
-int PsyX_SPUAL_Alloc(int size) { static int top = 0x1000; int a = top; top += size; return a; }
-int PsyX_SPUAL_InitAlloc(int, char *) { return 0; }
+// --- audio (SPU) : memoria e vozes ADPCM do PS1 sobre o mixer RSP do libdragon
+#define D2_SPU_RAM_SIZE (512 * 1024)
+#define D2_SPU_VOICES 24
+static u_char s_spuRam[D2_SPU_RAM_SIZE] __attribute__((aligned(16)));
+static u_int s_spuTransfer, s_spuTop = 0x1000;
+static bool s_spuInited, s_spuMute;
+
+struct D2SpuVoice {
+    waveform_t wave;
+    u_int addr, loopAddr;
+    short volL, volR;
+    u_short pitch;
+};
+struct D2SpuDecode {
+    u_int start, block;
+    int next, s1, s2, nib;
+    short pcm[28];
+};
+static D2SpuVoice s_spuVoice[D2_SPU_VOICES];
+
+static void d2_spu_decode_block(D2SpuDecode *d)
+{
+    static const int f0[5] = { 0, 60, 115, 98, 122 };
+    static const int f1[5] = { 0, 0, -52, -55, -60 };
+    if (d->block + 16 > D2_SPU_RAM_SIZE) { memset(d->pcm, 0, sizeof d->pcm); return; }
+    const u_char *p = s_spuRam + d->block;
+    int shift = p[0] & 15, filter = p[0] >> 4;
+    if (shift > 12) shift = 12; if (filter > 4) filter = 0;
+    for (int i = 0; i < 28; i++)
+    {
+        int n = (p[2 + (i >> 1)] >> ((i & 1) * 4)) & 15;
+        if (n & 8) n -= 16;
+        int v = (n << 12) >> shift;
+        v += (d->s1 * f0[filter] + d->s2 * f1[filter] + 32) >> 6;
+        if (v > 32767) v = 32767; else if (v < -32768) v = -32768;
+        d->pcm[i] = (short)v; d->s2 = d->s1; d->s1 = v;
+    }
+}
+
+static void d2_spu_seek(D2SpuDecode *d, int pos)
+{
+    d->block = d->start; d->next = d->nib = d->s1 = d->s2 = 0;
+    while (d->next + 28 <= pos && d->block + 16 <= D2_SPU_RAM_SIZE)
+    { d2_spu_decode_block(d); d->block += 16; d->next += 28; }
+    d2_spu_decode_block(d); d->nib = pos - d->next;
+}
+
+static void d2_spu_read(void *ctx, samplebuffer_t *sbuf, int wpos, int wlen, bool seeking)
+{
+    D2SpuDecode *d = (D2SpuDecode *)ctx;
+    if (seeking || wpos != d->next + d->nib) d2_spu_seek(d, wpos);
+    short *out = (short *)samplebuffer_append(sbuf, wlen);
+    for (int i = 0; i < wlen; i++)
+    {
+        if (d->nib >= 28) { d->block += 16; d->next += 28; d->nib = 0; d2_spu_decode_block(d); }
+        out[i] = d->pcm[d->nib++];
+    }
+}
+
+static void d2_spu_shape(D2SpuVoice *v, int ch)
+{
+    int blocks = 0, loopBlock = -1; bool repeat = false;
+    for (u_int a = v->addr; a + 16 <= D2_SPU_RAM_SIZE && blocks < 32768; a += 16, blocks++)
+    {
+        int flags = s_spuRam[a + 1];
+        if (flags & 4) loopBlock = blocks;
+        if (flags & 1) { repeat = (flags & 2) != 0; blocks++; break; }
+    }
+    if (blocks <= 0) blocks = 1;
+    D2SpuDecode *d = (D2SpuDecode *)v->wave.ctx;
+    memset(d, 0, sizeof *d); d->start = v->addr; d2_spu_seek(d, 0);
+    v->wave.frequency = 44100.0f; v->wave.len = blocks * 28;
+    v->wave.loop_len = repeat ? (blocks - (loopBlock >= 0 ? loopBlock : 0)) * 28 : 0;
+    mixer_ch_play(ch, &v->wave);
+    mixer_ch_set_loop(ch, v->wave.loop_len != 0);
+}
+
+int PsyX_SPUAL_InitSound()
+{
+    if (s_spuInited) return 1;
+    audio_init(44100, 4); mixer_init(D2_SPU_VOICES);
+    for (int i = 0; i < D2_SPU_VOICES; i++)
+    {
+        D2SpuVoice *v = &s_spuVoice[i]; memset(v, 0, sizeof *v);
+        v->pitch = 4096; v->wave.name = "psx-adpcm"; v->wave.bits = 16; v->wave.channels = 1;
+        v->wave.frequency = 44100.0f; v->wave.read = d2_spu_read; v->wave.append_units = 28;
+        v->wave.ctx = malloc(sizeof(D2SpuDecode));
+    }
+    s_spuInited = true; return 1;
+}
+void PsyX_SPUAL_ShutdownSound() { if (s_spuInited) { mixer_close(); audio_close(); s_spuInited = false; } }
+int PsyX_SPUAL_Alloc(int size) { int a = (s_spuTop + 15) & ~15; if (a + size > D2_SPU_RAM_SIZE) return -1; s_spuTop = a + size; return a; }
+int PsyX_SPUAL_InitAlloc(int, char *) { s_spuTop = 0x1000; return 0; }
 void PsyX_SPUAL_Free(u_int) {}
-u_int PsyX_SPUAL_Write(u_char *, u_int size) { return size; }
-u_int PsyX_SPUAL_Read(u_char *, u_int size) { return size; }
-u_int PsyX_SPUAL_SetTransferStartAddr(u_int addr) { return addr; }
-void PsyX_SPUAL_GetVoiceVolume(int, short *l, short *r) { *l = *r = 0; }
-void PsyX_SPUAL_GetVoicePitch(int, u_short *p) { *p = 0; }
-void PsyX_SPUAL_SetVoiceAttr(SpuVoiceAttr *) {}
-void PsyX_SPUAL_SetKey(int, u_int) {}
-int PsyX_SPUAL_GetKeyStatus(u_int) { return 0; }
-void PsyX_SPUAL_GetAllKeysStatus(char *s) { memset(s, 0, 24); }
-int PsyX_SPUAL_SetMute(int) { return 0; }
+u_int PsyX_SPUAL_Write(u_char *src, u_int size) { if (s_spuTransfer >= D2_SPU_RAM_SIZE) return 0; if (size > D2_SPU_RAM_SIZE - s_spuTransfer) size = D2_SPU_RAM_SIZE - s_spuTransfer; memcpy(s_spuRam + s_spuTransfer, src, size); s_spuTransfer += size; return size; }
+u_int PsyX_SPUAL_Read(u_char *dst, u_int size) { if (s_spuTransfer >= D2_SPU_RAM_SIZE) return 0; if (size > D2_SPU_RAM_SIZE - s_spuTransfer) size = D2_SPU_RAM_SIZE - s_spuTransfer; memcpy(dst, s_spuRam + s_spuTransfer, size); s_spuTransfer += size; return size; }
+u_int PsyX_SPUAL_SetTransferStartAddr(u_int addr) { s_spuTransfer = addr; return addr; }
+void PsyX_SPUAL_GetVoiceVolume(int n, short *l, short *r) { if (n < 0 || n >= D2_SPU_VOICES) { *l = *r = 0; } else { *l = s_spuVoice[n].volL; *r = s_spuVoice[n].volR; } }
+void PsyX_SPUAL_GetVoicePitch(int n, u_short *p) { *p = n >= 0 && n < D2_SPU_VOICES ? s_spuVoice[n].pitch : 0; }
+void PsyX_SPUAL_SetVoiceAttr(SpuVoiceAttr *a)
+{
+    for (int n = 0; n < D2_SPU_VOICES; n++) if (a->voice & (1u << n))
+    {
+        D2SpuVoice *v = &s_spuVoice[n];
+        if (a->mask & SPU_VOICE_VOLL) v->volL = a->volume.left;
+        if (a->mask & SPU_VOICE_VOLR) v->volR = a->volume.right;
+        if (a->mask & SPU_VOICE_PITCH) v->pitch = a->pitch;
+        if (a->mask & SPU_VOICE_WDSA) v->addr = a->addr;
+        if (a->mask & SPU_VOICE_LSAX) v->loopAddr = a->loop_addr;
+        if (s_spuInited) { mixer_ch_set_vol(n, s_spuMute ? 0 : (float)v->volL / 16384.0f, s_spuMute ? 0 : (float)v->volR / 16384.0f); mixer_ch_set_freq(n, 44100.0f * v->pitch / 4096.0f); }
+    }
+}
+void PsyX_SPUAL_SetKey(int on, u_int bits) { if (!s_spuInited) return; for (int n = 0; n < D2_SPU_VOICES; n++) if (bits & (1u << n)) { if (on) d2_spu_shape(&s_spuVoice[n], n); else mixer_ch_stop(n); } }
+int PsyX_SPUAL_GetKeyStatus(u_int bits) { int r = 0; if (s_spuInited) for (int n = 0; n < D2_SPU_VOICES; n++) if ((bits & (1u << n)) && mixer_ch_playing(n)) r |= 1u << n; return r; }
+void PsyX_SPUAL_GetAllKeysStatus(char *s) { for (int n = 0; n < D2_SPU_VOICES; n++) s[n] = s_spuInited && mixer_ch_playing(n); }
+int PsyX_SPUAL_SetMute(int on) { int old = s_spuMute; s_spuMute = on != 0; for (int n = 0; n < D2_SPU_VOICES; n++) { D2SpuVoice *v = &s_spuVoice[n]; mixer_ch_set_vol(n, s_spuMute ? 0 : (float)v->volL / 16384.0f, s_spuMute ? 0 : (float)v->volR / 16384.0f); } return old; }
+void d2_audio_pump() { if (s_spuInited) mixer_try_play(); }
 int PsyX_SPUAL_SetReverb(int) { return 0; }
 int PsyX_SPUAL_GetReverbState() { return 0; }
 u_int PsyX_SPUAL_SetReverbVoice(int, u_int) { return 0; }

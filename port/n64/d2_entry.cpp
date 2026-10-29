@@ -15,7 +15,10 @@ static OTTYPE g_OT2[OTSIZE];
 static char g_PrimTab1[PRIMTAB_SIZE];
 static char g_PrimTab2[PRIMTAB_SIZE];
 static char g_SBank_buffer[0x50000];
-static char g_Replay_buffer[0x50000];
+// No mapa de memoria original do PS1 o replay ocupa somente o fim da RAM
+// (0x1FABBC..0x200000). Mantemos uma pequena folga e devolvemos o excesso ao
+// mixer/heap do N64.
+static char g_Replay_buffer[0x10000];
 
 extern int gDrawDistance;
 extern int gUserLanguage;

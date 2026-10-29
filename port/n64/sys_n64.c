@@ -7,6 +7,7 @@ static void (*vbl_cb)(void);
 
 static volatile int last_present_vbl;
 static void d2_hang_report(void);
+extern void d2_audio_pump(void);
 
 static void vi_handler(void)
 {
@@ -26,6 +27,7 @@ void d2_sys_wait_vbl_until(int target)
     double t0 = d2_sys_now_ms();
     while ((vbl_count - target) < 0)
     {
+        d2_audio_pump();
         if (d2_sys_now_ms() - t0 > 100.0 * 4) break;
     }
 }
