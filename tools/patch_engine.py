@@ -13,6 +13,18 @@ def PM(path, macros, pattern, repl):
     REGEX.append((path, ('macro', set(macros), re.compile(pattern), repl), None))
 
 # ---- fontes ----
+for _old, _new in (
+    ('int ClearImage(RECT16* rect, u_char r, u_char g, u_char b)', 'int PsyX_compat_ClearImage(RECT16* rect, u_char r, u_char g, u_char b)'),
+    ('int ClearImage2(RECT16* rect, u_char r, u_char g, u_char b)', 'int PsyX_compat_ClearImage2(RECT16* rect, u_char r, u_char g, u_char b)'),
+    ('int DrawSync(int mode)', 'int PsyX_compat_DrawSync(int mode)'),
+    ('int LoadImage(RECT16* rect, u_long* p)', 'int PsyX_compat_LoadImage(RECT16* rect, u_long* p)'),
+    ('int LoadImage2(RECT16* rect, u_long* p)', 'int PsyX_compat_LoadImage2(RECT16* rect, u_long* p)'),
+    ('int MoveImage(RECT16* rect, int x, int y)', 'int PsyX_compat_MoveImage(RECT16* rect, int x, int y)'),
+    ('void DrawOTagEnv(u_long* p, DRAWENV* env)', 'void PsyX_compat_DrawOTagEnv(u_long* p, DRAWENV* env)'),
+    ('void DrawOTag(u_long* p)', 'void PsyX_compat_DrawOTag(u_long* p)'),
+    ('void DrawPrim(void* p)', 'void PsyX_compat_DrawPrim(void* p)'),
+): P('PsyCross/src/psx/LIBGPU.C', _old, _new)
+
 P('Game/C/pres.c',
   "\tnchars = *(int *)file;\n\tfile += sizeof(int);\n\n\t// copy character info",
   "\tnchars = (int)d2_rd32(file);\n\tfile += sizeof(int);\n\n\t// copy character info")

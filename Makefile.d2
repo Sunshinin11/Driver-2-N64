@@ -21,7 +21,7 @@ PSYX_C   := $(addprefix $(SRC)/PsyCross/src/psx/,ABS.C INLINE_C.C LIBGTE.C LIBAP
 PSYX_CPP := $(addprefix $(SRC)/PsyCross/src/gte/,PsyX_GTE.cpp half_float.cpp) $(SRC)/PsyCross/src/gpu/PsyX_GPU.cpp
 PSYX_OBJS := $(patsubst %.C,$(OBJ_DIR)/%.o,$(PSYX_C)) $(patsubst %.cpp,$(OBJ_DIR)/%.o,$(PSYX_CPP))
 PLAT_C    := port/n64/main_n64.c port/n64/gen_stubs.c port/n64/psyx_n64.c port/n64/sys_n64.c
-PLAT_CXX  := port/n64/d2_entry.cpp port/n64/psyx_backend.cpp port/n64/libetc_n64.cpp port/n64/libcd_n64.cpp port/n64/fs_n64.cpp port/n64/psyx_rdp.cpp port/n64/stubs_n64.cpp port/n64/gte_native.cpp port/n64/d2_vtxcache.cpp
+PLAT_CXX  := port/n64/d2_entry.cpp port/n64/psyx_backend.cpp port/n64/libetc_n64.cpp port/n64/libcd_n64.cpp port/n64/fs_n64.cpp port/n64/psyx_rdp.cpp port/n64/n64_gpu_api.cpp port/n64/stubs_n64.cpp port/n64/gte_native.cpp port/n64/d2_vtxcache.cpp
 PLAT_OBJS := $(patsubst %.c,$(OBJ_DIR)/%.o,$(PLAT_C)) $(patsubst %.cpp,$(OBJ_DIR)/%.o,$(PLAT_CXX))
 OBJS := $(GAME_OBJS) $(PSYX_OBJS) $(PLAT_OBJS)
 

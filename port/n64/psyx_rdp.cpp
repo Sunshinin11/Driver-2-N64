@@ -1224,7 +1224,7 @@ int d2_native_vram_packet(P_TAG *tag)
     }
     return 0;
 }
-static int d2_native_dispatch(P_TAG *tag)
+extern "C" int d2_native_dispatch(P_TAG *tag)
 {
     const int type=tag->code&0xF0;
     if(tag->code==0xB3) return d2_native_ft4((POLY_FT4*)tag);
@@ -1236,12 +1236,17 @@ static int d2_native_dispatch(P_TAG *tag)
     if(type==0xE0) return d2_native_drawenv(tag);
     return 0;
 }
-extern "C" int d2_psyx_fallback(P_TAG *tag);
+extern "C" int d2_native_draw_prim(P_TAG *tag)
+{
+    const int n=d2_native_dispatch(tag);
+    if(n<=0) debugf("[native-gpu] primitiva isolada desconhecida code=%02x\n",tag ? tag->code : 0);
+    return n;
+}
 extern "C" void d2_native_draw_ot(u_long *ot)
 {
     if(!ot) return;
     P_TAG *base=(P_TAG*)ot;
-    unsigned nodes=0, fallbacks=0;
+    unsigned nodes=0;
     for(;;) {
         if(++nodes > 65536) { debugf("[native-ot] ciclo ou OT invalida\n"); break; }
         const unsigned words=getlen(base);
@@ -1251,7 +1256,6 @@ extern "C" void d2_native_draw_ot(u_long *ot)
             while(cur<end) {
                 P_TAG *tag=(P_TAG*)cur;
                 int n=d2_native_dispatch(tag);
-                if(!n) { fallbacks++; n=d2_psyx_fallback(tag); }
                 uintptr_t next=cur+(n+P_LEN)*sizeof(u_int);
                 if(n<=0 || next<=cur || next>end) { debugf("[native-ot] pacote invalido code=%02x len=%d rest=%u\n",tag->code,n,(unsigned)(end-cur)); cur=end; break; }
                 cur=next;
@@ -1262,7 +1266,6 @@ extern "C" void d2_native_draw_ot(u_long *ot)
         if(!next || next==base) { debugf("[native-ot] elo invalido\n"); break; }
         base=next;
     }
-    if(fallbacks) debugf("[native-ot] fallbacks=%u\n",fallbacks);
 }
 int d2_direct_poly(P_TAG *tag)
 {
