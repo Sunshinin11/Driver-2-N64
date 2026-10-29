@@ -88,6 +88,10 @@ static inline int vc_avsz4(unsigned int z0, unsigned int z1, unsigned int z2, un
 }
 static inline void vc_campos(int i, SVECTOR *out) { out->vx = s_vcCam[i][0]; out->vy = s_vcCam[i][1]; out->vz = s_vcCam[i][2]; out->pad = 0; }
 
+// Pacote próprio do N64. Mantém o tamanho/layout compacto do FT4 para caber na
+// primtab e na OT original, mas não representa um comando da GPU do PS1.
+static inline void d2n_set_ft4(POLY_FT4 *p) { setlen(p, 9); setcode(p, 0xB3); }
+
 // ---------------------------------------------------------------- Tile1x1 (chao, calcadas, agua)
 void Tile1x1(MODEL *model)
 {
@@ -115,7 +119,7 @@ void Tile1x1(MODEL *model)
 			prims = (POLY_FT4 *)plotContext.primptr;
 
 			d2_st_b4(&prims->r0, plotContext.colour);
-			setPolyFT4(prims);
+			d2n_set_ft4(prims);
 
 			d2_st_ss(&prims->x0, A->xy);
 			d2_st_ss(&prims->x1, B->xy);
@@ -226,7 +230,7 @@ void drawMesh(MVERTEX (*VSP)[5][5], int m, int n, _pct *pc)
 	for (int index = 0; index < numPolys; index++)
 	{
 		const unsigned char *mp = numPolys == 1 ? s_meshMap[0] : s_meshMap[index];
-		setPolyFT4(prim);
+		d2n_set_ft4(prim);
 		d2_st_b4(&prim->r0, pc->colour);
 
 		int opz = vc_nclip(xy[mp[0]], xy[mp[1]], xy[mp[2]]);
@@ -352,7 +356,7 @@ void PlotBuildingModel(MODEL *model, int rot, _pct *pc)
 			pc->clut = (*pc->ptexture_cluts)[polys->texture_set][polys->texture_id];
 
 			prims = (POLY_FT4 *)pc->primptr;
-			setPolyFT4(prims);
+			d2n_set_ft4(prims);
 			d2_st_b4(&prims->r0, pc->colour);
 
 			d2_st_ss(&prims->x0, A->xy);
@@ -443,7 +447,7 @@ void PlotBuildingModelSubdivNxN(MODEL *model, int rot, _pct *pc, int n)
 			{
 				const VCEnt *D = vc_get(polys->v2);
 				prims = (POLY_FT4 *)pc->primptr;
-				setPolyFT4(prims);
+				d2n_set_ft4(prims);
 				d2_st_b4(&prims->r0, pc->colour);
 
 				d2_st_ss(&prims->x0, A->xy);

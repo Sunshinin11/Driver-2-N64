@@ -1080,6 +1080,34 @@ extern TextureID overrideTexture;
 void d2_flush_splits(void);           // PsyX_GPU.cpp: desenha o que ja estava em lotes (mantem a ordem da OT)
 static unsigned int s_dCnt;
 int d2_direct_poly_i(P_TAG *tag);
+int d2_native_ft4(POLY_FT4 *p)
+{
+    if (!activeDrawEnv.dfe || !s_scene) return 9;
+    if (!ensure_slots()) return 9;
+    d2_flush_splits();
+    const RECT16 &c = activeDrawEnv.clip;
+    if (c.x != s_clipKey[0] || c.y != s_clipKey[1] || c.w != s_clipKey[2] || c.h != s_clipKey[3] ||
+        (activeDispEnv.disp.x | (activeDispEnv.disp.w << 16)) != s_clipKey[4] ||
+        (activeDispEnv.disp.y | (activeDispEnv.disp.h << 16)) != s_clipKey[5]) GR_SetupClipMode(&c, 1);
+    activeDrawEnv.tpage = p->tpage;
+    s_texFormat = (TexFormat)((p->tpage >> 7) & 3);
+    begin_batch(s_texFormat != TF_32_BIT_RGBA, BM_NONE);
+    const int ofx = activeDrawEnv.ofs[0] - activeDispEnv.disp.x;
+    const int ofy = activeDrawEnv.ofs[1] - activeDispEnv.disp.y;
+    const short *xy[4] = { &p->x0, &p->x1, &p->x2, &p->x3 };
+    const unsigned char *uv[4] = { &p->u0, &p->u1, &p->u2, &p->u3 };
+    const uint32_t col = shade_rgba(p->r0, p->g0, p->b0);
+    PV q[4];
+    for (int i = 0; i < 4; i++)
+    {
+        q[i].X4 = ((xy[i][0] + ofx) * s_ctxSx16) >> 14;
+        q[i].Y4 = ((xy[i][1] + ofy) * s_ctxSy16) >> 14;
+        q[i].rgba = col; q[i].s32 = uv[i][0] << 5; q[i].t32 = uv[i][1] << 5;
+    }
+    tri_core(&q[0], &q[1], &q[2], p->tpage, p->clut);
+    tri_core(&q[1], &q[2], &q[3], p->tpage, p->clut);
+    return 9;
+}
 int d2_direct_poly(P_TAG *tag)
 {
 #ifdef D2_DPROF
