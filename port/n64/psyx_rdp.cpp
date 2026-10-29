@@ -1194,6 +1194,14 @@ int d2_native_drawenv(P_TAG *tag)
     }
     return done;
 }
+int d2_native_psyx(P_TAG *tag)
+{
+    /* Pacotes B1/B2 sao extensoes do port para PC, nao comandos do GPU do PS1. */
+    const int sub=tag->code&15;
+    if(sub==1) { overrideTexture=0; return 2; }
+    if(sub==2) return 2; /* marcador textual de debug */
+    return 0;
+}
 int d2_direct_poly(P_TAG *tag)
 {
 #ifdef D2_DPROF
