@@ -605,6 +605,10 @@ P('PsyCross/src/gpu/PsyX_GPU.cpp',
   "int ParsePrimitive(P_TAG* polyTag)\n{",
   "extern \"C\" int d2_native_ft4(POLY_FT4*);\nextern \"C\" int d2_native_rect(P_TAG*);\nextern \"C\" int d2_native_line(P_TAG*);\nextern \"C\" int d2_native_drawenv(P_TAG*);\nextern \"C\" int d2_native_psyx(P_TAG*);\nextern \"C\" int d2_native_vram_packet(P_TAG*);\nint ParsePrimitive(P_TAG* polyTag)\n{\n#ifdef D2_DIRECT\n\tif (polyTag->code == 0xB3) return d2_native_ft4((POLY_FT4*)polyTag);\n\tif ((polyTag->code & 0xF0) == 0x00 || (polyTag->code & 0xF0) == 0xA0) { int n=d2_native_vram_packet(polyTag); if (n) return n; }\n\tif ((polyTag->code & 0xF0) == 0x20 || (polyTag->code & 0xF0) == 0x30) { int n = d2_direct_poly(polyTag); if (n) return n; }\n\tif ((polyTag->code & 0xF0) == 0x40 || (polyTag->code & 0xF0) == 0x50) { int n = d2_native_line(polyTag); if (n) return n; }\n\tif ((polyTag->code & 0xF0) == 0x60 || (polyTag->code & 0xF0) == 0x70) { int n = d2_native_rect(polyTag); if (n) return n; }\n\tif ((polyTag->code & 0xF0) == 0xB0) { int n = d2_native_psyx(polyTag); if (n) return n; }\n\tif ((polyTag->code & 0xF0) == 0xE0) return d2_native_drawenv(polyTag);\n\tif (g_vertexIndex > MAX_VERTEX_BUFFER_SIZE - 64) d2_flush_splits();\n#endif")
 
+P('PsyCross/src/gpu/PsyX_GPU.cpp',
+  "void ParsePrimitivesLinkedList(u_long* p, int singlePrimitive)\n{",
+  "extern \"C\" void d2_native_draw_ot(u_long* p);\nvoid ParsePrimitivesLinkedList(u_long* p, int singlePrimitive)\n{\n#ifdef D2_NATIVE_OT\n\tif (!singlePrimitive) { d2_native_draw_ot(p); return; }\n#endif")
+
 # ---- Fase 1.3: OT enxuta (D2_FASTOT) ----
 # ClearOTagR: duas palavras por entrada (endereco da anterior + len/pgxp zerados) em vez de escrita de campo de bits
 P('PsyCross/src/psx/LIBGPU.C',

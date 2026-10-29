@@ -1080,6 +1080,7 @@ extern TextureID overrideTexture;
 void d2_flush_splits(void);           // PsyX_GPU.cpp: desenha o que ja estava em lotes (mantem a ordem da OT)
 static unsigned int s_dCnt;
 int d2_direct_poly_i(P_TAG *tag);
+int d2_direct_poly(P_TAG *tag);
 int d2_native_ft4(POLY_FT4 *p)
 {
     if (!activeDrawEnv.dfe || !s_scene) return 9;
@@ -1222,6 +1223,46 @@ int d2_native_vram_packet(P_TAG *tag)
         return 5;
     }
     return 0;
+}
+static int d2_native_dispatch(P_TAG *tag)
+{
+    const int type=tag->code&0xF0;
+    if(tag->code==0xB3) return d2_native_ft4((POLY_FT4*)tag);
+    if(type==0x00 || type==0xA0) return d2_native_vram_packet(tag);
+    if(type==0x20 || type==0x30) return d2_direct_poly(tag);
+    if(type==0x40 || type==0x50) return d2_native_line(tag);
+    if(type==0x60 || type==0x70) return d2_native_rect(tag);
+    if(type==0xB0) return d2_native_psyx(tag);
+    if(type==0xE0) return d2_native_drawenv(tag);
+    return 0;
+}
+extern "C" int d2_psyx_fallback(P_TAG *tag);
+extern "C" void d2_native_draw_ot(u_long *ot)
+{
+    if(!ot) return;
+    P_TAG *base=(P_TAG*)ot;
+    unsigned nodes=0, fallbacks=0;
+    for(;;) {
+        if(++nodes > 65536) { debugf("[native-ot] ciclo ou OT invalida\n"); break; }
+        const unsigned words=getlen(base);
+        if(words) {
+            if(words>32) debugf("[native-ot] bloco grande len=%u code=%02x\n",words,base->code);
+            uintptr_t cur=(uintptr_t)base, end=cur+(words+P_LEN)*sizeof(u_int);
+            while(cur<end) {
+                P_TAG *tag=(P_TAG*)cur;
+                int n=d2_native_dispatch(tag);
+                if(!n) { fallbacks++; n=d2_psyx_fallback(tag); }
+                uintptr_t next=cur+(n+P_LEN)*sizeof(u_int);
+                if(n<=0 || next<=cur || next>end) { debugf("[native-ot] pacote invalido code=%02x len=%d rest=%u\n",tag->code,n,(unsigned)(end-cur)); cur=end; break; }
+                cur=next;
+            }
+        }
+        if(isendprim(base)) break;
+        P_TAG *next=(P_TAG*)nextPrim(base);
+        if(!next || next==base) { debugf("[native-ot] elo invalido\n"); break; }
+        base=next;
+    }
+    if(fallbacks) debugf("[native-ot] fallbacks=%u\n",fallbacks);
 }
 int d2_direct_poly(P_TAG *tag)
 {
