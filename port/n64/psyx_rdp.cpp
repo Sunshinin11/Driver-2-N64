@@ -1161,7 +1161,9 @@ static void d2_line_segment(short ax, short ay, short bx, short by, uint32_t ca,
 int d2_native_line(P_TAG *tag)
 {
     const int type=tag->code&0xF0, sub=tag->code&0x0C;
-    if ((type!=0x40 && type!=0x50) || (type==0x50 && sub!=0)) return 0;
+    if (type!=0x40 && type!=0x50) return 0;
+    /* G3/G4 nao eram desenhadas pelo PsyCross; preserve o consumo do pacote sem voltar ao fallback. */
+    if(type==0x50 && sub!=0) return sub==8 ? 7 : sub==12 ? 9 : 0;
     const int len=type==0x50?4:(sub==0?3:sub==8?5:6);
     if (!activeDrawEnv.dfe || !s_scene || !ensure_slots()) return len;
     d2_flush_splits();
@@ -1200,6 +1202,25 @@ int d2_native_psyx(P_TAG *tag)
     const int sub=tag->code&15;
     if(sub==1) { overrideTexture=0; return 2; }
     if(sub==2) return 2; /* marcador textual de debug */
+    return 0;
+}
+int d2_native_vram_packet(P_TAG *tag)
+{
+    const int type=tag->code&0xF0;
+    if(type==0 && (tag->code&15)==0) return 3;
+    if(type==0xA0 || (type==0 && (tag->code&15)==1)) d2_flush_splits();
+    if(type==0xA0) {
+        DR_LOAD *p=(DR_LOAD*)tag;
+        RECT16 r; *(unsigned int*)&r.x=*(unsigned int*)&p->code[1]; *(unsigned int*)&r.w=*(unsigned int*)&p->code[2];
+        GR_CopyVRAM((unsigned short*)p->p,0,0,r.w,r.h,r.x,r.y);
+        return getlen(tag);
+    }
+    if(type==0 && (tag->code&15)==1) {
+        DR_MOVE *p=(DR_MOVE*)tag;
+        RECT16 r; *(unsigned int*)&r.x=*(unsigned int*)&p->code[2]; *(unsigned int*)&r.w=*(unsigned int*)&p->code[4];
+        GR_CopyVRAM(NULL,r.x,r.y,r.w,r.h,p->code[3]&0xffff,(p->code[3]>>16)&0xffff);
+        return 5;
+    }
     return 0;
 }
 int d2_direct_poly(P_TAG *tag)
