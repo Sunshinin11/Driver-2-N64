@@ -8,4 +8,5 @@ export PATH="$N64_INST/bin:$PATH"
 bash ./patch_engine.sh
 python3 tools/gen_stubs.py
 if [ "${1:-}" = "clean" ]; then exec make -f Makefile.d2 clean; fi
-exec make -k -f Makefile.d2 -j"$(nproc)" all "$@"
+rm -f d2_n64.z64
+exec make -f Makefile.d2 -j"$(nproc)" all "$@"

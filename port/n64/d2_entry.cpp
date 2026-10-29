@@ -21,6 +21,10 @@ extern int gDrawDistance;
 extern int gUserLanguage;
 extern int gNoFMV;
 
+#ifndef D2_DRAW_DISTANCE
+#define D2_DRAW_DISTANCE 441
+#endif
+
 // No PC troca o mapeamento de teclas/controle entre menu e jogo; no N64 o mapeamento do controle e proprio (psyx_backend.cpp).
 void SwitchMappings(int menu) { (void)menu; }
 
@@ -40,7 +44,7 @@ extern "C" int d2_run_game(void)
     _sbank_buffer = g_SBank_buffer;
     _replay_buffer = g_Replay_buffer;
 
-    gDrawDistance = 600;   // valor do PC
+    gDrawDistance = D2_DRAW_DISTANCE;
     gNoFMV = 1;            // videos (FMV) ficam para o fim do projeto: o jogo pula direto
     gUserLanguage = 0;     // ingles (traducao PT-BR fica para o fim)
     return redriver2_main(1, argv);

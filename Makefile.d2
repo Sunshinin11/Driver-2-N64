@@ -33,7 +33,14 @@ ifneq ($(wildcard $(HOT_LD)),)
 N64_LDFLAGS += --section-ordering-file=$(HOT_LD)
 endif
 # Otimizacoes de desempenho (ver docs/OTIMIZACAO_N64.md). Para medir sem elas: make ... D2_OPT=
-D2_OPT ?= -DD2_DIRECT -DD2_NOSUBQ -DD2_GTE_NATIVE -DD2_VTXCACHE -DD2_LEANLOAD -DD2_FASTOT
+D2_OPT ?= -DD2_DIRECT -DD2_NOSUBQ -DD2_GTE_NATIVE -DD2_VTXCACHE -DD2_LEANLOAD -DD2_FASTOT -DD2_N64_PERF -DD2_PSX_FIDELITY
+FLAGS_FILE = $(BUILD_DIR)/.d2_flags
+.PHONY: FORCE
+$(FLAGS_FILE): FORCE
+	@mkdir -p $(BUILD_DIR)
+	@printf '%s\n%s\n' '$(D2_OPT)' '$(D2_EXTRA)' > $@.tmp
+	@if ! cmp -s $@.tmp $@; then mv $@.tmp $@; else rm $@.tmp; fi
+$(OBJS): $(FLAGS_FILE)
 D2_DEFS = -DUSE_PGXP=0 -DNTSC_VERSION -DD2_N64=1 -DBUILD_CONFIGURATION_STRING=\"n64\" $(D2_OPT) $(D2_EXTRA)
 CXX_GAME = -include port/compat/d2_n64_compat.h -include stdarg.h -x c++ -std=gnu++14 -fpermissive -w -fno-exceptions -fno-rtti $(D2_DEFS) $(D2_INC) -MMD -MP
 
