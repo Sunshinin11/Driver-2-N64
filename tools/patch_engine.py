@@ -603,7 +603,7 @@ P('Game/C/draw.c', "void PlotBuildingModelSubdivNxN(MODEL* model, int rot, _pct*
 # ---- buffer de vertices menor (D2_MAX_VERTS): nunca escrever alem dele; esvazia os lotes quando estiver quase cheio ----
 P('PsyCross/src/gpu/PsyX_GPU.cpp',
   "int ParsePrimitive(P_TAG* polyTag)\n{",
-  "extern \"C\" int d2_native_ft4(POLY_FT4*);\nint ParsePrimitive(P_TAG* polyTag)\n{\n#ifdef D2_DIRECT\n\tif (polyTag->code == 0xB3) return d2_native_ft4((POLY_FT4*)polyTag);\n\tif (g_vertexIndex > MAX_VERTEX_BUFFER_SIZE - 64) d2_flush_splits();\n#endif")
+  "extern \"C\" int d2_native_ft4(POLY_FT4*);\nextern \"C\" int d2_native_rect(P_TAG*);\nint ParsePrimitive(P_TAG* polyTag)\n{\n#ifdef D2_DIRECT\n\tif (polyTag->code == 0xB3) return d2_native_ft4((POLY_FT4*)polyTag);\n\tif ((polyTag->code & 0xF0) == 0x60 || (polyTag->code & 0xF0) == 0x70) { int n = d2_native_rect(polyTag); if (n) return n; }\n\tif (g_vertexIndex > MAX_VERTEX_BUFFER_SIZE - 64) d2_flush_splits();\n#endif")
 
 # ---- Fase 1.3: OT enxuta (D2_FASTOT) ----
 # ClearOTagR: duas palavras por entrada (endereco da anterior + len/pgxp zerados) em vez de escrita de campo de bits

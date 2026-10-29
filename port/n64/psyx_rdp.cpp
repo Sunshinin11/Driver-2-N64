@@ -1108,6 +1108,45 @@ int d2_native_ft4(POLY_FT4 *p)
     tri_core(&q[1], &q[2], &q[3], p->tpage, p->clut);
     return 9;
 }
+int d2_native_rect(P_TAG *tag)
+{
+    const int code = tag->code, kind = code & 0xFD;
+    const bool tex = kind == 0x64 || kind == 0x74 || kind == 0x7C;
+    if (tex && overrideTexture != 0) return 0;
+    int w, h, len;
+    if (kind == 0x60) { TILE *p = (TILE *)tag; w = p->w; h = p->h; len = 3; }
+    else if (kind == 0x64) { SPRT *p = (SPRT *)tag; w = p->w; h = p->h; len = 4; }
+    else if (kind == 0x68) { w = h = 1; len = 2; }
+    else if (kind == 0x70 || kind == 0x74) { w = h = 8; len = kind == 0x74 ? 3 : 2; }
+    else if (kind == 0x78 || kind == 0x7C) { w = h = 16; len = kind == 0x7C ? 3 : 2; }
+    else return 0;
+    if (!activeDrawEnv.dfe || !s_scene || w <= 0 || h <= 0) return len;
+    if (!ensure_slots()) return len;
+    d2_flush_splits();
+    const RECT16 &clip = activeDrawEnv.clip;
+    if (clip.x != s_clipKey[0] || clip.y != s_clipKey[1] || clip.w != s_clipKey[2] || clip.h != s_clipKey[3] ||
+        (activeDispEnv.disp.x | (activeDispEnv.disp.w << 16)) != s_clipKey[4] ||
+        (activeDispEnv.disp.y | (activeDispEnv.disp.h << 16)) != s_clipKey[5]) GR_SetupClipMode(&clip, 1);
+    const BlendMode bm = (code & 2) ? (BlendMode)(((activeDrawEnv.tpage >> 5) & 3) + 1) : BM_NONE;
+    if (tex) s_texFormat = (TexFormat)((activeDrawEnv.tpage >> 7) & 3);
+    begin_batch(tex && s_texFormat != TF_32_BIT_RGBA, bm);
+    TILE *base = (TILE *)tag;
+    const int ofx = activeDrawEnv.ofs[0] - activeDispEnv.disp.x, ofy = activeDrawEnv.ofs[1] - activeDispEnv.disp.y;
+    int x[4] = { base->x0, base->x0 + w, base->x0, base->x0 + w };
+    int y[4] = { base->y0, base->y0, base->y0 + h, base->y0 + h };
+    int u0 = 0, v0 = 0, clut = 0;
+    if (tex) { SPRT *s = (SPRT *)tag; u0 = s->u0; v0 = s->v0; clut = s->clut; }
+    const uint32_t col = (code & 1) ? shade_rgba(128, 128, 128) : shade_rgba(base->r0, base->g0, base->b0);
+    PV q[4];
+    for (int i = 0; i < 4; i++)
+    {
+        q[i].X4 = ((x[i] + ofx) * s_ctxSx16) >> 14; q[i].Y4 = ((y[i] + ofy) * s_ctxSy16) >> 14;
+        q[i].rgba = col; q[i].s32 = (u0 + ((i & 1) ? w : 0)) << 5; q[i].t32 = (v0 + ((i & 2) ? h : 0)) << 5;
+    }
+    tri_core(&q[0], &q[1], &q[2], activeDrawEnv.tpage, clut);
+    tri_core(&q[1], &q[2], &q[3], activeDrawEnv.tpage, clut);
+    return len;
+}
 int d2_direct_poly(P_TAG *tag)
 {
 #ifdef D2_DPROF
