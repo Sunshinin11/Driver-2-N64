@@ -1174,6 +1174,26 @@ int d2_native_line(P_TAG *tag)
     else { LINE_F4 *p=(LINE_F4*)tag; uint32_t c=shade_rgba(p->r0,p->g0,p->b0); d2_line_segment(p->x0,p->y0,p->x1,p->y1,c,c,bm); d2_line_segment(p->x1,p->y1,p->x2,p->y2,c,c,bm); d2_line_segment(p->x2,p->y2,p->x3,p->y3,c,c,bm); }
     return len;
 }
+int d2_native_drawenv(P_TAG *tag)
+{
+    const unsigned int *words=(const unsigned int *)&tag->pad0;
+    int done=0;
+    for(int i=0;i<tag->len;i++) {
+        const unsigned int code=PSX_LEW(words[i]);
+        switch((code>>24)&15) {
+        case 1: activeDrawEnv.tpage=code&0x1ff; activeDrawEnv.dtd=(code>>9)&1; activeDrawEnv.dfe=(code>>10)&1; break;
+        case 2: activeDrawEnv.tw.w=code&31; activeDrawEnv.tw.h=(code>>5)&31; activeDrawEnv.tw.x=(code>>10)&31; activeDrawEnv.tw.y=(code>>15)&31; break;
+        case 3: activeDrawEnv.clip.x=code&1023; activeDrawEnv.clip.y=(code>>10)&1023; break;
+        case 4: activeDrawEnv.clip.w=(code&1023)-activeDrawEnv.clip.x; activeDrawEnv.clip.h=((code>>10)&1023)-activeDrawEnv.clip.y; break;
+        case 5: activeDrawEnv.ofs[0]=code&2047; activeDrawEnv.ofs[1]=(code>>11)&2047; break;
+        case 6: break; /* mask bit ainda nao e suportado pelo renderer atual */
+        case 0: return done;
+        default: break;
+        }
+        done++;
+    }
+    return done;
+}
 int d2_direct_poly(P_TAG *tag)
 {
 #ifdef D2_DPROF
