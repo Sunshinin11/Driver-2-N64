@@ -544,6 +544,10 @@ P('Game/C/draw.c', "\tdrawData.farClipLimit = 125000;", "\tdrawData.farClipLimit
 R('Game/dr2limits.h', r'#ifndef PSX', '#if !defined(PSX) && !defined(D2_PSX_FIDELITY)')
 P('Game/C/camera.h', "#ifdef PSX\n#define VIEW_DRAW_DISTANCE 16000", "#if defined(PSX) || defined(D2_PSX_FIDELITY)\n#define VIEW_DRAW_DISTANCE 16000")
 P('Game/C/draw.c', "#ifdef PSX\n#define MAX_TREE_SHADOW_DISTANCE 7000", "#if defined(PSX) || defined(D2_PSX_FIDELITY)\n#define MAX_TREE_SHADOW_DISTANCE 7000")
+# ---- Evita wrap-around de 16 bits no FrustrumCheck16 em DrawMapPSX (explosao de sprites distantes) ----
+P('Game/C/draw.c',
+  "model = modelpointers[(ppco->value >> 6) | ((ppco->pos).vy & 1) << 10];\n\n\t\t\t\t\tif (FrustrumCheck16(ppco, model->bounding_sphere) != -1)",
+  "model = modelpointers[(ppco->value >> 6) | ((ppco->pos).vy & 1) << 10];\n\n\t\t\t\t\t{\n\t\t\t\t\t\tint _dx = (ci.nearCell.x + (short)(ppco->pos.vx - ci.nearCell.x)) - camera_position.vx;\n\t\t\t\t\t\tint _dz = (ci.nearCell.z + (short)(ppco->pos.vz - ci.nearCell.z)) - camera_position.vz;\n\t\t\t\t\t\tif (ABS(_dx) > VIEW_DRAW_DISTANCE || ABS(_dz) > VIEW_DRAW_DISTANCE) continue;   // evita wrap-around de 16 bits no FrustrumCheck16\n\t\t\t\t\t}\n\n\t\t\t\t\tif (FrustrumCheck16(ppco, model->bounding_sphere) != -1)")
 P('Game/C/system.h', "#ifdef PSX\n#define\tOTSIZE\t0x1080", "#if defined(PSX) || defined(D2_PSX_FIDELITY)\n#define\tOTSIZE\t0x1080")
 P('Game/driver2.h', "#define ENABLE_GAME_ENCHANCEMENTS\t1\n#define ENABLE_BONUS_CONTENT\t\t1",
   "#ifdef D2_PSX_FIDELITY\n#define ENABLE_GAME_ENCHANCEMENTS\t0\n#define ENABLE_BONUS_CONTENT\t\t0\n#else\n#define ENABLE_GAME_ENCHANCEMENTS\t1\n#define ENABLE_BONUS_CONTENT\t\t1\n#endif")
