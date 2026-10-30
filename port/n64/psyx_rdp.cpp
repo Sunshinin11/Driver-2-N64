@@ -247,6 +247,7 @@ static TexSlot *get_region(int px, int py, int fmt, int u0, int v0, int w, int h
     else if (fmt == TF_8_BIT) wpad = (sw + 7) & ~7;
     else wpad = (sw + 3) & ~3;
     int bytes = fmt == TF_4_BIT ? (wpad / 2) * sh : fmt == TF_8_BIT ? wpad * sh : wpad * 2 * sh;
+    if (w <= 0 || h <= 0) return 0;
     if (bytes > TEX_BYTES) return 0;                       // paletas ocupam a metade alta da TMEM
     *outW = sw; *outH = sh; *outWpad = wpad;
 
@@ -342,6 +343,27 @@ static TexSlot *get_region(int px, int py, int fmt, int u0, int v0, int w, int h
     return s;
 }
 
+#ifdef D2_TEXWIN
+static bool s_leanTiles;              // TILE0 (CI4 64x64) e TILE6 (carga I8) configurados para a janela
+static bool s_tmemWin;                // a TMEM (metade baixa) contem a janela s_win
+static bool s_tmemDirty = true;       // TMEM ou TILE alterado: requer sincronizacao na proxima primitiva
+// ---------------------------------------------------------------- bancos de paleta na TMEM (CI4): 16 bancos de 16 cores; o banco 0 fica
+// para o caminho antigo, 1..15 sao um cache LRU (clut -> banco). Acerto = so troca o banco no TILE0 (1 comando).
+static struct { int clut; unsigned int gen, lru; } s_bank[16];
+static unsigned int s_bankLru;
+static int s_curBank = -1;            // banco configurado no TILE0 da janela (-1 = desconhecido)
+static int s_pbClut = -1; static unsigned int s_pbVw;
+static void banks_invalidate(void)
+{
+    for (int i = 0; i < 16; i++) s_bank[i].clut = -1;
+    s_curBank = -1;
+    s_pbClut = -1;
+    s_lastUp.clut = -1;
+    s_lastUp.palEnt = 0;
+    s_lastUp.palGen = 0;
+}
+#endif
+
 // ---------------------------------------------------------------- modos do RDP
 static void set_mode(bool textured, int fmt, BlendMode blend)
 {
@@ -349,6 +371,15 @@ static void set_mode(bool textured, int fmt, BlendMode blend)
     if (key == s_modeKey) return;
     s_modeKey = key;
     s_lastUp.slot = 0;     // o estado de textura se perde ao trocar de modo (palette/tlut)
+#ifdef D2_TEXWIN
+    s_leanTiles = false;
+    s_tmemWin = false;
+    s_winBase = -1;
+#ifdef D2_PALBANK
+    s_curBank = -1;
+    s_pbClut = -1;
+#endif
+#endif
 
     rdpq_set_mode_standard();
     rdpq_mode_antialias(AA_NONE);
@@ -386,14 +417,6 @@ static void set_mode(bool textured, int fmt, BlendMode blend)
 
 
 #ifdef D2_TEXWIN
-static bool s_tmemDirty = true;       // TMEM ou TILE alterado: requer sincronizacao na proxima primitiva
-// ---------------------------------------------------------------- bancos de paleta na TMEM (CI4): 16 bancos de 16 cores; o banco 0 fica
-// para o caminho antigo, 1..15 sao um cache LRU (clut -> banco). Acerto = so troca o banco no TILE0 (1 comando).
-static struct { int clut; unsigned int gen, lru; } s_bank[16];
-static unsigned int s_bankLru;
-static int s_curBank = -1;            // banco configurado no TILE0 da janela (-1 = desconhecido)
-static void banks_invalidate(void) { for (int i = 0; i < 16; i++) s_bank[i].clut = -1; }
-static int s_pbClut = -1; static unsigned int s_pbVw;
 static void upload_pal_bank(int clut)
 {
     if (clut == s_pbClut && s_pbVw == s_vramWrites && s_curBank > 0 && s_bank[s_curBank].clut == clut) { s_bank[s_curBank].lru = ++s_bankLru; return; }
@@ -438,6 +461,7 @@ static void upload_pal_bank(int clut)
         e->use = ++s_useCounter;
         s_bank[b].clut = clut; s_bank[b].gen = e->gen;
         s_tmemDirty = true;
+        s_lastUp.clut = -1;
     }
     e->bank = b;
     s_bank[b].lru = ++s_bankLru;
@@ -467,8 +491,6 @@ static void upload_pal_bank(int clut)
 // ---------------------------------------------------------------- D2_TEXWIN: janela fixa de 64x64 texels (CI4, 2 KB) na TMEM
 // Em vez de carregar o retangulo exato de cada triangulo, carrega uma janela de 64x64 da VRAM sombra e mantem enquanto os
 // triangulos seguintes couberem nela (mesma pagina, VRAM nao alterada). A carga e um unico LOAD_TILE (tiles fixos).
-static bool s_leanTiles;              // TILE0 (CI4 64x64) e TILE6 (carga I8) configurados para a janela
-static bool s_tmemWin;                // a TMEM (metade baixa) contem a janela s_win
 static struct { int px, py, wu0, wv0; unsigned int sig, vw; } s_win;
 static TexSlot s_winTag;
 #ifdef D2_TEXWIN
@@ -554,6 +576,7 @@ static bool upload_win(int px, int py, int clut, int u0, int v0, int w, int h)
 // carrega a regiao (u0,v0,w,h, passo step) da pagina de textura na TMEM (paleta inclusa). Retorna false se nao coube.
 static bool upload_region(int page, int clut, int u0, int v0, int w, int h, int step)
 {
+    if (w <= 0 || h <= 0) return false;
     const int px = (page & 15) * 64, py = ((page >> 4) & 1) * 256;
 #ifdef D2_TEXWIN
     if (s_texFormat == TF_4_BIT && step == 1 && px >= 512 && w <= 64 && h <= 64)
@@ -663,10 +686,16 @@ static bool upload_region(int page, int clut, int u0, int v0, int w, int h, int 
             rdpq_set_tile_size(TILE0, 0, 0, e1 - e0, h);
             s_upOu = ua + e0;
             s_cLdSh++; s_leanTiles = false; s_tmemWin = false;
+#ifdef D2_PALBANK
+            s_curBank = -1; s_pbClut = -1;
+#endif
 #else
             surface_t surf = surface_make(s_shadow + (py + v0) * SH_W + ((px - 512) + (ua >> 2)), FMT_CI4, 256 - ua, 256 - v0, SH_W * 2);
             rdpq_texparms_t parms = {};
             rdpq_tex_upload_sub(TILE0, &surf, &parms, u0 - ua, 0, (u0 - ua) + w, h); s_cLdSh++; s_leanTiles = false; s_tmemWin = false;
+#ifdef D2_PALBANK
+            s_curBank = -1; s_pbClut = -1;
+#endif
 #endif
             s_lastUp.slot = slot; s_shLast.k0 = shK0; s_shLast.k1 = shK1; s_shLast.sig = shSig;
         }
@@ -692,11 +721,17 @@ static bool upload_region(int page, int clut, int u0, int v0, int w, int h, int 
         }
         rdpq_set_tile_size(TILE0, 0, 0, sw, sh);
         s_cLdReg++; s_leanTiles = false; s_tmemWin = false; s_winBase = -1;
+#ifdef D2_PALBANK
+        s_curBank = -1; s_pbClut = -1;
+#endif
 #else
         surface_t surf = surface_make(slot->data, s_texFormat == TF_4_BIT ? FMT_CI4 : s_texFormat == TF_8_BIT ? FMT_CI8 : FMT_RGBA16, wpad, sh,
                                       s_texFormat == TF_4_BIT ? wpad / 2 : s_texFormat == TF_8_BIT ? wpad : wpad * 2);
         rdpq_texparms_t parms = {};
         rdpq_tex_upload_sub(TILE0, &surf, &parms, 0, 0, sw, sh); s_cLdReg++; s_leanTiles = false; s_tmemWin = false;
+#ifdef D2_PALBANK
+        s_curBank = -1; s_pbClut = -1;
+#endif
 #endif
         s_lastUp.slot = slot; s_lastUp.gen = slot->gen;
     }
@@ -849,6 +884,15 @@ char PsyX_BeginScene(void)
     rdpq_fill_rectangle(0, 0, SCREEN_W, SCREEN_H);
     s_modeKey = -1;
     s_scene = true;
+    s_lastUp.slot = 0;
+#ifdef D2_TEXWIN
+    s_leanTiles = false;
+    s_tmemWin = false;
+    s_winBase = -1;
+#ifdef D2_PALBANK
+    banks_invalidate();
+#endif
+#endif
     D2DBG("[rdp] BeginScene disp=%d,%d %dx%d clip=%d,%d %dx%d vbl=%d\n", activeDispEnv.disp.x, activeDispEnv.disp.y, activeDispEnv.disp.w, activeDispEnv.disp.h, activeDrawEnv.clip.x, activeDrawEnv.clip.y, activeDrawEnv.clip.w, activeDrawEnv.clip.h, d2_sys_vbl_count());
     return 1;
 }
@@ -1080,6 +1124,8 @@ static void tri_core(const PV *A, const PV *B, const PV *C, int page, int clut)
     const int umin = smin >> 5, vmin = tmin >> 5;
     int umax = (smax & 31) ? (smax >> 5) : (smax >> 5) - ((smax > smin) && D2_SUBQ_EDGE(A) ? 1 : 0), vmax = (tmax & 31) ? (tmax >> 5) : (tmax >> 5) - ((tmax > tmin) && D2_SUBQ_EDGE(A) ? 1 : 0);
     if (umax < umin) umax = umin; if (vmax < vmin) vmax = vmin;
+    if (umax > 255) umax = 255;
+    if (vmax > 255) vmax = 255;
     const int uw = umax - umin + 1, vh = vmax - vmin + 1;
     const int tileW = s_ctxTileW, tileH = s_ctxTileH;
 
@@ -1144,8 +1190,8 @@ static void tri_core(const PV *A, const PV *B, const PV *C, int page, int clut)
     }
     const int bw = tileW * step, bh = tileH * step;
     const int tu0 = (umin / bw) * bw, tv0 = (vmin / bh) * bh;
-    for (int tv = tv0; tv <= vmax; tv += bh)
-        for (int tu = tu0; tu <= umax; tu += bw)
+    for (int tv = tv0; tv <= vmax && tv < 256; tv += bh)
+        for (int tu = tu0; tu <= umax && tu < 256; tu += bw)
         {
             DV a[10], b[10];
             int n = 3;
@@ -1157,6 +1203,7 @@ static void tri_core(const PV *A, const PV *B, const PV *C, int page, int clut)
             int w = bw, h = bh;
             if (tu + w > 256) w = 256 - tu;
             if (tv + h > 256) h = 256 - tv;
+            if (w <= 0 || h <= 0) continue;
             if (!upload_region(page, clut, tu, tv, w, h, step)) continue;
             for (int i = 1; i + 1 < n; i++) { emit_tri(true, a[0], a[i], a[i + 1], (float)(step == 1 ? s_upOu : tu), (float)(step == 1 ? s_upOv : tv), 1.0f / step, 1.0f, 1.0f); s_nSub++; }
         }

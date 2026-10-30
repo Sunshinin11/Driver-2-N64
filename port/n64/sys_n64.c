@@ -71,7 +71,8 @@ int d2_pad_poll(int port, d2_pad_raw_t *o)
         else if (v >= 860 && v < 866) b |= D2_A;
         else if (v >= 930 && v < 936) b |= D2_A;
         else if (v >= 1000 && v < 1006) b |= D2_A;
-        else if (v >= 1150) b |= D2_A; // acelera o carro em Chicago
+        else if (v >= 2200) b |= D2_A; // acelera o carro em Chicago apos 10s de cena parada
+        if (b && (v % 60 == 0 || (v >= 760 && v <= 1010))) debugf("[bench] vbl=%d b=%04x\n", v, b);
     }
 #endif
     o->btn = b; o->sx = sx; o->sy = sy;

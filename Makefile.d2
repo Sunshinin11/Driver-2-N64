@@ -86,7 +86,7 @@ $(patsubst %.cpp,$(OBJ_DIR)/%.o,$(PSYX_CPP)): $(OBJ_DIR)/%.o: %.cpp
 $(OBJ_DIR)/port/n64/%.o: port/n64/%.c
 	@mkdir -p $(dir $@)
 	@echo "    [CC]  $<"
-	$(N64_CC) $(N64_CFLAGS) -std=gnu11 -MMD -MP -c $< -o $@
+	$(N64_CC) $(N64_CFLAGS) $(D2_DEFS) -std=gnu11 -MMD -MP -c $< -o $@
 
 $(OBJ_DIR)/port/n64/%.o: port/n64/%.cpp
 	@mkdir -p $(dir $@)
