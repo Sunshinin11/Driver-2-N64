@@ -1075,6 +1075,17 @@ static void tri_core(const PV *A, const PV *B, const PV *C, int page, int clut)
         return;
     }
 
+    // Descarte de triangulos de area zero (degenerados), como a GPU do PS1
+    long long dx01 = (long long)X4[1] - X4[0], dy01 = (long long)Y4[1] - Y4[0];
+    long long dx02 = (long long)X4[2] - X4[0], dy02 = (long long)Y4[2] - Y4[0];
+    if (dx01 * dy02 - dx02 * dy01 == 0LL)
+    {
+#ifdef D2_DPROF
+        s_rejDegen++;
+#endif
+        return;
+    }
+
     // Se o triangulo ultrapassa o range do RDP 12-bit ou tem dimensao extrema (>4000px),
     // recorta contra o viewport estendido para evitar que predios desaparecam ou gerem artefatos gigantes
     if (mnx < -256 || mxx > 1536 || mny < -256 || mxy > 1216 || mxx - mnx > 16000 || mxy - mny > 16000)
