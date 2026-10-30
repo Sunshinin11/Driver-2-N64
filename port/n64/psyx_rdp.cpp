@@ -194,6 +194,9 @@ static int s_upOu, s_upOv;                         // origem (em texels) da regi
 static TexSlot s_shTag;
 static int s_winBase = -1;          // base (0/512 bytes) da imagem de textura ativa para a janela; -1 = outra imagem
 static unsigned int s_cBankHitX, s_dCntP, s_dTicks, s_tTicks, s_nTri, s_nClip, s_clipTicks, s_upTicks, s_nSub, s_palT, s_winHitT, s_winMissT, s_regT, s_vwFrame, s_nHitVw;
+#ifdef D2_DPROF
+static unsigned int s_rejScissor, s_rejScreenClip, s_rejUvClip, s_rejUpload, s_rejDegen;
+#endif
 static inline unsigned int cnt0(void) { unsigned int c; __asm__ volatile("mfc0 %0,$9" : "=r"(c)); return c; }
 static unsigned int s_cLdSh, s_cLdReg, s_cLdWin, s_cTlut, s_cWinHit, s_cCalls;   // contadores por quadro (uploads de textura / paleta)                            // so o endereco e usado (marca "TMEM carregada a partir da sombra")
 static struct { unsigned int k0, k1, sig; } s_shLast;
@@ -252,7 +255,7 @@ static TexSlot *get_region(int px, int py, int fmt, int u0, int v0, int w, int h
     *outW = sw; *outH = sh; *outWpad = wpad;
 
     unsigned int k0 = (unsigned)px | ((unsigned)py << 10) | ((unsigned)fmt << 20) | ((unsigned)step << 24);
-    unsigned int k1 = (unsigned)u0 | ((unsigned)v0 << 8) | ((unsigned)(w - 1) << 16) | ((unsigned)(h - 1) << 24);
+    unsigned int k1 = ((unsigned)u0 & 0xFF) | (((unsigned)v0 & 0xFF) << 8) | (((unsigned)(w > 0 ? w - 1 : 0) & 0xFF) << 16) | (((unsigned)(h > 0 ? h - 1 : 0) & 0xFF) << 24);
     unsigned int hsh = (k0 * 0x9E3779B1u) ^ (k1 * 0x85EBCA6Bu);
     hsh ^= hsh >> 15; hsh *= 0x2C1B3C6Du; hsh ^= hsh >> 13;
     const unsigned int base = hsh % TEX_SLOTS;
@@ -911,6 +914,10 @@ void PsyX_EndScene(void)
     if ((d2_rdp_frames % 30) == 0) {  debugf("[fps] f=%d vbl=%d sub=%d calls=%d tris=%d tex=%d hit=%u miss=%u texels=%u stepped=%u pm=%u,%u,%u pt=%u,%u,%u\n", d2_rdp_frames, d2_sys_vbl_count(), s_subTri, s_calls, s_triCount, s_texTriCount, s_dbgHit, s_dbgMiss, s_dbgTex, s_dbgTexStep, s_dbgPM[0],s_dbgPM[1],s_dbgPM[2],s_dbgPT[0],s_dbgPT[1],s_dbgPT[2]); }
     s_dbgHit = s_dbgMiss = s_dbgTex = s_dbgTexStep = 0; memset(s_dbgPM,0,sizeof s_dbgPM); memset(s_dbgPT,0,sizeof s_dbgPT);
     if ((d2_rdp_frames % 30) == 0) debugf("[tex] ld_sombra=%u ld_regiao=%u ld_janela=%u janela_hit=%u/%u tlut=%u banco_hit=%u diretos=%u dticks=%u tcore=%u\n[tri] tris=%u clip=%u clipticks=%u upticks=%u sub=%u\n[up] palT=%u winHitT=%u winMissT=%u regT=%u vramWrites=%u\n", s_cLdSh, s_cLdReg, s_cLdWin, s_cWinHit, s_cCalls, s_cTlut, s_cBankHitX, s_dCntP, s_dTicks, s_tTicks, s_nTri, s_nClip, s_clipTicks, s_upTicks, s_nSub, s_palT, s_winHitT, s_winMissT, s_regT, s_vramWrites - s_vwFrame);
+#ifdef D2_DPROF
+    if ((d2_rdp_frames % 30) == 0) debugf("[discard] scissor=%u screen_clip=%u uv_clip=%u up_fail=%u degen=%u\n", s_rejScissor, s_rejScreenClip, s_rejUvClip, s_rejUpload, s_rejDegen);
+    s_rejScissor = s_rejScreenClip = s_rejUvClip = s_rejUpload = s_rejDegen = 0;
+#endif
     s_cLdSh = s_cLdReg = s_cLdWin = s_cTlut = s_cWinHit = s_cCalls = 0; s_cBankHitX = 0; s_dCntP = s_dTicks = s_tTicks = s_nTri = s_nClip = s_clipTicks = s_upTicks = s_nSub = 0; s_palT = s_winHitT = s_winMissT = s_regT = s_nHitVw = 0; s_vwFrame = s_vramWrites; s_palT = s_winHitT = s_winMissT = s_regT = 0; s_vwFrame = s_vramWrites;
     s_benchTris = s_triCount; s_benchTex = s_texTriCount;
     s_triCount = s_texTriCount = s_subTri = s_calls = 0;
@@ -1060,7 +1067,13 @@ static void tri_core(const PV *A, const PV *B, const PV *C, int page, int clut)
     if (X4[1] < mnx) mnx = X4[1]; if (X4[1] > mxx) mxx = X4[1]; if (Y4[1] < mny) mny = Y4[1]; if (Y4[1] > mxy) mxy = Y4[1];
     if (X4[2] < mnx) mnx = X4[2]; if (X4[2] > mxx) mxx = X4[2]; if (Y4[2] < mny) mny = Y4[2]; if (Y4[2] > mxy) mxy = Y4[2];
     // fora do scissor?
-    if (mxx < s_ctxCx0 || mnx >= s_ctxCx1 || mxy < s_ctxCy0 || mny >= s_ctxCy1) return;
+    if (mxx < s_ctxCx0 || mnx >= s_ctxCx1 || mxy < s_ctxCy0 || mny >= s_ctxCy1)
+    {
+#ifdef D2_DPROF
+        s_rejScissor++;
+#endif
+        return;
+    }
 
     // Se o triangulo ultrapassa o range do RDP 12-bit ou tem dimensao extrema (>4000px),
     // recorta contra o viewport estendido para evitar que predios desaparecam ou gerem artefatos gigantes
@@ -1077,25 +1090,58 @@ static void tri_core(const PV *A, const PV *B, const PV *C, int page, int clut)
         }
         int np = 3;
         np = clip_poly_screen(pin, np, ptmp1, 0, -64.0f, true);
-        if (np < 3) return;
+        if (np < 3) {
+#ifdef D2_DPROF
+            s_rejScreenClip++;
+#endif
+            return;
+        }
         np = clip_poly_screen(ptmp1, np, ptmp2, 0, (float)(SCREEN_W + 64), false);
-        if (np < 3) return;
+        if (np < 3) {
+#ifdef D2_DPROF
+            s_rejScreenClip++;
+#endif
+            return;
+        }
         np = clip_poly_screen(ptmp2, np, ptmp1, 1, -64.0f, true);
-        if (np < 3) return;
+        if (np < 3) {
+#ifdef D2_DPROF
+            s_rejScreenClip++;
+#endif
+            return;
+        }
         np = clip_poly_screen(ptmp1, np, ptmp2, 1, (float)(SCREEN_H + 64), false);
-        if (np < 3) return;
+        if (np < 3) {
+#ifdef D2_DPROF
+            s_rejScreenClip++;
+#endif
+            return;
+        }
 
         for (int i = 1; i + 1 < np; i++) {
             PV sub[3];
             const DV *d[3] = { &ptmp2[0], &ptmp2[i], &ptmp2[i + 1] };
             for (int k = 0; k < 3; k++) {
-                sub[k].X4 = fl4(d[k]->x);
-                sub[k].Y4 = fl4(d[k]->y);
+                float kx = d[k]->x, ky = d[k]->y;
+                if (kx < -64.0f) kx = -64.0f; else if (kx > (float)(SCREEN_W + 64)) kx = (float)(SCREEN_W + 64);
+                if (ky < -64.0f) ky = -64.0f; else if (ky > (float)(SCREEN_H + 64)) ky = (float)(SCREEN_H + 64);
+                sub[k].X4 = fl4(kx);
+                sub[k].Y4 = fl4(ky);
+                if (sub[k].X4 < -256) sub[k].X4 = -256; else if (sub[k].X4 > 1536) sub[k].X4 = 1536;
+                if (sub[k].Y4 < -256) sub[k].Y4 = -256; else if (sub[k].Y4 > 1216) sub[k].Y4 = 1216;
                 sub[k].rgba = ((uint32_t)(d[k]->r * 255.0f) << 24) |
                               ((uint32_t)(d[k]->g * 255.0f) << 16) |
                               ((uint32_t)(d[k]->b * 255.0f) << 8)  | 255;
                 sub[k].s32 = (int)(d[k]->u * 32.0f + 0.5f);
                 sub[k].t32 = (int)(d[k]->v * 32.0f + 0.5f);
+            }
+            int dx01 = sub[1].X4 - sub[0].X4, dy01 = sub[1].Y4 - sub[0].Y4;
+            int dx02 = sub[2].X4 - sub[0].X4, dy02 = sub[2].Y4 - sub[0].Y4;
+            if (dx01 * dy02 - dx02 * dy01 == 0) {
+#ifdef D2_DPROF
+                s_rejDegen++;
+#endif
+                continue;
             }
             tri_core(&sub[0], &sub[1], &sub[2], page, clut);
         }
@@ -1140,7 +1186,13 @@ static void tri_core(const PV *A, const PV *B, const PV *C, int page, int clut)
     {
         // pedaco de quad subdividido: usa o bloco alinhado inteiro (a mesma regiao para todos os pedacos do bloco = acerto no cache)
         const int w = s_subTu + tileW > 256 ? 256 - s_subTu : tileW, h = s_subTv + tileH > 256 ? 256 - s_subTv : tileH;
-        if (!upload_region(page, clut, s_subTu, s_subTv, w, h, 1)) return;
+        if (!upload_region(page, clut, s_subTu, s_subTv, w, h, 1))
+        {
+#ifdef D2_DPROF
+            s_rejUpload++;
+#endif
+            return;
+        }
         __rdpq_autosync_use(AUTOSYNC_PIPE | AUTOSYNC_TILE(0) | AUTOSYNC_TMEM(0));
         for (int i = 0; i < 3; i++)
         {
@@ -1162,7 +1214,13 @@ static void tri_core(const PV *A, const PV *B, const PV *C, int page, int clut)
         if (!upload_region(page, clut, umin, vmin, w, h, step))
         {
             w = uw; h = vh;      // a margem de +1 estoura a TMEM em blocos de 64x64 (4 bits): tenta sem ela
-            if (!upload_region(page, clut, umin, vmin, w, h, step)) return;
+            if (!upload_region(page, clut, umin, vmin, w, h, step))
+            {
+#ifdef D2_DPROF
+                s_rejUpload++;
+#endif
+                return;
+            }
         }
 #ifdef D2_DPROF
         s_upTicks += cnt0() - tu0;
@@ -1196,15 +1254,40 @@ static void tri_core(const PV *A, const PV *B, const PV *C, int page, int clut)
             DV a[10], b[10];
             int n = 3;
             memcpy(a, p, sizeof(p));
-            n = clip_poly(a, n, b, 0, (float)tu, true);          if (n < 3) continue;
-            n = clip_poly(b, n, a, 0, (float)(tu + bw), false);  if (n < 3) continue;
-            n = clip_poly(a, n, b, 1, (float)tv, true);          if (n < 3) continue;
-            n = clip_poly(b, n, a, 1, (float)(tv + bh), false);  if (n < 3) continue;
+            n = clip_poly(a, n, b, 0, (float)tu, true);          if (n < 3) {
+#ifdef D2_DPROF
+                s_rejUvClip++;
+#endif
+                continue;
+            }
+            n = clip_poly(b, n, a, 0, (float)(tu + bw), false);  if (n < 3) {
+#ifdef D2_DPROF
+                s_rejUvClip++;
+#endif
+                continue;
+            }
+            n = clip_poly(a, n, b, 1, (float)tv, true);          if (n < 3) {
+#ifdef D2_DPROF
+                s_rejUvClip++;
+#endif
+                continue;
+            }
+            n = clip_poly(b, n, a, 1, (float)(tv + bh), false);  if (n < 3) {
+#ifdef D2_DPROF
+                s_rejUvClip++;
+#endif
+                continue;
+            }
             int w = bw, h = bh;
             if (tu + w > 256) w = 256 - tu;
             if (tv + h > 256) h = 256 - tv;
             if (w <= 0 || h <= 0) continue;
-            if (!upload_region(page, clut, tu, tv, w, h, step)) continue;
+            if (!upload_region(page, clut, tu, tv, w, h, step)) {
+#ifdef D2_DPROF
+                s_rejUpload++;
+#endif
+                continue;
+            }
             for (int i = 1; i + 1 < n; i++) { emit_tri(true, a[0], a[i], a[i + 1], (float)(step == 1 ? s_upOu : tu), (float)(step == 1 ? s_upOv : tv), 1.0f / step, 1.0f, 1.0f); s_nSub++; }
         }
 }
