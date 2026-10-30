@@ -34,6 +34,19 @@ N64_LDFLAGS += --section-ordering-file=$(HOT_LD)
 endif
 # Otimizacoes de desempenho (ver docs/OTIMIZACAO_N64.md). Para medir sem elas: make ... D2_OPT=
 D2_OPT ?= -DD2_DIRECT -DD2_NATIVE_OT -DD2_NOSUBQ -DD2_GTE_NATIVE -DD2_VTXCACHE -DD2_LEANLOAD -DD2_FASTOT -DD2_N64_PERF -DD2_PSX_FIDELITY
+
+D2_RSP_TEX ?= 0
+ifeq ($(D2_RSP_TEX),1)
+D2_RSP_GPU := 1
+D2_OPT += -DD2_RSP_TEX=1
+endif
+
+D2_RSP_GPU ?= 0
+ifeq ($(D2_RSP_GPU),1)
+D2_OPT += -DD2_RSP_GPU=1
+PLAT_OBJS += $(BUILD_DIR)/port/n64/rsp_d2gpu.o
+OBJS += $(BUILD_DIR)/port/n64/rsp_d2gpu.o
+endif
 FLAGS_FILE = $(BUILD_DIR)/.d2_flags
 .PHONY: FORCE
 $(FLAGS_FILE): FORCE

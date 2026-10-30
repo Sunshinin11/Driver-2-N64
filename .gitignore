@@ -22,6 +22,7 @@ prof_*/
 tmp*/
 capturas/
 *.bak*
+prompt_*.txt
 
 # ---- Motor REDRIVER2 / PsyCross (baixado/gerado via setup_engine.sh) ----
 port/redriver2/

@@ -47,7 +47,7 @@ static __attribute__((noinline)) void vc_proj(const SVECTOR *v, unsigned int *xy
 static inline const VCEnt *vc_get(int i)
 {
 	VCEnt *e = &s_vc[i];
-	if (e->gen != s_vcCur)
+	if (__builtin_expect(e->gen != s_vcCur, 0))
 	{
 		unsigned int xy, z;
 		vc_proj(&s_vcSrc[i], &xy, &z, 0);
@@ -59,7 +59,7 @@ static inline const VCEnt *vc_get(int i)
 static inline const VCEnt *vc_get_lit(int i)
 {
 	VCEnt *e = &s_vc[i];
-	if (e->gen != s_vcCur)
+	if (__builtin_expect(e->gen != s_vcCur, 0))
 	{
 		unsigned int xy, z;
 		vc_proj(&s_vcSrc[i], &xy, &z, s_vcCam[i]);
@@ -368,10 +368,21 @@ void PlotBuildingModel(MODEL *model, int rot, _pct *pc)
 			prims->tpage = pc->tpage;
 			prims->clut = pc->clut;
 
-			*(ushort *)&prims->u0 = *(ushort *)&polys->uv0;
-			*(ushort *)&prims->u1 = *(ushort *)&polys->uv1;
-			*(ushort *)&prims->u2 = *(ushort *)&polys->uv3;
-			*(ushort *)&prims->u3 = *(ushort *)&polys->uv2;
+			ushort uv0, uv1, uv2, uv3;
+			if (ptype == 23)
+			{
+				POLYGT4 *pgt4 = (POLYGT4 *)polys;
+				uv0 = *(ushort *)&pgt4->uv0; uv1 = *(ushort *)&pgt4->uv1; uv2 = *(ushort *)&pgt4->uv2; uv3 = *(ushort *)&pgt4->uv3;
+			}
+			else
+			{
+				uv0 = *(ushort *)&polys->uv0; uv1 = *(ushort *)&polys->uv1; uv2 = *(ushort *)&polys->uv2; uv3 = *(ushort *)&polys->uv3;
+			}
+
+			*(ushort *)&prims->u0 = uv0;
+			*(ushort *)&prims->u1 = uv1;
+			*(ushort *)&prims->u2 = uv3;
+			*(ushort *)&prims->u3 = uv2;
 
 			addPrim(pc->ot + (Z >> 1), prims);
 			pc->primptr += sizeof(POLY_FT4);

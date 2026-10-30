@@ -42,24 +42,39 @@ int d2_pad_poll(int port, d2_pad_raw_t *o)
     if (!inited) { joypad_init(); inited = 1; }
     joypad_poll();
     joypad_port_t p = (port == 0) ? JOYPAD_PORT_1 : JOYPAD_PORT_2;
-    if (!joypad_is_connected(p)) { o->btn = 0; o->sx = o->sy = 0; return 0; }
-    joypad_inputs_t in = joypad_get_inputs(p);
     uint16_t b = 0;
-    if (in.btn.a)       b |= D2_A;
-    if (in.btn.b)       b |= D2_B;
-    if (in.btn.z)       b |= D2_Z;
-    if (in.btn.start)   b |= D2_START;
-    if (in.btn.d_up)    b |= D2_DU;
-    if (in.btn.d_down)  b |= D2_DD;
-    if (in.btn.d_left)  b |= D2_DL;
-    if (in.btn.d_right) b |= D2_DR;
-    if (in.btn.l)       b |= D2_L;
-    if (in.btn.r)       b |= D2_R;
-    if (in.btn.c_up)    b |= D2_CU;
-    if (in.btn.c_down)  b |= D2_CD;
-    if (in.btn.c_left)  b |= D2_CL;
-    if (in.btn.c_right) b |= D2_CR;
-    o->btn = b; o->sx = in.stick_x; o->sy = in.stick_y;
+    int8_t sx = 0, sy = 0;
+    if (joypad_is_connected(p)) {
+        joypad_inputs_t in = joypad_get_inputs(p);
+        if (in.btn.a)       b |= D2_A;
+        if (in.btn.b)       b |= D2_B;
+        if (in.btn.z)       b |= D2_Z;
+        if (in.btn.start)   b |= D2_START;
+        if (in.btn.d_up)    b |= D2_DU;
+        if (in.btn.d_down)  b |= D2_DD;
+        if (in.btn.d_left)  b |= D2_DL;
+        if (in.btn.d_right) b |= D2_DR;
+        if (in.btn.l)       b |= D2_L;
+        if (in.btn.r)       b |= D2_R;
+        if (in.btn.c_up)    b |= D2_CU;
+        if (in.btn.c_down)  b |= D2_CD;
+        if (in.btn.c_left)  b |= D2_CL;
+        if (in.btn.c_right) b |= D2_CR;
+        sx = in.stick_x; sy = in.stick_y;
+    }
+#ifdef D2_BENCH
+    // Roteiro automatico deterministico (in_bench.txt) quando nenhum botao fisico e pressionado:
+    if (port == 0 && b == 0) {
+        int v = vbl_count;
+        if (v >= 760 && v < 766) b |= D2_DD;
+        else if (v >= 790 && v < 796) b |= D2_A;
+        else if (v >= 860 && v < 866) b |= D2_A;
+        else if (v >= 930 && v < 936) b |= D2_A;
+        else if (v >= 1000 && v < 1006) b |= D2_A;
+        else if (v >= 1150) b |= D2_A; // acelera o carro em Chicago
+    }
+#endif
+    o->btn = b; o->sx = sx; o->sy = sy;
     return 1;
 }
 

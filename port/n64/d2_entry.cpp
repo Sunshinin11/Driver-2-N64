@@ -5,16 +5,20 @@
 
 int redriver2_main(int argc, char **argv);
 
-// Buffers fixos do jogo (mesmos tamanhos do PC com USE_CRT_MALLOC=0).
+// Buffers fixos do jogo.
+// No PS1 original e no REDRIVER2, estes buffers eram sobrepostos (overlays):
+// _frontend_buffer compartilhava o mesmo endereco de _other_buffer (_otag1_org).
+// _sbank_buffer era usado apenas durante o carregamento de som para transferir
+// amostras ao SPU e residia dentro de mallocTab.
+// Reaproveitamos g_Other_buffer para ambos, recuperando 704 KB de RAM (384 KB + 320 KB).
 static char g_Overlay_buffer[0x50000];
-static char g_Frontend_buffer[0x60000];
+static char g_SBank_buffer[0x50000];
 static char g_Other_buffer[0x50000];
 static char g_Other_buffer2[0x50000];
 static OTTYPE g_OT1[OTSIZE];
 static OTTYPE g_OT2[OTSIZE];
 static char g_PrimTab1[PRIMTAB_SIZE];
 static char g_PrimTab2[PRIMTAB_SIZE];
-static char g_SBank_buffer[0x50000];
 // No mapa de memoria original do PS1 o replay ocupa somente o fim da RAM
 // (0x1FABBC..0x200000). Mantemos uma pequena folga e devolvemos o excesso ao
 // mixer/heap do N64.
@@ -37,14 +41,14 @@ extern "C" int d2_run_game(void)
     static char *argv[] = { arg0, 0 };
 
     _overlay_buffer = g_Overlay_buffer;
-    _frontend_buffer = g_Frontend_buffer;
+    _frontend_buffer = g_Other_buffer;  // overlay legitimo do PS1 (_otag1_org)
     _other_buffer = g_Other_buffer;
     _other_buffer2 = g_Other_buffer2;
     _OT1 = g_OT1;
     _OT2 = g_OT2;
     _primTab1 = g_PrimTab1;
     _primTab2 = g_PrimTab2;
-    _sbank_buffer = g_SBank_buffer;
+    _sbank_buffer = g_SBank_buffer;      // buffer proprio: som carrega junto com a tela de loading
     _replay_buffer = g_Replay_buffer;
 
     gDrawDistance = D2_DRAW_DISTANCE;

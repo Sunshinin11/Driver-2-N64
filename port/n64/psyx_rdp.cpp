@@ -56,11 +56,62 @@ static int s_scx0, s_scy0, s_scx1 = SCREEN_W, s_scy1 = SCREEN_H;
 static int s_clipKey[6] = { -1 };   // ultimo recorte aplicado (GR_SetupClipMode so reconfigura quando muda)
 static bool s_rdpInit;
 
+// Fase 4: Instrumentacao detalhada de cobertura e diagnostico
+static unsigned int s_ft4Total = 0;
+static unsigned int s_ft4Rsp = 0;
+static unsigned int s_ft4Cpu = 0;
+static unsigned int s_ft4Ci4Eligible = 0;
+static unsigned int s_ft4RejDim = 0;
+static unsigned int s_ft4RejFmt = 0;
+static unsigned int s_ft4RejClip = 0;
+static unsigned int s_ft4RejScale = 0;
+static unsigned int s_ft4RejUp = 0;
+static unsigned int s_ft3Total = 0;
+static unsigned int s_directFt4Total = 0;
+static unsigned int s_ovlSwitches = 0;
+static uint32_t s_lastOvlSent = 0xFFFFFFFF;
+
+static inline void track_ovl_switch(uint32_t ovl) {
+    if (ovl != s_lastOvlSent) {
+        s_ovlSwitches++;
+        s_lastOvlSent = ovl;
+    }
+}
+#if D2_RSP_GPU
+#include <rsp.h>
+#include <rspq.h>
+DEFINE_RSP_UCODE(rsp_d2gpu);
+static uint32_t s_d2gpuOvl = 0;
+static int s_rspOfx = 0x7FFFFFFF;
+static int s_rspOfy = 0x7FFFFFFF;
+static int s_rspTexOu = 0x7FFFFFFF;
+static int s_rspTexOv = 0x7FFFFFFF;
+static unsigned int s_rspF3Count = 0;
+static unsigned int s_rspF4Count = 0;
+static unsigned int s_rspFT4Count = 0;
+static unsigned int s_ft4Fallback = 0;
+
+enum {
+    D2G_CMD_SET_OFFSET     = 0,
+    D2G_CMD_SET_TEX_ORIGIN = 1,
+    D2G_CMD_POLY_F3        = 2,
+    D2G_CMD_POLY_F4        = 3,
+    D2G_CMD_POLY_FT3       = 4,
+    D2G_CMD_POLY_FT4       = 5,
+    D2G_CMD_DRAW_END       = 6,
+    D2G_CMD_SET_TILE_PAL   = 7,
+};
+#endif
+
 static void rdp_init_once(void)
 {
     if (s_rdpInit) return;
     s_rdpInit = true;
     rdpq_init();
+#if D2_RSP_GPU
+    s_d2gpuOvl = rspq_overlay_register(&rsp_d2gpu);
+    debugf("[rsp_ovl] registered rsp_d2gpu ucode ovl_id=0x%08lx\n", (unsigned long)s_d2gpuOvl);
+#endif
 }
 
 // ---------------------------------------------------------------- versoes da VRAM (para invalidar o cache de texturas)
@@ -116,8 +167,8 @@ static inline unsigned short conv_color(unsigned short v)
     return (unsigned short)(((v & 31) << 11) | (((v >> 5) & 31) << 6) | (((v >> 10) & 31) << 1) | (v != 0));
 }
 
-struct PalEnt { int clut; unsigned int sig, gen, use, vw; int valid; unsigned short pal[16] __attribute__((aligned(16))); };
-#define PAL_CACHE 256
+struct PalEnt { int clut; unsigned int sig, gen, use, vw; int valid, bank; unsigned short pal[16] __attribute__((aligned(16))); };
+#define PAL_CACHE 1024
 static PalEnt s_palCache[PAL_CACHE];
 
 
@@ -335,6 +386,7 @@ static void set_mode(bool textured, int fmt, BlendMode blend)
 
 
 #ifdef D2_TEXWIN
+static bool s_tmemDirty = true;       // TMEM ou TILE alterado: requer sincronizacao na proxima primitiva
 // ---------------------------------------------------------------- bancos de paleta na TMEM (CI4): 16 bancos de 16 cores; o banco 0 fica
 // para o caminho antigo, 1..15 sao um cache LRU (clut -> banco). Acerto = so troca o banco no TILE0 (1 comando).
 static struct { int clut; unsigned int gen, lru; } s_bank[16];
@@ -363,22 +415,51 @@ static void upload_pal_bank(int clut)
         e->clut = clut; e->sig = cell_signature(cx, cy, 16, 1); e->vw = s_vramWrites; e->valid = 1; e->gen = ++s_genCounter;
     }
     int b = 0;
-    for (int i = 1; i < 16; i++) if (s_bank[i].clut == clut && s_bank[i].gen == e->gen) { b = i; break; }
+    if (e->bank > 0 && e->bank < 16 && s_bank[e->bank].clut == clut && s_bank[e->bank].gen == e->gen)
+    {
+        b = e->bank;
+    }
+    else
+    {
+        for (int i = 1; i < 16; i++) {
+            if (s_bank[i].clut == clut && s_bank[i].gen == e->gen) {
+                b = i;
+                break;
+            }
+        }
+    }
     if (b) s_cBankHitX++;
     else
     {
+        track_ovl_switch(0);
         b = 1;
         for (int i = 2; i < 16; i++) if (s_bank[i].lru < s_bank[b].lru) b = i;
         rdpq_tex_upload_tlut(e->pal, b * 16, 16); s_cTlut++; s_winBase = -1;
         e->use = ++s_useCounter;
         s_bank[b].clut = clut; s_bank[b].gen = e->gen;
+        s_tmemDirty = true;
     }
+    e->bank = b;
     s_bank[b].lru = ++s_bankLru;
     if (b != s_curBank)
     {
-        rdpq_tileparms_t tp = {}; tp.palette = b;
-        rdpq_set_tile(TILE0, FMT_CI4, 0, 32, &tp);
-        s_curBank = b;
+#if D2_RSP_GPU
+        if (s_d2gpuOvl)
+        {
+            track_ovl_switch(s_d2gpuOvl);
+            rspq_write(s_d2gpuOvl, D2G_CMD_SET_TILE_PAL, 0, (uint32_t)b);
+            s_curBank = b;
+            s_tmemDirty = true;
+        }
+        else
+#endif
+        {
+            track_ovl_switch(0);
+            rdpq_tileparms_t tp = {}; tp.palette = b;
+            rdpq_set_tile(TILE0, FMT_CI4, 0, 32, &tp);
+            s_curBank = b;
+            s_tmemDirty = true;
+        }
     }
 }
 #endif
@@ -392,7 +473,7 @@ static struct { int px, py, wu0, wv0; unsigned int sig, vw; } s_win;
 static TexSlot s_winTag;
 #ifdef D2_TEXWIN
 #ifndef D2_WINALIGN
-#define D2_WINALIGN 32
+#define D2_WINALIGN 16
 #endif
 static bool upload_pal(int clut);
 static bool upload_win(int px, int py, int clut, int u0, int v0, int w, int h)
@@ -419,14 +500,30 @@ static bool upload_win(int px, int py, int clut, int u0, int v0, int w, int h)
 #endif
     if (hit) { s_cWinHit++; s_upOu = s_win.wu0; s_upOv = s_win.wv0; s_lastUp.slot = &s_winTag; return true; }
 
-    // origem: alinhada a D2_WINALIGN se o triangulo couber; senao a 16; senao no proprio triangulo
-    int wu0 = u0 & ~(D2_WINALIGN - 1); if (u0 + w - wu0 > 64) wu0 = u0 & ~15; if (u0 + w - wu0 > 64) wu0 = u0 & ~1; if (wu0 + 64 > 256) wu0 = 192;
-    int wv0 = v0 & ~(D2_WINALIGN - 1); if (v0 + h - wv0 > 64) wv0 = v0 & ~15; if (v0 + h - wv0 > 64) wv0 = v0;      if (wv0 + 64 > 256) wv0 = 192;
+    // Origem centralizada e alinhada a 16 para cobrir o maximo de quads vizinhos do mesmo modelo
+    int opt_wu = (u0 + (w >> 1)) - 32;
+    if (opt_wu < 0) opt_wu = 0;
+    if (opt_wu > 192) opt_wu = 192;
+    int wu0 = opt_wu & ~15;
+    if (u0 < wu0) wu0 = u0 & ~15;
+    if (u0 + w > wu0 + 64) wu0 = ((u0 + w - 64) + 15) & ~15;
+    if (wu0 + 64 > 256) wu0 = 192;
+    if (wu0 < 0) wu0 = 0;
+
+    int opt_wv = (v0 + (h >> 1)) - 32;
+    if (opt_wv < 0) opt_wv = 0;
+    if (opt_wv > 192) opt_wv = 192;
+    int wv0 = opt_wv & ~15;
+    if (v0 < wv0) wv0 = v0 & ~15;
+    if (v0 + h > wv0 + 64) wv0 = ((v0 + h - 64) + 15) & ~15;
+    if (wv0 + 64 > 256) wv0 = 192;
+    if (wv0 < 0) wv0 = 0;
     shadow_sync_all();
     s_win.px = px; s_win.py = py; s_win.wu0 = wu0; s_win.wv0 = wv0; s_win.vw = s_vramWrites;
     s_shLastUse = ++s_useCounter;
     if (!s_leanTiles)
     {
+        track_ovl_switch(0);
         s_winBase = -1;
         rdpq_set_tile(TILE6, FMT_I8, 0, 32, NULL);
         rdpq_set_tile(TILE0, FMT_CI4, 0, 32, NULL);
@@ -436,16 +533,19 @@ static bool upload_win(int px, int py, int clut, int u0, int v0, int w, int h)
 #ifdef D2_PALBANK
         upload_pal_bank(clut);       // TILE0 foi refeito com o banco 0: reaplica o banco da paleta atual
 #endif
+        s_tmemDirty = true;
     }
     // coordenadas de carga em bytes da sombra (2 texels CI4 por byte): coluna = ((px-512)*4 + wu0)/2
     // o RDP limita coordenadas de carga a < 1024: a imagem comeca no byte 0 ou 512 da linha (troca so quando muda)
     int bx = ((px - 512) * 4 + wu0) >> 1; const int by = py + wv0;
     const int base = bx >= 512 ? 512 : 0;
-    if (base != s_winBase) { rdpq_set_texture_image_raw(0, PhysicalAddr((const char *)s_shadow + base), FMT_I8, SH_W * 2, 512); s_winBase = base; }
+    if (base != s_winBase) { track_ovl_switch(0); rdpq_set_texture_image_raw(0, PhysicalAddr((const char *)s_shadow + base), FMT_I8, SH_W * 2, 512); s_winBase = base; }
     bx -= base;
+    track_ovl_switch(0);
     rdpq_load_tile(TILE6, bx, by, bx + 32, by + 64);
     s_cLdWin++;
     s_tmemWin = true;
+    s_tmemDirty = true;
     s_upOu = wu0; s_upOv = wv0; s_lastUp.slot = &s_winTag;
     return true;
 }
@@ -516,7 +616,7 @@ static bool upload_region(int page, int clut, int u0, int v0, int w, int h, int 
         }
         if (s_lastUp.slot == 0 || s_lastUp.fmt != s_texFormat || s_lastUp.palEnt != e || s_lastUp.palGen != e->gen)
         {
-            rdpq_tex_upload_tlut(e->pal, 0, 16); s_cTlut++; s_winBase = -1;
+            rdpq_tex_upload_tlut(e->pal, 0, 16); s_cTlut++; s_winBase = -1; s_bank[0].clut = -1;
             e->use = ++s_useCounter;
             s_lastUp.fmt = s_texFormat; s_lastUp.palEnt = e; s_lastUp.palGen = e->gen; s_lastUp.clut = clut;
         }
@@ -534,12 +634,18 @@ static bool upload_region(int page, int clut, int u0, int v0, int w, int h, int 
         unsigned short *pal = s_palRing[s_palIdx];
         for (int i = 0; i < n; i++) pal[i] = conv_color(src[(cx + i) & 1023]);
         data_cache_hit_writeback(pal, n * 2);
-        rdpq_tex_upload_tlut(pal, 0, n); s_cTlut++; s_winBase = -1;
+        rdpq_tex_upload_tlut(pal, 0, n); s_cTlut++; s_winBase = -1; if (n > 16) banks_invalidate(); else s_bank[0].clut = -1;
 #ifdef D2_PALBANK
         if (n > 16) banks_invalidate();
 #endif
         s_palUse[s_palIdx] = ++s_useCounter;
         s_lastUp.clut = clut; s_lastUp.fmt = s_texFormat; s_lastUp.palVer = s_vramWrites; s_lastUp.palEnt = 0;
+    }
+    else if (s_texFormat == TF_8_BIT)
+    {
+        // paleta de 256 cores: reenvia a cada bloco (algo sobrescreve a metade alta da TMEM entre triangulos; corrigia o loading)
+        rdpq_tex_upload_tlut(s_palRing[s_palIdx], 0, 256); s_cTlut++; banks_invalidate();
+        s_palUse[s_palIdx] = ++s_useCounter;
     }
     if (useShadow)
     {
@@ -598,18 +704,22 @@ static bool upload_region(int page, int clut, int u0, int v0, int w, int h, int 
 }
 
 #ifdef D2_TEXWIN
-// paleta de 16 cores (mesma regra do caminho antigo: recarrega se mudou CLUT, VRAM ou modo)
+// paleta de 16 ou 256 cores (recarrega se mudou CLUT, formato, VRAM ou modo)
 static bool upload_pal(int clut)
 {
     if (s_lastUp.clut == clut && s_lastUp.fmt == s_texFormat && s_lastUp.palVer == s_vramWrites && s_lastUp.slot != 0) return false;
     const int cx = (clut & 63) * 16, cy = clut >> 6;
     const unsigned short *src = vram + ((cy & 511) << 10);
+    const int n = s_texFormat == TF_4_BIT ? 16 : 256;
     s_palIdx = (s_palIdx + 1) % PAL_RING;
     if (s_palUse[s_palIdx] > s_doneCounter) rdp_wait_idle();
     unsigned short *pal = s_palRing[s_palIdx];
-    for (int i = 0; i < 16; i++) pal[i] = conv_color(src[(cx + i) & 1023]);
-    data_cache_hit_writeback(pal, 32);
-    rdpq_tex_upload_tlut(pal, 0, 16); s_cTlut++; s_winBase = -1;
+    for (int i = 0; i < n; i++) pal[i] = conv_color(src[(cx + i) & 1023]);
+    data_cache_hit_writeback(pal, n * 2);
+    rdpq_tex_upload_tlut(pal, 0, n); s_cTlut++; s_winBase = -1; if (n > 16) banks_invalidate(); else s_bank[0].clut = -1;
+#ifdef D2_PALBANK
+    if (n > 16) banks_invalidate();
+#endif
     s_palUse[s_palIdx] = ++s_useCounter;
     s_lastUp.clut = clut; s_lastUp.fmt = s_texFormat; s_lastUp.palVer = s_vramWrites; s_lastUp.palEnt = 0;
     return true;
@@ -635,6 +745,31 @@ static int clip_poly(const DV *in, int n, DV *out, int axis, float bound, bool k
             DV c;
             c.x = a.x + (b.x - a.x) * t; c.y = a.y + (b.y - a.y) * t; c.u = a.u + (b.u - a.u) * t; c.v = a.v + (b.v - a.v) * t;
             c.r = a.r + (b.r - a.r) * t; c.g = a.g + (b.g - a.g) * t; c.b = a.b + (b.b - a.b) * t; c.a = a.a + (b.a - a.a) * t;
+            out[m++] = c;
+        }
+    }
+    return m;
+}
+
+// recorta o poligono contra um semi-plano no espaco de tela (X ou Y): eixo 0 = X, 1 = Y; keepGE: mantem >= bound
+static int clip_poly_screen(const DV *in, int n, DV *out, int axis, float bound, bool keepGE)
+{
+    int m = 0;
+    for (int i = 0; i < n; i++)
+    {
+        const DV &a = in[i], &b = in[(i + 1) % n];
+        float va = (axis ? a.y : a.x) - bound, vb = (axis ? b.y : b.x) - bound;
+        if (!keepGE) { va = -va; vb = -vb; }
+        const bool ina = va >= 0, inb = vb >= 0;
+        if (ina) out[m++] = a;
+        if (ina != inb)
+        {
+            float t = va / (va - vb);
+            DV c;
+            c.x = a.x + (b.x - a.x) * t; c.y = a.y + (b.y - a.y) * t;
+            c.u = a.u + (b.u - a.u) * t; c.v = a.v + (b.v - a.v) * t;
+            c.r = a.r + (b.r - a.r) * t; c.g = a.g + (b.g - a.g) * t;
+            c.b = a.b + (b.b - a.b) * t; c.a = a.a + (b.a - a.a) * t;
             out[m++] = c;
         }
     }
@@ -735,6 +870,22 @@ void PsyX_EndScene(void)
     s_cLdSh = s_cLdReg = s_cLdWin = s_cTlut = s_cWinHit = s_cCalls = 0; s_cBankHitX = 0; s_dCntP = s_dTicks = s_tTicks = s_nTri = s_nClip = s_clipTicks = s_upTicks = s_nSub = 0; s_palT = s_winHitT = s_winMissT = s_regT = s_nHitVw = 0; s_vwFrame = s_vramWrites; s_palT = s_winHitT = s_winMissT = s_regT = 0; s_vwFrame = s_vramWrites;
     s_benchTris = s_triCount; s_benchTex = s_texTriCount;
     s_triCount = s_texTriCount = s_subTri = s_calls = 0;
+#if D2_RSP_GPU
+    if ((d2_rdp_frames % 30) == 0) {
+        debugf("[rsp_ovl] ovl_id=0x%lx f3=%u f4=%u ft4_rsp=%u ft4_cpu=%u ft4_tot=%u ft3=%u dir_ft4=%u ovl_sw=%u\n",
+            (unsigned long)s_d2gpuOvl, s_rspF3Count, s_rspF4Count, s_ft4Rsp, s_ft4Cpu, s_ft4Total, s_ft3Total, s_directFt4Total, s_ovlSwitches);
+        debugf("[ft4_stat] rsp=%u cpu=%u ci4_elig=%u rej_dim=%u rej_fmt=%u rej_clip=%u rej_scale=%u rej_up=%u win_hit=%u win_miss=%u tlut_up=%u\n",
+            s_ft4Rsp, s_ft4Cpu, s_ft4Ci4Eligible, s_ft4RejDim, s_ft4RejFmt, s_ft4RejClip, s_ft4RejScale, s_ft4RejUp, s_cWinHit, s_cLdWin, s_cTlut);
+        s_ft4Rsp = s_ft4Cpu = s_ft4Total = s_ft3Total = s_directFt4Total = s_ft4Ci4Eligible = 0;
+        s_ft4RejDim = s_ft4RejFmt = s_ft4RejClip = s_ft4RejScale = s_ft4RejUp = 0;
+        s_ovlSwitches = 0;
+    }
+    if (s_d2gpuOvl) {
+        track_ovl_switch(s_d2gpuOvl);
+        rspq_write(s_d2gpuOvl, D2G_CMD_DRAW_END);
+    }
+#endif
+    track_ovl_switch(0);
     rdpq_detach_show();
     {   // medicao alinhada ao jogo: ticks medios por quadro em janelas de 32 passos do jogo (CameraCnt), independente da velocidade
         extern int CameraCnt;
@@ -828,7 +979,7 @@ static bool ensure_slots(void)
 {
     if (s_slots) return true;
     s_slots = (TexSlot *)malloc(sizeof(TexSlot) * TEX_SLOTS);
-    if (!s_slots) return false;
+    assertf(s_slots != NULL, "FALHA CRITICA: Memoria insuficiente no Heap para o cache de texturas (%d bytes)!\n", (int)(sizeof(TexSlot) * TEX_SLOTS));
     memset(s_slots, 0, sizeof(TexSlot) * TEX_SLOTS);
     s_lastUp.clut = -1;
     return true;
@@ -853,6 +1004,7 @@ static inline void begin_batch(bool tex, BlendMode bm)
 
 static void tri_core(const PV *A, const PV *B, const PV *C, int page, int clut)
 {
+    track_ovl_switch(0);
 #ifdef D2_XP_NOEMIT
 #define rspq_write(...) ((void)0)
 #define rdpq_write(...) ((void)0)
@@ -865,7 +1017,46 @@ static void tri_core(const PV *A, const PV *B, const PV *C, int page, int clut)
     if (X4[2] < mnx) mnx = X4[2]; if (X4[2] > mxx) mxx = X4[2]; if (Y4[2] < mny) mny = Y4[2]; if (Y4[2] > mxy) mxy = Y4[2];
     // fora do scissor?
     if (mxx < s_ctxCx0 || mnx >= s_ctxCx1 || mxy < s_ctxCy0 || mny >= s_ctxCy1) return;
-    if (mxx - mnx > 16000 || mxy - mny > 16000) return;
+
+    // Se o triangulo ultrapassa o range do RDP 12-bit ou tem dimensao extrema (>4000px),
+    // recorta contra o viewport estendido para evitar que predios desaparecam ou gerem artefatos gigantes
+    if (mnx < -256 || mxx > 1536 || mny < -256 || mxy > 1216 || mxx - mnx > 16000 || mxy - mny > 16000)
+    {
+        DV pin[3], ptmp1[8], ptmp2[8];
+        for (int i = 0; i < 3; i++) {
+            pin[i].x = X4[i] * 0.25f; pin[i].y = Y4[i] * 0.25f;
+            pin[i].u = v[i]->s32 * (1.0f / 32.0f); pin[i].v = v[i]->t32 * (1.0f / 32.0f);
+            pin[i].r = ((rgba[i] >> 24) & 255) / 255.0f;
+            pin[i].g = ((rgba[i] >> 16) & 255) / 255.0f;
+            pin[i].b = ((rgba[i] >> 8) & 255) / 255.0f;
+            pin[i].a = 1.0f;
+        }
+        int np = 3;
+        np = clip_poly_screen(pin, np, ptmp1, 0, -64.0f, true);
+        if (np < 3) return;
+        np = clip_poly_screen(ptmp1, np, ptmp2, 0, (float)(SCREEN_W + 64), false);
+        if (np < 3) return;
+        np = clip_poly_screen(ptmp2, np, ptmp1, 1, -64.0f, true);
+        if (np < 3) return;
+        np = clip_poly_screen(ptmp1, np, ptmp2, 1, (float)(SCREEN_H + 64), false);
+        if (np < 3) return;
+
+        for (int i = 1; i + 1 < np; i++) {
+            PV sub[3];
+            const DV *d[3] = { &ptmp2[0], &ptmp2[i], &ptmp2[i + 1] };
+            for (int k = 0; k < 3; k++) {
+                sub[k].X4 = fl4(d[k]->x);
+                sub[k].Y4 = fl4(d[k]->y);
+                sub[k].rgba = ((uint32_t)(d[k]->r * 255.0f) << 24) |
+                              ((uint32_t)(d[k]->g * 255.0f) << 16) |
+                              ((uint32_t)(d[k]->b * 255.0f) << 8)  | 255;
+                sub[k].s32 = (int)(d[k]->u * 32.0f + 0.5f);
+                sub[k].t32 = (int)(d[k]->v * 32.0f + 0.5f);
+            }
+            tri_core(&sub[0], &sub[1], &sub[2], page, clut);
+        }
+        return;
+    }
 
     s_triCount++;
     if (!s_ctxTex)
@@ -975,11 +1166,29 @@ static void tri_core(const PV *A, const PV *B, const PV *C, int page, int clut)
 #undef rspq_write
 #undef rdpq_write
 #endif
+static const uint8_t s_shadeLut[256] = {
+      0,   1,   3,   5,   7,   9,  11,  13,  15,  17,  19,  21,  23,  25,  27,  29,
+     31,  33,  35,  37,  39,  41,  43,  45,  47,  49,  51,  53,  55,  57,  59,  61,
+     63,  65,  67,  69,  71,  73,  75,  77,  79,  81,  83,  85,  87,  89,  91,  93,
+     95,  97,  99, 101, 103, 105, 107, 109, 111, 113, 115, 117, 119, 121, 123, 125,
+    127, 129, 131, 133, 135, 137, 139, 141, 143, 145, 147, 149, 151, 153, 155, 157,
+    159, 161, 163, 165, 167, 169, 171, 173, 175, 177, 179, 181, 183, 185, 187, 189,
+    191, 193, 195, 197, 199, 201, 203, 205, 207, 209, 211, 213, 215, 217, 219, 221,
+    223, 225, 227, 229, 231, 233, 235, 237, 239, 241, 243, 245, 247, 249, 251, 253,
+    255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255,
+    255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255,
+    255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255,
+    255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255,
+    255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255,
+    255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255,
+    255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255,
+    255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255
+};
 static inline uint32_t shade_rgba(unsigned r, unsigned g, unsigned b)
 {
-    r = (r * 255) >> 7; g = (g * 255) >> 7; b = (b * 255) >> 7;
-    if (r > 255) r = 255; if (g > 255) g = 255; if (b > 255) b = 255;
-    return (r << 24) | (g << 16) | (b << 8) | 255;
+    return ((uint32_t)s_shadeLut[r & 255] << 24) |
+           ((uint32_t)s_shadeLut[g & 255] << 16) |
+           ((uint32_t)s_shadeLut[b & 255] << 8)  | 255;
 }
 
 void GR_DrawTriangles(int start, int count)
@@ -1067,7 +1276,7 @@ static bool subdiv_quad(const PV *q, int page, int clut)
                 s_subTu = (cs / tw) * tw; s_subTv = (ct / th) * th;
             }
             tri_core(&p[0], &p[1], &p[2], page, clut);
-            tri_core(&p[1], &p[2], &p[3], page, clut);
+            tri_core(&p[1], &p[3], &p[2], page, clut);
         }
     s_subq = false;
     return true;
@@ -1095,18 +1304,145 @@ int d2_native_ft4(POLY_FT4 *p)
     begin_batch(s_texFormat != TF_32_BIT_RGBA, BM_NONE);
     const int ofx = activeDrawEnv.ofs[0] - activeDispEnv.disp.x;
     const int ofy = activeDrawEnv.ofs[1] - activeDispEnv.disp.y;
+
+    s_ft4Total++;
+#if D2_RSP_TEX
+    if (s_texFormat == TF_4_BIT) {
+        s_ft4Ci4Eligible++;
+    } else {
+        s_ft4RejFmt++;
+    }
+
+    if (s_d2gpuOvl && s_texFormat == TF_4_BIT)
+    {
+        if (s_ctxSx16 != 65536 || s_ctxSy16 != 65536)
+        {
+            s_ft4RejScale++;
+        }
+        else
+        {
+            short minx = p->x0, maxx = p->x0, miny = p->y0, maxy = p->y0;
+            if (p->x1 < minx) minx = p->x1; if (p->x1 > maxx) maxx = p->x1;
+            if (p->x2 < minx) minx = p->x2; if (p->x2 > maxx) maxx = p->x2;
+            if (p->x3 < minx) minx = p->x3; if (p->x3 > maxx) maxx = p->x3;
+            if (p->y1 < miny) miny = p->y1; if (p->y1 > maxy) maxy = p->y1;
+            if (p->y2 < miny) miny = p->y2; if (p->y2 > maxy) maxy = p->y2;
+            if (p->y3 < miny) miny = p->y3; if (p->y3 > maxy) maxy = p->y3;
+            int sx0 = (minx + ofx) << 2, sx1 = (maxx + ofx) << 2;
+            int sy0 = (miny + ofy) << 2, sy1 = (maxy + ofy) << 2;
+            if (sx1 < s_ctxCx0 || sx0 >= s_ctxCx1 || sy1 < s_ctxCy0 || sy0 >= s_ctxCy1) return 9;
+            if (sx0 < -4096 || sx1 > 4095 || sy0 < -4096 || sy1 > 4095 || sx1 - sx0 > 16000 || sy1 - sy0 > 16000)
+            {
+                s_ft4RejClip++;
+            }
+            else
+            {
+                int umin = p->u0, umax = p->u0;
+                if (p->u1 < umin) umin = p->u1; if (p->u1 > umax) umax = p->u1;
+                if (p->u2 < umin) umin = p->u2; if (p->u2 > umax) umax = p->u2;
+                if (p->u3 < umin) umin = p->u3; if (p->u3 > umax) umax = p->u3;
+
+                int vmin = p->v0, vmax = p->v0;
+                if (p->v1 < vmin) vmin = p->v1; if (p->v1 > vmax) vmax = p->v1;
+                if (p->v2 < vmin) vmin = p->v2; if (p->v2 > vmax) vmax = p->v2;
+                if (p->v3 < vmin) vmin = p->v3; if (p->v3 > vmax) vmax = p->v3;
+
+                int uw = (umax > umin) ? (umax - umin) : 1;
+                int vh = (vmax > vmin) ? (vmax - vmin) : 1;
+                if (uw > 64 || vh > 64)
+                {
+                    s_ft4RejDim++;
+                }
+                else
+                {
+                    const int px = (p->tpage & 15) * 64, py = ((p->tpage >> 4) & 1) * 256;
+                    if (px < 512)
+                    {
+                        s_ft4RejDim++;
+                    }
+                    else
+                    {
+                        if (!upload_win(px, py, p->clut, umin, vmin, uw, vh))
+                        {
+                            s_ft4RejUp++;
+                        }
+                        else
+                        {
+                            if (s_rspOfx != ofx || s_rspOfy != ofy)
+                            {
+                                s_rspOfx = ofx; s_rspOfy = ofy;
+                                track_ovl_switch(s_d2gpuOvl);
+                                rspq_write(s_d2gpuOvl, D2G_CMD_SET_OFFSET, 0, ((uint32_t)(int16_t)ofx << 16) | ((uint32_t)(int16_t)ofy & 0xFFFF));
+                            }
+                            if (s_rspTexOu != s_upOu || s_rspTexOv != s_upOv)
+                            {
+                                s_rspTexOu = s_upOu; s_rspTexOv = s_upOv;
+                                track_ovl_switch(s_d2gpuOvl);
+                                rspq_write(s_d2gpuOvl, D2G_CMD_SET_TEX_ORIGIN, 0, ((uint32_t)(uint16_t)s_upOu << 16) | ((uint32_t)(uint16_t)s_upOv & 0xFFFF));
+                            }
+                            if (s_tmemDirty)
+                            {
+                                __rdpq_autosync_use(AUTOSYNC_PIPE | AUTOSYNC_TILE(0) | AUTOSYNC_TMEM(0));
+                                s_tmemDirty = false;
+                            }
+
+                            static uint32_t s_lastRgb = 0xFFFFFFFF, s_lastCol = 0;
+                            uint32_t curRgb = ((uint32_t)p->r0 << 16) | ((uint32_t)p->g0 << 8) | p->b0;
+                            uint32_t col;
+                            if (__builtin_expect(curRgb == s_lastRgb, 1)) {
+                                col = s_lastCol;
+                            } else {
+                                s_lastRgb = curRgb;
+                                s_lastCol = col = ((uint32_t)s_shadeLut[p->r0] << 16) | ((uint32_t)s_shadeLut[p->g0] << 8) | s_shadeLut[p->b0];
+                            }
+
+                            uint32_t xy0 = *(const uint32_t*)&p->x0;
+                            uint32_t xy1 = *(const uint32_t*)&p->x1;
+                            uint32_t xy2 = *(const uint32_t*)&p->x2;
+                            uint32_t xy3 = *(const uint32_t*)&p->x3;
+                            uint32_t uv01 = (*(const uint16_t*)&p->u0 << 16) | *(const uint16_t*)&p->u1;
+                            uint32_t uv23 = (*(const uint16_t*)&p->u2 << 16) | *(const uint16_t*)&p->u3;
+
+                            track_ovl_switch(s_d2gpuOvl);
+                            rspq_write(s_d2gpuOvl, D2G_CMD_POLY_FT4, col, xy0, xy1, xy2, xy3, uv01, uv23);
+                            s_rspFT4Count++;
+                            s_ft4Rsp++;
+                            s_triCount += 2;
+                            s_texTriCount += 2;
+                            return 9;
+                        }
+                    }
+                }
+            }
+        }
+        s_ft4Fallback++;
+        s_ft4Cpu++;
+    }
+#endif
     const short *xy[4] = { &p->x0, &p->x1, &p->x2, &p->x3 };
     const unsigned char *uv[4] = { &p->u0, &p->u1, &p->u2, &p->u3 };
     const uint32_t col = shade_rgba(p->r0, p->g0, p->b0);
     PV q[4];
-    for (int i = 0; i < 4; i++)
+    if (__builtin_expect(s_ctxSx16 == 65536 && s_ctxSy16 == 65536, 1))
     {
-        q[i].X4 = ((xy[i][0] + ofx) * s_ctxSx16) >> 14;
-        q[i].Y4 = ((xy[i][1] + ofy) * s_ctxSy16) >> 14;
-        q[i].rgba = col; q[i].s32 = uv[i][0] << 5; q[i].t32 = uv[i][1] << 5;
+        for (int i = 0; i < 4; i++)
+        {
+            q[i].X4 = (xy[i][0] + ofx) << 2;
+            q[i].Y4 = (xy[i][1] + ofy) << 2;
+            q[i].rgba = col; q[i].s32 = uv[i][0] << 5; q[i].t32 = uv[i][1] << 5;
+        }
+    }
+    else
+    {
+        for (int i = 0; i < 4; i++)
+        {
+            q[i].X4 = ((xy[i][0] + ofx) * s_ctxSx16) >> 14;
+            q[i].Y4 = ((xy[i][1] + ofy) * s_ctxSy16) >> 14;
+            q[i].rgba = col; q[i].s32 = uv[i][0] << 5; q[i].t32 = uv[i][1] << 5;
+        }
     }
     tri_core(&q[0], &q[1], &q[2], p->tpage, p->clut);
-    tri_core(&q[1], &q[2], &q[3], p->tpage, p->clut);
+    tri_core(&q[1], &q[3], &q[2], p->tpage, p->clut);
     return 9;
 }
 int d2_native_rect(P_TAG *tag)
@@ -1145,7 +1481,7 @@ int d2_native_rect(P_TAG *tag)
         q[i].rgba = col; q[i].s32 = (u0 + ((i & 1) ? w : 0)) << 5; q[i].t32 = (v0 + ((i & 2) ? h : 0)) << 5;
     }
     tri_core(&q[0], &q[1], &q[2], activeDrawEnv.tpage, clut);
-    tri_core(&q[1], &q[2], &q[3], activeDrawEnv.tpage, clut);
+    tri_core(&q[1], &q[3], &q[2], activeDrawEnv.tpage, clut);
     return len;
 }
 static void d2_line_segment(short ax, short ay, short bx, short by, uint32_t ca, uint32_t cb, BlendMode bm)
@@ -1226,46 +1562,51 @@ int d2_native_vram_packet(P_TAG *tag)
 }
 extern "C" int d2_native_dispatch(P_TAG *tag)
 {
-    const int type=tag->code&0xF0;
-    if(tag->code==0xB3) return d2_native_ft4((POLY_FT4*)tag);
-    if(type==0x00 || type==0xA0) return d2_native_vram_packet(tag);
-    if(type==0x20 || type==0x30) return d2_direct_poly(tag);
-    if(type==0x40 || type==0x50) return d2_native_line(tag);
-    if(type==0x60 || type==0x70) return d2_native_rect(tag);
-    if(type==0xB0) return d2_native_psyx(tag);
-    if(type==0xE0) return d2_native_drawenv(tag);
+    if (__builtin_expect(tag->code == 0xB3, 1)) return d2_native_ft4((POLY_FT4*)tag);
+    const int type = tag->code & 0xF0;
+    if (__builtin_expect(type == 0x20 || type == 0x30, 1)) return d2_direct_poly(tag);
+    if (type == 0xE0) return d2_native_drawenv(tag);
+    if (type == 0x40 || type == 0x50) return d2_native_line(tag);
+    if (type == 0x60 || type == 0x70) return d2_native_rect(tag);
+    if (type == 0x00 || type == 0xA0) return d2_native_vram_packet(tag);
+    if (type == 0xB0) return d2_native_psyx(tag);
     return 0;
 }
 extern "C" int d2_native_draw_prim(P_TAG *tag)
 {
-    const int n=d2_native_dispatch(tag);
-    if(n<=0) debugf("[native-gpu] primitiva isolada desconhecida code=%02x\n",tag ? tag->code : 0);
+    const int n = d2_native_dispatch(tag);
+    if (__builtin_expect(n <= 0, 0)) debugf("[native-gpu] primitiva isolada desconhecida code=%02x\n", tag ? tag->code : 0);
     return n;
 }
 extern "C" void d2_native_draw_ot(u_long *ot)
 {
-    if(!ot) return;
-    P_TAG *base=(P_TAG*)ot;
-    unsigned nodes=0;
-    for(;;) {
-        if(++nodes > 65536) { debugf("[native-ot] ciclo ou OT invalida\n"); break; }
-        const unsigned words=getlen(base);
-        if(words) {
-            if(words>32) debugf("[native-ot] bloco grande len=%u code=%02x\n",words,base->code);
-            uintptr_t cur=(uintptr_t)base, end=cur+(words+P_LEN)*sizeof(u_int);
-            while(cur<end) {
-                P_TAG *tag=(P_TAG*)cur;
-                int n=d2_native_dispatch(tag);
-                uintptr_t next=cur+(n+P_LEN)*sizeof(u_int);
-                if(n<=0 || next<=cur || next>end) { debugf("[native-ot] pacote invalido code=%02x len=%d rest=%u\n",tag->code,n,(unsigned)(end-cur)); cur=end; break; }
-                cur=next;
+    if (!ot) return;
+    P_TAG *base = (P_TAG*)ot;
+    unsigned nodes = 0;
+    for (;;) {
+        if (__builtin_expect(++nodes > 65536, 0)) { debugf("[native-ot] ciclo ou OT invalida\n"); break; }
+        const unsigned words = getlen(base);
+        if (__builtin_expect(words != 0, 1)) {
+            uintptr_t cur = (uintptr_t)base, end = cur + (words + P_LEN) * sizeof(u_int);
+            while (cur < end) {
+                P_TAG *tag = (P_TAG*)cur;
+                int n = d2_native_dispatch(tag);
+                uintptr_t next = cur + (n + P_LEN) * sizeof(u_int);
+                if (__builtin_expect(n <= 0 || next <= cur || next > end, 0)) {
+                    cur = end;
+                    break;
+                }
+                cur = next;
             }
         }
-        if(isendprim(base)) break;
-        P_TAG *next=(P_TAG*)nextPrim(base);
-        if(!next || next==base) { debugf("[native-ot] elo invalido\n"); break; }
-        base=next;
+        if (isendprim(base)) break;
+        P_TAG *next = (P_TAG*)nextPrim(base);
+        if (__builtin_expect(!next || next == base, 0)) break;
+        base = next;
     }
+#if D2_RSP_GPU
+    if (s_d2gpuOvl) rspq_write(s_d2gpuOvl, D2G_CMD_DRAW_END);
+#endif
 }
 int d2_direct_poly(P_TAG *tag)
 {
@@ -1304,6 +1645,8 @@ int d2_direct_poly_i(P_TAG *tag)
     }
     if (tex)
     {
+        if (!quad && !gour) s_ft3Total++;
+        else if (quad && !gour) s_directFt4Total++;
         activeDrawEnv.tpage = tpage;
         // POLY_FT3 nulo: so troca a tpage (truque oficial da SCE)
         if (!quad && !gour && xs[0] == -1 && ys[0] == -1 && xs[1] == -1 && ys[1] == -1 && xs[2] == -1 && ys[2] == -1) return len;
@@ -1326,13 +1669,145 @@ int d2_direct_poly_i(P_TAG *tag)
     s_dCnt++;
 
     const int ofx = activeDrawEnv.ofs[0] - activeDispEnv.disp.x, ofy = activeDrawEnv.ofs[1] - activeDispEnv.disp.y;
-    PV pv[4];
-    for (int i = 0; i < nv; i++)
+#if D2_RSP_GPU
+    if (!tex && !gour && s_ctxSx16 == 65536 && s_ctxSy16 == 65536)
     {
-        pv[i].X4 = ((int)(xs[i] + ofx) * s_ctxSx16) >> 14;
-        pv[i].Y4 = ((int)(ys[i] + ofy) * s_ctxSy16) >> 14;
-        pv[i].rgba = shadeOn ? shade_rgba(cr[i], cg[i], cb[i]) : shade_rgba(128, 128, 128);
-        pv[i].s32 = us[i] << 5; pv[i].t32 = vs[i] << 5;
+        short minx = xs[0], maxx = xs[0], miny = ys[0], maxy = ys[0];
+        for (int i = 1; i < nv; i++) {
+            if (xs[i] < minx) minx = xs[i]; if (xs[i] > maxx) maxx = xs[i];
+            if (ys[i] < miny) miny = ys[i]; if (ys[i] > maxy) maxy = ys[i];
+        }
+        int sx0 = (minx + ofx) << 2, sx1 = (maxx + ofx) << 2;
+        int sy0 = (miny + ofy) << 2, sy1 = (maxy + ofy) << 2;
+        if (sx1 < s_ctxCx0 || sx0 >= s_ctxCx1 || sy1 < s_ctxCy0 || sy0 >= s_ctxCy1) return len;
+        if (sx0 >= -4096 && sx1 <= 4095 && sy0 >= -4096 && sy1 <= 4095)
+        {
+            if (s_rspOfx != ofx || s_rspOfy != ofy)
+            {
+                s_rspOfx = ofx;
+                s_rspOfy = ofy;
+                track_ovl_switch(s_d2gpuOvl);
+                rspq_write(s_d2gpuOvl, D2G_CMD_SET_OFFSET, 0, ((uint32_t)(int16_t)ofx << 16) | ((uint32_t)(int16_t)ofy & 0xFFFF));
+            }
+            __rdpq_autosync_use(AUTOSYNC_PIPE);
+            s_triCount += quad ? 2 : 1;
+            if (!quad)
+            {
+                s_rspF3Count++;
+                POLY_F3 *p = (POLY_F3 *)tag;
+                uint32_t col = shadeOn ? ((uint32_t)s_shadeLut[p->r0] << 16) | ((uint32_t)s_shadeLut[p->g0] << 8) | s_shadeLut[p->b0]
+                                       : ((uint32_t)s_shadeLut[128] << 16) | ((uint32_t)s_shadeLut[128] << 8) | s_shadeLut[128];
+                uint32_t xy0 = ((uint32_t)(uint16_t)p->x0 << 16) | (uint16_t)p->y0;
+                uint32_t xy1 = ((uint32_t)(uint16_t)p->x1 << 16) | (uint16_t)p->y1;
+                uint32_t xy2 = ((uint32_t)(uint16_t)p->x2 << 16) | (uint16_t)p->y2;
+                track_ovl_switch(s_d2gpuOvl);
+                rspq_write(s_d2gpuOvl, D2G_CMD_POLY_F3, col, xy0, xy1, xy2);
+                return len;
+            }
+            else
+            {
+                s_rspF4Count++;
+                POLY_F4 *p = (POLY_F4 *)tag;
+                uint32_t col = shadeOn ? ((uint32_t)s_shadeLut[p->r0] << 16) | ((uint32_t)s_shadeLut[p->g0] << 8) | s_shadeLut[p->b0]
+                                       : ((uint32_t)s_shadeLut[128] << 16) | ((uint32_t)s_shadeLut[128] << 8) | s_shadeLut[128];
+                uint32_t xy0 = ((uint32_t)(uint16_t)p->x0 << 16) | (uint16_t)p->y0;
+                uint32_t xy1 = ((uint32_t)(uint16_t)p->x1 << 16) | (uint16_t)p->y1;
+                uint32_t xy2 = ((uint32_t)(uint16_t)p->x2 << 16) | (uint16_t)p->y2;
+                uint32_t xy3 = ((uint32_t)(uint16_t)p->x3 << 16) | (uint16_t)p->y3;
+                track_ovl_switch(s_d2gpuOvl);
+                rspq_write(s_d2gpuOvl, D2G_CMD_POLY_F4, col, xy0, xy1, xy2, xy3);
+                return len;
+            }
+        }
+    }
+#if D2_RSP_TEX
+    if (s_d2gpuOvl && tex && quad && !gour && !semi && s_texFormat == TF_4_BIT && s_ctxSx16 == 65536 && s_ctxSy16 == 65536)
+    {
+        short minx = xs[0], maxx = xs[0], miny = ys[0], maxy = ys[0];
+        for (int i = 1; i < 4; i++) {
+            if (xs[i] < minx) minx = xs[i]; if (xs[i] > maxx) maxx = xs[i];
+            if (ys[i] < miny) miny = ys[i]; if (ys[i] > maxy) maxy = ys[i];
+        }
+        int sx0 = (minx + ofx) << 2, sx1 = (maxx + ofx) << 2;
+        int sy0 = (miny + ofy) << 2, sy1 = (maxy + ofy) << 2;
+        if (sx1 < s_ctxCx0 || sx0 >= s_ctxCx1 || sy1 < s_ctxCy0 || sy0 >= s_ctxCy1) return len;
+        if (sx0 >= -4096 && sx1 <= 4095 && sy0 >= -4096 && sy1 <= 4095 && sx1 - sx0 <= 16000 && sy1 - sy0 <= 16000)
+        {
+            int umin = us[0], umax = us[0], vmin = vs[0], vmax = vs[0];
+            for (int i = 1; i < 4; i++) {
+                if (us[i] < umin) umin = us[i]; if (us[i] > umax) umax = us[i];
+                if (vs[i] < vmin) vmin = vs[i]; if (vs[i] > vmax) vmax = vs[i];
+            }
+            int uw = (umax > umin) ? (umax - umin) : 1;
+            int vh = (vmax > vmin) ? (vmax - vmin) : 1;
+            if (uw <= 64 && vh <= 64)
+            {
+                const int px = (tpage & 15) * 64, py = ((tpage >> 4) & 1) * 256;
+                if (px >= 512)
+                {
+                    if (upload_win(px, py, clut, umin, vmin, uw, vh))
+                    {
+                        if (s_rspOfx != ofx || s_rspOfy != ofy)
+                        {
+                            s_rspOfx = ofx; s_rspOfy = ofy;
+                            track_ovl_switch(s_d2gpuOvl);
+                            rspq_write(s_d2gpuOvl, D2G_CMD_SET_OFFSET, 0, ((uint32_t)(int16_t)ofx << 16) | ((uint32_t)(int16_t)ofy & 0xFFFF));
+                        }
+                        if (s_rspTexOu != s_upOu || s_rspTexOv != s_upOv)
+                        {
+                            s_rspTexOu = s_upOu; s_rspTexOv = s_upOv;
+                            track_ovl_switch(s_d2gpuOvl);
+                            rspq_write(s_d2gpuOvl, D2G_CMD_SET_TEX_ORIGIN, 0, ((uint32_t)(uint16_t)s_upOu << 16) | ((uint32_t)(uint16_t)s_upOv & 0xFFFF));
+                        }
+                        if (s_tmemDirty)
+                        {
+                            __rdpq_autosync_use(AUTOSYNC_PIPE | AUTOSYNC_TILE(0) | AUTOSYNC_TMEM(0));
+                            s_tmemDirty = false;
+                        }
+
+                        uint32_t col = shadeOn ? (((uint32_t)s_shadeLut[cr[0]] << 16) | ((uint32_t)s_shadeLut[cg[0]] << 8) | s_shadeLut[cb[0]])
+                                               : (((uint32_t)s_shadeLut[128] << 16) | ((uint32_t)s_shadeLut[128] << 8) | s_shadeLut[128]);
+                        uint32_t xy0 = ((uint32_t)(uint16_t)xs[0] << 16) | (uint16_t)ys[0];
+                        uint32_t xy1 = ((uint32_t)(uint16_t)xs[1] << 16) | (uint16_t)ys[1];
+                        uint32_t xy2 = ((uint32_t)(uint16_t)xs[2] << 16) | (uint16_t)ys[2];
+                        uint32_t xy3 = ((uint32_t)(uint16_t)xs[3] << 16) | (uint16_t)ys[3];
+                        uint32_t uv01 = ((uint32_t)us[0] << 24) | ((uint32_t)vs[0] << 16) | ((uint32_t)us[1] << 8) | vs[1];
+                        uint32_t uv23 = ((uint32_t)us[2] << 24) | ((uint32_t)vs[2] << 16) | ((uint32_t)us[3] << 8) | vs[3];
+
+                        track_ovl_switch(s_d2gpuOvl);
+                        rspq_write(s_d2gpuOvl, D2G_CMD_POLY_FT4, col, xy0, xy1, xy2, xy3, uv01, uv23);
+                        s_rspFT4Count++;
+                        s_ft4Rsp++;
+                        s_triCount += 2;
+                        s_texTriCount += 2;
+                        return len;
+                    }
+                }
+            }
+        }
+    }
+#endif
+#endif
+    PV pv[4];
+    if (__builtin_expect(s_ctxSx16 == 65536 && s_ctxSy16 == 65536, 1))
+    {
+        for (int i = 0; i < nv; i++)
+        {
+            pv[i].X4 = (xs[i] + ofx) << 2;
+            pv[i].Y4 = (ys[i] + ofy) << 2;
+            pv[i].rgba = shadeOn ? shade_rgba(cr[i], cg[i], cb[i]) : shade_rgba(128, 128, 128);
+            pv[i].s32 = us[i] << 5; pv[i].t32 = vs[i] << 5;
+        }
+    }
+    else
+    {
+        for (int i = 0; i < nv; i++)
+        {
+            pv[i].X4 = ((int)(xs[i] + ofx) * s_ctxSx16) >> 14;
+            pv[i].Y4 = ((int)(ys[i] + ofy) * s_ctxSy16) >> 14;
+            pv[i].rgba = shadeOn ? shade_rgba(cr[i], cg[i], cb[i]) : shade_rgba(128, 128, 128);
+            pv[i].s32 = us[i] << 5; pv[i].t32 = vs[i] << 5;
+        }
     }
 #ifdef D2_DPROF
     const unsigned int t1 = cnt0();
@@ -1345,7 +1820,7 @@ int d2_direct_poly_i(P_TAG *tag)
     else
     {
         tri_core(&pv[0], &pv[1], &pv[2], tpage, clut);
-        if (quad) tri_core(&pv[1], &pv[2], &pv[3], tpage, clut);
+        if (quad) tri_core(&pv[1], &pv[3], &pv[2], tpage, clut);
     }
 #ifdef D2_DPROF
     s_tTicks += cnt0() - t1;

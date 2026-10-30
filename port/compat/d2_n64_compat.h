@@ -21,11 +21,12 @@ FILE *d2_fopen(const char *path, const char *mode); /* port/n64/sys_n64.c: redir
 #define D2_VC_ORIG(f) f
 #endif
 
-/* buffer de vertices do PsyX (GrVertex, 20 bytes cada): com o caminho direto (D2_DIRECT) so sprites/retangulos/linhas passam por ele
-   e ele e esvaziado a cada poligono direto, entao 8192 bastam (economiza 320 KB de RAM) */
+/* buffer de vertices do PsyX (GrVertex, 20 bytes cada): com o backend nativo (d2_native_*),
+   todas as primitivas (poligonos, retangulos, linhas, sprites) sao despachadas diretamente ao RDP.
+   O buffer legado do PsyX e mantido em 64 vertices apenas por seguranca (economiza mais ~162 KB de RAM). */
 #ifndef D2_MAX_VERTS
 #ifdef D2_DIRECT
-#define D2_MAX_VERTS 8192
+#define D2_MAX_VERTS 64
 #else
 #define D2_MAX_VERTS 24576
 #endif

@@ -75,11 +75,9 @@ D2_AI int d2n_clamp(int v, int lo, int hi) { return v < lo ? lo : v > hi ? hi : 
 D2_AI unsigned int d2n_div(unsigned int num, unsigned int den)
 {
 	if (num >= den * 2) return 0x1ffff;
-	int sh = 0; unsigned int d = den;
-	if (!(d & 0xff00)) { sh += 8; d <<= 8; }
-	if (!(d & 0xf000)) { sh += 4; d <<= 4; }
-	if (!(d & 0xc000)) { sh += 2; d <<= 2; }
-	if (!(d & 0x8000)) { sh += 1; d <<= 1; }
+	const int lz = __builtin_clz(den) - 16;
+	const int sh = lz > 0 ? lz : 0;
+	const unsigned int d = den << sh;
 	const int r1 = (int)(d & 0x7fff);
 	const int r2 = d2_unr_table[(r1 + 0x40) >> 7] + 0x101;
 	const int r3 = ((0x80 - (r2 * (r1 + 0x8000))) >> 8) & 0x1ffff;

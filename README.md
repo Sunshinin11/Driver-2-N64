@@ -220,3 +220,4 @@ c++ -O2 -std=c++20 -fno-char8_t -fwrapv -fno-strict-aliasing -DCORE_N64 -DMIA_LI
   $B/libco/liblibco.a $B/thirdparty/chdr-static.a $B/thirdparty/libchdr/deps/zstd-*/zstd.a \
   $B/thirdparty/libchdr/deps/miniz-*/miniz.a $B/thirdparty/sljit.a $B/thirdparty/tzxfile.a -Wl,--end-group -lpthread -ldl -lX11 -lz
 ```
+
