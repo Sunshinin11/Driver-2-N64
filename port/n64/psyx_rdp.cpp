@@ -1033,8 +1033,7 @@ static int clip_poly(const DV *in, int n, DV *out, int axis, float bound, bool k
     int m = 0;
     for (int i = 0; i < n; i++)
     {
-        const int next_i = (i + 1 == n) ? 0 : i + 1;
-        const DV &a = in[i], &b = in[next_i];
+        const DV &a = in[i], &b = in[(i + 1) % n];
         float va = (axis ? a.v : a.u) - bound, vb = (axis ? b.v : b.u) - bound;
         if (!keepGE) { va = -va; vb = -vb; }
         const bool ina = va >= 0, inb = vb >= 0;
@@ -1057,8 +1056,7 @@ static int clip_poly_screen(const DV *in, int n, DV *out, int axis, float bound,
     int m = 0;
     for (int i = 0; i < n; i++)
     {
-        const int next_i = (i + 1 == n) ? 0 : i + 1;
-        const DV &a = in[i], &b = in[next_i];
+        const DV &a = in[i], &b = in[(i + 1) % n];
         float va = (axis ? a.y : a.x) - bound, vb = (axis ? b.y : b.x) - bound;
         if (!keepGE) { va = -va; vb = -vb; }
         const bool ina = va >= 0, inb = vb >= 0;
@@ -1645,50 +1643,31 @@ static void tri_core(const PV *A, const PV *B, const PV *C, int page, int clut)
         for (int tu = tu0; tu <= umax && tu < 256; tu += bw)
         {
             DV a[10], b[10];
-            const DV *cur_in = p;
-            int cur_n = 3;
-            if (umin < tu) {
-                cur_n = clip_poly(cur_in, cur_n, b, 0, (float)tu, true);
-                if (cur_n < 3) {
+            int n = 3;
+            memcpy(a, p, sizeof(p));
+            n = clip_poly(a, n, b, 0, (float)tu, true);          if (n < 3) {
 #ifdef D2_DPROF
-                    s_rejUvClip++;
+                s_rejUvClip++;
 #endif
-                    continue;
-                }
-                cur_in = b;
+                continue;
             }
-            if (umax > tu + bw) {
-                DV *target = (cur_in == a) ? b : a;
-                cur_n = clip_poly(cur_in, cur_n, target, 0, (float)(tu + bw), false);
-                if (cur_n < 3) {
+            n = clip_poly(b, n, a, 0, (float)(tu + bw), false);  if (n < 3) {
 #ifdef D2_DPROF
-                    s_rejUvClip++;
+                s_rejUvClip++;
 #endif
-                    continue;
-                }
-                cur_in = target;
+                continue;
             }
-            if (vmin < tv) {
-                DV *target = (cur_in == a) ? b : a;
-                cur_n = clip_poly(cur_in, cur_n, target, 1, (float)tv, true);
-                if (cur_n < 3) {
+            n = clip_poly(a, n, b, 1, (float)tv, true);          if (n < 3) {
 #ifdef D2_DPROF
-                    s_rejUvClip++;
+                s_rejUvClip++;
 #endif
-                    continue;
-                }
-                cur_in = target;
+                continue;
             }
-            if (vmax > tv + bh) {
-                DV *target = (cur_in == a) ? b : a;
-                cur_n = clip_poly(cur_in, cur_n, target, 1, (float)(tv + bh), false);
-                if (cur_n < 3) {
+            n = clip_poly(b, n, a, 1, (float)(tv + bh), false);  if (n < 3) {
 #ifdef D2_DPROF
-                    s_rejUvClip++;
+                s_rejUvClip++;
 #endif
-                    continue;
-                }
-                cur_in = target;
+                continue;
             }
             int w = bw, h = bh;
             if (tu + w > 256) w = 256 - tu;
@@ -1711,8 +1690,8 @@ static void tri_core(const PV *A, const PV *B, const PV *C, int page, int clut)
             blocks_this_tri++;
             g_perf_cur.cnt_blocks_generated++;
 #endif
-            for (int i = 1; i + 1 < cur_n; i++) {
-                emit_tri(true, cur_in[0], cur_in[i], cur_in[i + 1], (float)(step == 1 ? s_upOu : tu), (float)(step == 1 ? s_upOv : tv), 1.0f / step, 1.0f, 1.0f);
+            for (int i = 1; i + 1 < n; i++) {
+                emit_tri(true, a[0], a[i], a[i + 1], (float)(step == 1 ? s_upOu : tu), (float)(step == 1 ? s_upOv : tv), 1.0f / step, 1.0f, 1.0f);
                 s_nSub++;
 #ifdef D2_PERFDBG
                 g_perf_cur.cnt_sub_triangles++;
