@@ -65,15 +65,30 @@ void d2_t3d_init(void)
            (int)sizeof(s_t3d_mat_pool), (int)sizeof(s_t3d_mat_pool) / 1024);
 }
 
+// Spooled models note: Models loaded dynamically by region spooling (init_spooled_models)
+// remain on the legacy PS1 path. Only permanent level models loaded at level init
+// (ProcessMDSLump) are converted to Tiny3D. This ensures 0 heap fragmentation and 0 dynamic
+// allocation overhead during gameplay driving across regions.
+
 void d2_t3d_on_models_loaded(void)
 {
     if (!s_t3d_inited) {
         d2_t3d_init();
     }
 
+    // Free all previously allocated rspq blocks to prevent memory leaks across mission loads
+    for (int i = 0; i < MAX_MODEL_SLOTS; i++) {
+        if (s_t3d_model_blocks[i]) {
+            rspq_block_free(s_t3d_model_blocks[i]);
+            s_t3d_model_blocks[i] = NULL;
+        }
+    }
+
     s_t3d_vtx_used = 0;
     s_t3d_models_converted = 0;
-    memset(s_t3d_model_blocks, 0, sizeof(s_t3d_model_blocks));
+
+    heap_stats_t hs_before, hs_after;
+    sys_get_heap_stats(&hs_before);
 
     int count = num_models_in_pack;
     if (count > MAX_MODEL_SLOTS) count = MAX_MODEL_SLOTS;
@@ -255,10 +270,15 @@ void d2_t3d_on_models_loaded(void)
     }
     int models_old_path = non_empty_models - s_t3d_models_converted;
 
+    sys_get_heap_stats(&hs_after);
+    int heap_used_by_blocks = hs_after.used - hs_before.used;
+
     debugf("[T3D] Convertidos %d predios no T3D, %d no caminho antigo (%d total). Vertices: %d/%d (%d KB de %d KB)\n",
            s_t3d_models_converted, models_old_path, non_empty_models,
            s_t3d_vtx_used, D2_T3D_MAX_VERTS,
            (s_t3d_vtx_used * 16) / 1024, (D2_T3D_MAX_VERTS * 16) / 1024);
+    debugf("[T3D_MEM] Heap alocado para blocos RSPQ: %d bytes (heap livre: %d -> %d)\n",
+           heap_used_by_blocks, hs_before.free, hs_after.free);
 }
 
 int d2_t3d_has_model(int model_idx)
