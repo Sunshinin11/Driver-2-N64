@@ -92,11 +92,20 @@ def parse_lev_models(lev_path):
             root = m
             while root['inst_num'] != -1 and root['inst_num'] in models:
                 root = models[root['inst_num']]
-            bld_models[mid] = (m, root, polys)
-            total_quads += len(polys)
-            total_verts += root['nverts']
 
-    print(f"Modelos de predios encontrados: {len(bld_models)}")
+            # Check disqualifying flags (must be pure building)
+            disq = False
+            if m['shape_flags'] & (0x4000 | 0x80 | 0x400 | 0x2000 | 0x8 | 0x1000):
+                disq = True
+            if m['flags2'] & (0x800 | 0x1000 | 0x2000 | 0x400 | 0x200 | 0x1 | 0x20 | 0x40 | 0x80 | 0x4000 | 0x8000):
+                disq = True
+
+            if not disq:
+                bld_models[mid] = (m, root, polys)
+                total_quads += len(polys)
+                total_verts += root['nverts']
+
+    print(f"Modelos de predios puros encontrados: {len(bld_models)} (excluidos: {len(models) - len(bld_models)} no caminho antigo)")
     print(f"Total de quadripolos de predio: {total_quads} ({total_quads * 2} triangulos)")
     print(f"Distribuicao por tipo: ptype 11={type_counts[11]}, ptype 21={type_counts[21]}, ptype 23={type_counts[23]}")
     unique_roots = set()

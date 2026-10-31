@@ -85,6 +85,19 @@ void d2_t3d_on_models_loaded(void)
         int nverts = model->num_vertices;
         if (nverts <= 0) continue;
 
+        // Disqualify non-building models: sprites, tiles/roads, water, transparent/alpha,
+        // smashable objects (boxes, trash cans), lamp posts, trees, barriers, animating objects
+        if (model->shape_flags & (SHAPE_FLAG_SPRITE | SHAPE_FLAG_WATER | SHAPE_FLAG_TILE |
+                                  SHAPE_FLAG_ROAD | SHAPE_FLAG_TRANS | SHAPE_FLAG_ALPHA)) {
+            continue;
+        }
+        if (model->flags2 & (MODEL_FLAG_ANIMOBJ | MODEL_FLAG_MEDIAN | MODEL_FLAG_JUNC |
+                             MODEL_FLAG_ALLEY | MODEL_FLAG_CHAIR | MODEL_FLAG_BARRIER |
+                             MODEL_FLAG_SMASHABLE | MODEL_FLAG_LAMP | MODEL_FLAG_TREE |
+                             MODEL_FLAG_GRASS | MODEL_FLAG_PATH)) {
+            continue;
+        }
+
 #define T3D_VERT_WINDOW 64
 
         // Collect building quads
@@ -234,8 +247,17 @@ void d2_t3d_on_models_loaded(void)
         s_t3d_models_converted++;
     }
 
-    debugf("[T3D] Convertidos %d modelos de predios, %d/%d vertices (%d KB de %d KB)\n",
-           s_t3d_models_converted, s_t3d_vtx_used, D2_T3D_MAX_VERTS,
+    int non_empty_models = 0;
+    for (int mid = 0; mid < count; mid++) {
+        MODEL* model = modelpointers[mid];
+        if (model && model != &dummyModel && model->num_polys > 0 && model->num_vertices > 0)
+            non_empty_models++;
+    }
+    int models_old_path = non_empty_models - s_t3d_models_converted;
+
+    debugf("[T3D] Convertidos %d predios no T3D, %d no caminho antigo (%d total). Vertices: %d/%d (%d KB de %d KB)\n",
+           s_t3d_models_converted, models_old_path, non_empty_models,
+           s_t3d_vtx_used, D2_T3D_MAX_VERTS,
            (s_t3d_vtx_used * 16) / 1024, (D2_T3D_MAX_VERTS * 16) / 1024);
 }
 
