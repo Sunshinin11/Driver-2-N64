@@ -24,6 +24,26 @@ static int s_t3d_vtx_used = 0;
 
 // Model blocks
 static rspq_block_t* s_t3d_model_blocks[MAX_MODEL_SLOTS];
+#ifdef D2_T3D_STATS
+static unsigned s_t3d_model_triangles[MAX_MODEL_SLOTS];
+static unsigned s_stat_candidates, s_stat_native, s_stat_queued, s_stat_triangles;
+static unsigned s_stat_ticks, s_stat_frames;
+static uint32_t t3d_stat_clock(void) {
+    uint32_t ticks;
+    __asm__ volatile("mfc0 %0,$9" : "=r"(ticks));
+    return ticks;
+}
+static void t3d_stat_frame(uint32_t ticks) {
+    s_stat_ticks += ticks;
+    if (++s_stat_frames < 30) return;
+    extern int CameraCnt;
+    debugf("[T3D_WORK] cc=%d frames=%u candidates=%u native=%u legacy=%u queued=%u triangles=%u submit_ticks=%u\n",
+           CameraCnt, s_stat_frames, s_stat_candidates, s_stat_native,
+           s_stat_candidates - s_stat_native, s_stat_queued, s_stat_triangles, s_stat_ticks);
+    s_stat_candidates = s_stat_native = s_stat_queued = s_stat_triangles = 0;
+    s_stat_ticks = s_stat_frames = 0;
+}
+#endif
 
 // Matrix pool for queued instances (double buffered: 2 frames x 192 instances x 64B = 24 KB)
 static T3DMat4FP s_t3d_mat_pool[2][D2_T3D_MAX_QUEUED] __attribute__((aligned(16)));
@@ -260,6 +280,9 @@ void d2_t3d_on_models_loaded(void)
         }
 
         s_t3d_model_blocks[mid] = rspq_block_end();
+#ifdef D2_T3D_STATS
+        s_t3d_model_triangles[mid] = num_quads * 2;
+#endif
         s_t3d_models_converted++;
     }
 
@@ -284,6 +307,11 @@ void d2_t3d_on_models_loaded(void)
 
 int d2_t3d_has_model(int model_idx)
 {
+#ifdef D2_T3D_STATS
+    s_stat_candidates++;
+    if (model_idx >= 0 && model_idx < MAX_MODEL_SLOTS && s_t3d_model_blocks[model_idx])
+        s_stat_native++;
+#endif
     if (model_idx < 0 || model_idx >= MAX_MODEL_SLOTS) return 0;
     return s_t3d_model_blocks[model_idx] != NULL;
 }
@@ -300,6 +328,10 @@ void d2_t3d_queue_building(int model_idx, int yang, int z, int tx, int ty, int t
     q->tx = tx;
     q->ty = ty;
     q->tz = tz;
+#ifdef D2_T3D_STATS
+    s_stat_queued++;
+    s_stat_triangles += s_t3d_model_triangles[model_idx];
+#endif
 }
 
 int d2_t3d_get_queued_count(void)
@@ -425,7 +457,15 @@ void d2_t3d_draw_queued_buildings(void)
     d2_rdp_invalidate_backend_cache();
     return;
 #else
-    if (s_t3d_queue_count <= 0) return;
+    if (s_t3d_queue_count <= 0) {
+#ifdef D2_T3D_STATS
+        t3d_stat_frame(0);
+#endif
+        return;
+    }
+#ifdef D2_T3D_STATS
+    uint32_t stat_start = t3d_stat_clock();
+#endif
 
     rdpq_sync_pipe();
 
@@ -453,7 +493,8 @@ void d2_t3d_draw_queued_buildings(void)
         rdpq_mode_zbuf(false, false);
     rdpq_mode_end();
 
-    t3d_state_set_drawflags(T3D_FLAG_SHADED);
+    // Converted vertices carry baked colors, not usable lighting normals.
+    t3d_state_set_drawflags((enum T3DDrawFlags)(T3D_FLAG_SHADED | T3D_FLAG_NO_LIGHT));
 
     // Sort queued buildings back-to-front (furthest Z first)
     for (int i = 0; i < s_t3d_queue_count - 1; i++) {
@@ -468,6 +509,9 @@ void d2_t3d_draw_queued_buildings(void)
 
     int frame_idx = d2_rdp_frame_count() & 1;
 
+    // matrix_set(..., true) multiplies by the PREVIOUS stack entry.
+    // Keep the viewport camera matrix at the parent level, as in Tiny3D's API.
+    t3d_matrix_push_pos(1);
     for (int i = 0; i < s_t3d_queue_count; i++) {
         int mid = s_t3d_queue[i].model_idx;
         if (!s_t3d_model_blocks[mid]) continue;
@@ -541,15 +585,20 @@ void d2_t3d_draw_queued_buildings(void)
         }
 
         t3d_mat4_to_fixed(&s_t3d_mat_pool[frame_idx][i], &m);
+        data_cache_hit_writeback(&s_t3d_mat_pool[frame_idx][i], sizeof(T3DMat4FP));
 
         t3d_matrix_set(&s_t3d_mat_pool[frame_idx][i], true);
         rspq_block_run(s_t3d_model_blocks[mid]);
     }
+    t3d_matrix_pop(1);
 
     s_t3d_queue_count = 0;
 
     // Invalidate backend cache and synchronize
     d2_rdp_invalidate_backend_cache();
+#ifdef D2_T3D_STATS
+    t3d_stat_frame(t3d_stat_clock() - stat_start);
+#endif
 #endif // D2_T3D_SMOKE
 }
 

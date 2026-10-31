@@ -12,6 +12,8 @@ filesystem*/
 *.o
 *.d
 *.log
+*.bml
+__pycache__/
 
 # ---- Arquivos temporarios e capturas do emulador ----
 *.ppm
