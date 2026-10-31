@@ -71,6 +71,29 @@ static int s_t3d_models_converted = 0;
 static int s_t3d_tiles_converted = 0;
 static int s_t3d_blds_converted = 0;
 
+static sprite_t* s_tex_bld1 = NULL;
+static sprite_t* s_tex_tile4 = NULL;
+
+static void d2_t3d_load_proof_textures(void)
+{
+    if (!s_tex_bld1) {
+        s_tex_bld1 = sprite_load("rom:/TEX/bld1.sprite");
+        if (s_tex_bld1) {
+            debugf("[T3D_TEX] Carregado bld1.sprite (w=%d, h=%d)\n", s_tex_bld1->width, s_tex_bld1->height);
+        } else {
+            debugf("[T3D_TEX] AVISO: Falha ao carregar bld1.sprite\n");
+        }
+    }
+    if (!s_tex_tile4) {
+        s_tex_tile4 = sprite_load("rom:/TEX/tile4.sprite");
+        if (s_tex_tile4) {
+            debugf("[T3D_TEX] Carregado tile4.sprite (w=%d, h=%d)\n", s_tex_tile4->width, s_tex_tile4->height);
+        } else {
+            debugf("[T3D_TEX] AVISO: Falha ao carregar tile4.sprite\n");
+        }
+    }
+}
+
 typedef struct {
     int model_idx;
     int yang;
@@ -265,6 +288,7 @@ void d2_t3d_on_models_loaded(void)
     if (!s_t3d_inited) {
         d2_t3d_init();
     }
+    d2_t3d_load_proof_textures();
 
     // Ensure RSP is idle before freeing any previous level's blocks
     rspq_wait();
@@ -317,6 +341,7 @@ void d2_t3d_on_models_loaded(void)
         bool is_tri;
         int sort_ofs;
         uint32_t col;
+        UV_INFO uv[4];
     };
 
     // Pass 0: Convert ground tile models FIRST (small vertex footprint, #1 frame cost)
@@ -398,6 +423,7 @@ void d2_t3d_on_models_loaded(void)
                         fi.is_tri = is_tri;
                         fi.sort_ofs = is_tile ? ofse_lut[cur_ttype & 7] : 0;
                         fi.col = col;
+                        fi.uv[0] = uv0; fi.uv[1] = uv1; fi.uv[2] = uv2; fi.uv[3] = uv3;
                     }
                 }
                 poffs += psize;
@@ -419,10 +445,12 @@ void d2_t3d_on_models_loaded(void)
                 }
             }
 
+            const bool is_textured_proof = (mid == 1 || mid == 4);
+
             // For static buildings (!is_tile), compute smooth per-vertex color from incident faces
             // so shared vertices are never duplicated (3x memory & RSP transform savings).
             uint32_t bld_vcol[512];
-            const bool use_bld_vcol = (!is_tile && nverts <= 512);
+            const bool use_bld_vcol = (!is_tile && nverts <= 512 && !is_textured_proof);
             if (use_bld_vcol) {
                 uint16_t vr[512] = {}, vg[512] = {}, vb[512] = {}, vc[512] = {};
                 for (int f = 0; f < num_faces; f++) {
@@ -449,8 +477,18 @@ void d2_t3d_on_models_loaded(void)
 
             rspq_block_begin();
 
+            if (is_textured_proof) {
+                sprite_t* sp = (mid == 1) ? s_tex_bld1 : s_tex_tile4;
+                if (sp) {
+                    rdpq_sprite_upload(TILE0, sp, NULL);
+                    rdpq_mode_combiner(RDPQ_COMBINER1((TEX0, ZERO, PRIM, ZERO), (ZERO, ZERO, ZERO, ONE)));
+                    t3d_state_set_drawflags((enum T3DDrawFlags)(T3D_FLAG_SHADED | T3D_FLAG_TEXTURED | T3D_FLAG_NO_LIGHT));
+                }
+            }
+
             int local_vtx_orig[T3D_VERT_WINDOW];
             uint32_t local_vtx_col[T3D_VERT_WINDOW];
+            int16_t local_vtx_st[T3D_VERT_WINDOW][2];
             int local_vtx_count = 0;
 
             struct LocalFace {
@@ -481,12 +519,16 @@ void d2_t3d_on_models_loaded(void)
                         s_t3d_vtx_pool[packed_idx].posA[2] = src_verts[orig].vz;
                         s_t3d_vtx_pool[packed_idx].rgbaA = col;
                         s_t3d_vtx_pool[packed_idx].normA = 0;
+                        s_t3d_vtx_pool[packed_idx].stA[0] = local_vtx_st[k][0];
+                        s_t3d_vtx_pool[packed_idx].stA[1] = local_vtx_st[k][1];
                     } else {
                         s_t3d_vtx_pool[packed_idx].posB[0] = src_verts[orig].vx;
                         s_t3d_vtx_pool[packed_idx].posB[1] = src_verts[orig].vy;
                         s_t3d_vtx_pool[packed_idx].posB[2] = src_verts[orig].vz;
                         s_t3d_vtx_pool[packed_idx].rgbaB = col;
                         s_t3d_vtx_pool[packed_idx].normB = 0;
+                        s_t3d_vtx_pool[packed_idx].stB[0] = local_vtx_st[k][0];
+                        s_t3d_vtx_pool[packed_idx].stB[1] = local_vtx_st[k][1];
                     }
                 }
                 if (local_vtx_count & 1) {
@@ -497,6 +539,8 @@ void d2_t3d_on_models_loaded(void)
                     s_t3d_vtx_pool[packed_idx].posB[2] = 0;
                     s_t3d_vtx_pool[packed_idx].rgbaB = 0;
                     s_t3d_vtx_pool[packed_idx].normB = 0;
+                    s_t3d_vtx_pool[packed_idx].stB[0] = 0;
+                    s_t3d_vtx_pool[packed_idx].stB[1] = 0;
                 }
                 data_cache_hit_writeback(&s_t3d_vtx_pool[batch_start / 2], (aligned_batch / 2) * sizeof(T3DVertPacked));
 
@@ -516,20 +560,34 @@ void d2_t3d_on_models_loaded(void)
                 batch_face_count = 0;
             };
 
-            auto find_local_vtx = [&](int orig, uint32_t col) -> int {
+            auto find_local_vtx = [&](int orig, uint32_t col, int16_t s, int16_t t) -> int {
                 for (int i = 0; i < local_vtx_count; i++) {
-                    if (local_vtx_orig[i] == orig && local_vtx_col[i] == col) return i;
+                    if (local_vtx_orig[i] == orig && local_vtx_col[i] == col &&
+                        local_vtx_st[i][0] == s && local_vtx_st[i][1] == t) return i;
                 }
                 return -1;
             };
 
             for (int f = 0; f < num_faces; f++) {
                 const int ncorner = faces[f].is_tri ? 3 : 4;
+                int16_t st_corners[4][2] = {};
+                if (is_textured_proof) {
+                    int v_min = (mid == 1) ? 88 : 24;
+                    for (int k = 0; k < ncorner; k++) {
+                        int u_rel = (int)faces[f].uv[k].u;
+                        int v_rel = (int)faces[f].uv[k].v - v_min;
+                        if (u_rel < 0) u_rel = 0; else if (u_rel > 63) u_rel = 63;
+                        if (v_rel < 0) v_rel = 0; else if (v_rel > 63) v_rel = 63;
+                        st_corners[k][0] = (int16_t)(u_rel << 5);
+                        st_corners[k][1] = (int16_t)((v_rel >> 1) << 5); // 64x32
+                    }
+                }
+
                 int new_needed = 0;
                 for (int k = 0; k < ncorner; k++) {
                     int orig = faces[f].v[k];
-                    uint32_t vcol = use_bld_vcol ? bld_vcol[orig] : faces[f].col;
-                    if (find_local_vtx(orig, vcol) == -1) new_needed++;
+                    uint32_t vcol = is_textured_proof ? 0xFFFFFFFFu : (use_bld_vcol ? bld_vcol[orig] : faces[f].col);
+                    if (find_local_vtx(orig, vcol, st_corners[k][0], st_corners[k][1]) == -1) new_needed++;
                 }
                 if (local_vtx_count + new_needed > T3D_VERT_WINDOW) {
                     flush_window();
@@ -538,14 +596,16 @@ void d2_t3d_on_models_loaded(void)
                 int lv[4] = { 0, 0, 0, 0 };
                 for (int k = 0; k < ncorner; k++) {
                     int orig = faces[f].v[k];
-                    uint32_t vcol = use_bld_vcol ? bld_vcol[orig] : faces[f].col;
-                    int found = find_local_vtx(orig, vcol);
+                    uint32_t vcol = is_textured_proof ? 0xFFFFFFFFu : (use_bld_vcol ? bld_vcol[orig] : faces[f].col);
+                    int found = find_local_vtx(orig, vcol, st_corners[k][0], st_corners[k][1]);
                     if (found != -1) {
                         lv[k] = found;
                     } else {
                         int lidx = local_vtx_count++;
                         local_vtx_orig[lidx] = orig;
                         local_vtx_col[lidx] = vcol;
+                        local_vtx_st[lidx][0] = st_corners[k][0];
+                        local_vtx_st[lidx][1] = st_corners[k][1];
                         lv[k] = lidx;
                     }
                 }
@@ -555,6 +615,11 @@ void d2_t3d_on_models_loaded(void)
 
             if (!model_overflow) {
                 flush_window();
+            }
+
+            if (is_textured_proof) {
+                rdpq_mode_combiner(RDPQ_COMBINER1((PRIM, ZERO, SHADE, ZERO), (ZERO, ZERO, ZERO, ONE)));
+                t3d_state_set_drawflags((enum T3DDrawFlags)(T3D_FLAG_SHADED | T3D_FLAG_NO_LIGHT));
             }
 
             if (model_overflow) {
