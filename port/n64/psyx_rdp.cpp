@@ -275,7 +275,15 @@ static TexSlot *get_region(int px, int py, int fmt, int u0, int v0, int w, int h
     else wpad = (sw + 3) & ~3;
     int bytes = is_rgba32 ? (wpad * 4 * sh) : (fmt == TF_4_BIT ? (wpad / 2) * sh : fmt == TF_8_BIT ? wpad * sh : wpad * 2 * sh);
     if (w <= 0 || h <= 0) return 0;
-    if (bytes > (is_rgba32 ? TEX_BYTES : 2048)) return 0;   // com paleta: a metade alta da TMEM e da TLUT
+    if (is_rgba32)
+    {
+        if (((sw * 2 + 7) & ~7) * sh > 2048) return 0;
+        if (bytes > TEX_BYTES) return 0;
+    }
+    else
+    {
+        if (bytes > 2048) return 0;   // com paleta: a metade alta da TMEM e da TLUT
+    }
     *outW = sw; *outH = sh; *outWpad = wpad;
 
     unsigned int k0 = (unsigned)px | ((unsigned)py << 10) | ((unsigned)fmt << 20) | ((unsigned)step << 24) | ((unsigned)rgba_mode << 28);
