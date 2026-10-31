@@ -1274,6 +1274,16 @@ void PsyX_EndScene(void)
 #ifdef D2_PERFDBG
     if ((d2_rdp_frames % 30) == 0) { heap_stats_t hs; sys_get_heap_stats(&hs); debugf("[HEAP] f=%d total=%d used=%d free=%d\n", d2_rdp_frames, hs.total, hs.used, hs.total - hs.used); }
 #endif
+#ifdef D2_ORIGIN_PROF
+    if ((d2_rdp_frames % 30) == 0) {
+        extern uint32_t g_d2_aud_adpcm_sfx_blocks;
+        extern uint32_t g_d2_aud_adpcm_xm_blocks;
+        debugf("[AUDIO_ADPCM_CPU] f=%d sfx_blocks=%u xm_blocks=%u\n",
+               d2_rdp_frames, g_d2_aud_adpcm_sfx_blocks, g_d2_aud_adpcm_xm_blocks);
+        g_d2_aud_adpcm_sfx_blocks = 0;
+        g_d2_aud_adpcm_xm_blocks = 0;
+    }
+#endif
     s_dbgHit = s_dbgMiss = s_dbgTex = s_dbgTexStep = 0; memset(s_dbgPM,0,sizeof s_dbgPM); memset(s_dbgPT,0,sizeof s_dbgPT);
     if ((d2_rdp_frames % 30) == 0) debugf("[tex] ld_sombra=%u ld_regiao=%u ld_janela=%u janela_hit=%u/%u tlut=%u banco_hit=%u diretos=%u dticks=%u tcore=%u\n[tri] tris=%u clip=%u clipticks=%u upticks=%u sub=%u\n[up] palT=%u winHitT=%u winMissT=%u regT=%u vramWrites=%u\n", s_cLdSh, s_cLdReg, s_cLdWin, s_cWinHit, s_cCalls, s_cTlut, s_cBankHitX, s_dCntP, s_dTicks, s_tTicks, s_nTri, s_nClip, s_clipTicks, s_upTicks, s_nSub, s_palT, s_winHitT, s_winMissT, s_regT, s_vramWrites - s_vwFrame);
 #ifdef D2_DPROF

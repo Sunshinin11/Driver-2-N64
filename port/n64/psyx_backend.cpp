@@ -9,8 +9,11 @@
 #include "PsyX/PsyX_render.h"
 #include "../redriver2/src_rebuild/PsyCross/src/audio/PsyX_SPUAL.h"
 #include <libdragon.h>
+#include <wav64.h>
+#include "d2_perfdbg.h"
 #include <string.h>
 #include <stdlib.h>
+#include <stdio.h>
 
 extern "C" {
 // --- ponte libdragon (sys_n64.c)
@@ -99,8 +102,13 @@ void GR_ReadVRAM(unsigned short *dst, int x, int y, int dst_w, int dst_h)
 void d2_vram_touch(int x, int y, int w, int h);
 
 // --- audio (SPU) : memoria e vozes ADPCM do PS1 sobre o mixer RSP do libdragon
+#if D2_VADPCM
+#define D2_SPU_RAM_SIZE (128 * 1024)
+#else
 #define D2_SPU_RAM_SIZE (512 * 1024)
+#endif
 #define D2_SPU_VOICES 24
+#define D2_SFX_TAG 0x40000000u
 static u_char s_spuRam[D2_SPU_RAM_SIZE] __attribute__((aligned(16)));
 static u_int s_spuTransfer, s_spuTop = 0x1000;
 static bool s_spuInited, s_spuMute;
@@ -114,9 +122,86 @@ struct D2SpuVoice {
 struct D2SpuDecode {
     u_int start, block, loopBlock;
     int next, s1, s2, nib;
+    int ch;
     short pcm[28];
 };
 static D2SpuVoice s_spuVoice[D2_SPU_VOICES];
+
+#ifdef D2_ORIGIN_PROF
+extern "C" uint32_t g_d2_aud_adpcm_sfx_blocks = 0;
+extern "C" uint32_t g_d2_aud_adpcm_xm_blocks  = 0;
+#endif
+
+struct D2NativeSfx {
+    wav64_t *wav;
+    u_int orig_sr;
+};
+
+#if D2_VADPCM
+static D2NativeSfx s_native_sfx[72][35];
+static int s_current_lump = -1;
+
+extern "C" void d2_vadpcm_set_current_lump(int lump)
+{
+    s_current_lump = lump;
+}
+
+extern "C" void d2_vadpcm_reset(void)
+{
+    if (s_spuInited) {
+        for (int i = 0; i < 16; i++) {
+            mixer_ch_stop(i);
+        }
+    }
+    for (int l = 0; l < 72; l++) {
+        for (int s = 0; s < 35; s++) {
+            if (s_native_sfx[l][s].wav) {
+                wav64_close(s_native_sfx[l][s].wav);
+                s_native_sfx[l][s].wav = NULL;
+                s_native_sfx[l][s].orig_sr = 0;
+            }
+        }
+    }
+    s_current_lump = -1;
+}
+
+extern "C" int d2_vadpcm_process_lump(int dbank, int start_idx, int num_samples, void *samps_ptr)
+{
+    if (s_current_lump < 0 || s_current_lump >= 72 || dbank == 0) return 0;
+
+    struct SampleDataEntry {
+        u_int address, length, loop, samplerate;
+    };
+    SampleDataEntry *samps = (SampleDataEntry *)samps_ptr;
+
+    wav64_loadparms_t parms;
+    memset(&parms, 0, sizeof(parms));
+    parms.streaming_mode = WAV64_STREAMING_NONE;
+
+    int loaded_count = 0;
+    for (int i = 0; i < num_samples && i < 35; i++) {
+        char fn[64];
+        snprintf(fn, sizeof(fn), "rom:/SFX64/L%02d_S%02d.wav64", s_current_lump, i);
+
+        if (!s_native_sfx[s_current_lump][i].wav) {
+            wav64_t *w = wav64_load(fn, &parms);
+            if (!w) {
+                debugf("[VADPCM] WARN: failed to load %s\n", fn);
+                continue;
+            }
+            s_native_sfx[s_current_lump][i].wav = w;
+            s_native_sfx[s_current_lump][i].orig_sr = samps[i].samplerate ? samps[i].samplerate : 22050;
+        }
+
+        samps[i].address = D2_SFX_TAG | ((u_int)s_current_lump << 8) | (u_int)i;
+        loaded_count++;
+    }
+
+    debugf("[VADPCM] lump=%d bank=%d loaded=%d/%d\n", s_current_lump, dbank, loaded_count, num_samples);
+    s_current_lump = -1;
+    return (loaded_count > 0) ? 1 : 0;
+}
+#endif
 
 static inline void d2_spu_decode_28(const u_char *p, short * __restrict out, int &s1, int &s2)
 {
@@ -149,6 +234,10 @@ static inline void d2_spu_decode_28(const u_char *p, short * __restrict out, int
 static void d2_spu_decode_block(D2SpuDecode *d)
 {
     if (d->block + 16 > D2_SPU_RAM_SIZE) { memset(d->pcm, 0, sizeof d->pcm); return; }
+#ifdef D2_ORIGIN_PROF
+    if (d->ch < 16) g_d2_aud_adpcm_sfx_blocks++;
+    else g_d2_aud_adpcm_xm_blocks++;
+#endif
     d2_spu_decode_28(s_spuRam + d->block, d->pcm, d->s1, d->s2);
 }
 
@@ -185,6 +274,10 @@ static void d2_spu_read(void *ctx, samplebuffer_t *sbuf, int wpos, int wlen, boo
         if (d->nib >= 28 && rem >= 28 && d->block + 32 <= D2_SPU_RAM_SIZE)
         {
             d->block += 16; d->next += 28;
+#ifdef D2_ORIGIN_PROF
+            if (d->ch < 16) g_d2_aud_adpcm_sfx_blocks++;
+            else g_d2_aud_adpcm_xm_blocks++;
+#endif
             d2_spu_decode_28(s_spuRam + d->block, out, d->s1, d->s2);
             out += 28; rem -= 28; d->nib = 28;
             continue;
@@ -216,12 +309,39 @@ static void d2_spu_apply_voice(const D2SpuVoice *v, int ch)
     if (vl < -1.0f) vl = -1.0f; else if (vl > 1.0f) vl = 1.0f;
     if (vr < -1.0f) vr = -1.0f; else if (vr > 1.0f) vr = 1.0f;
     mixer_ch_set_vol(ch, vl, vr);
+#if D2_VADPCM
+    if (v->addr & D2_SFX_TAG) {
+        int lump = (v->addr >> 8) & 0xFF;
+        int idx  = v->addr & 0xFF;
+        wav64_t *wav = (lump < 72 && idx < 35) ? s_native_sfx[lump][idx].wav : NULL;
+        u_int orig_sr = (lump < 72 && idx < 35) ? s_native_sfx[lump][idx].orig_sr : 0;
+        if (wav && orig_sr > 0) {
+            float freq = 44100.0f * ((float)v->pitch / 4096.0f) * ((float)wav->wave.frequency / (float)orig_sr);
+            if (freq < 100.0f) freq = 100.0f;
+            if (freq > D2_SPU_MAX_FREQ) freq = D2_SPU_MAX_FREQ;
+            mixer_ch_set_freq(ch, freq);
+            return;
+        }
+    }
+#endif
     mixer_ch_set_freq(ch, d2_spu_calc_freq(v->pitch));
 }
 
 static void d2_spu_shape(D2SpuVoice *v, int ch)
 {
     mixer_ch_stop(ch);
+#if D2_VADPCM
+    if (v->addr & D2_SFX_TAG) {
+        int lump = (v->addr >> 8) & 0xFF;
+        int idx  = v->addr & 0xFF;
+        wav64_t *wav = (lump < 72 && idx < 35) ? s_native_sfx[lump][idx].wav : NULL;
+        if (wav) {
+            mixer_ch_play(ch, &wav->wave);
+            d2_spu_apply_voice(v, ch);
+            return;
+        }
+    }
+#endif
     int blocks = 0, loopBlock = -1; bool repeat = false;
     for (u_int a = v->addr; a + 16 <= D2_SPU_RAM_SIZE && blocks < 8192; a += 16, blocks++)
     {
@@ -237,6 +357,7 @@ static void d2_spu_shape(D2SpuVoice *v, int ch)
     int loopStart = (loopBlock >= 0 && loopBlock < blocks) ? loopBlock : 0;
     D2SpuDecode *d = (D2SpuDecode *)v->wave.ctx;
     memset(d, 0, sizeof *d);
+    d->ch = ch;
     d->start = v->addr;
     d->loopBlock = (u_int)loopStart;
     d2_spu_seek(d, 0);
@@ -258,11 +379,21 @@ int PsyX_SPUAL_InitSound()
         D2SpuVoice *v = &s_spuVoice[i]; memset(v, 0, sizeof *v);
         v->pitch = 4096; v->wave.name = "psx-adpcm"; v->wave.bits = 16; v->wave.channels = 1;
         v->wave.frequency = 32000.0f; v->wave.read = d2_spu_read; v->wave.append_units = 28;
-        v->wave.ctx = malloc(sizeof(D2SpuDecode));
+        D2SpuDecode *d = (D2SpuDecode *)malloc(sizeof(D2SpuDecode));
+        memset(d, 0, sizeof(D2SpuDecode));
+        d->ch = i;
+        v->wave.ctx = d;
     }
     s_spuInited = true; return 1;
 }
-void PsyX_SPUAL_ShutdownSound() { if (s_spuInited) { mixer_close(); audio_close(); s_spuInited = false; } }
+void PsyX_SPUAL_ShutdownSound() {
+    if (s_spuInited) {
+#if D2_VADPCM
+        d2_vadpcm_reset();
+#endif
+        mixer_close(); audio_close(); s_spuInited = false;
+    }
+}
 int PsyX_SPUAL_Alloc(int size) { int a = (s_spuTop + 15) & ~15; if (a + size > D2_SPU_RAM_SIZE) return -1; s_spuTop = a + size; return a; }
 int PsyX_SPUAL_InitAlloc(int, char *) { s_spuTop = 0x1000; return 0; }
 void PsyX_SPUAL_Free(u_int) {}

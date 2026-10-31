@@ -3,6 +3,10 @@
 BUILD_DIR = build_d2
 OBJ_DIR   = $(BUILD_DIR)/o
 N64_ROM_SAVETYPE = none
+D2_VADPCM ?= 0
+ifeq ($(D2_VADPCM),1)
+LIBDRAGON_PREVIEW = 2
+endif
 N64_INST ?= /opt/libdragon
 include $(N64_INST)/include/n64.mk
 N64_CXXFLAGS ?= $(N64_CFLAGS)
@@ -112,6 +116,10 @@ endif
 PLAT_OBJS += $(OBJ_DIR)/port/n64/d2_t3d_world.o
 OBJS += $(OBJ_DIR)/port/n64/d2_t3d_world.o
 endif
+
+ifeq ($(D2_VADPCM),1)
+D2_OPT += -DD2_VADPCM=1
+endif
 FLAGS_FILE = $(BUILD_DIR)/.d2_flags
 .PHONY: FORCE
 $(FLAGS_FILE): FORCE
@@ -166,10 +174,21 @@ stage-data:
 	@mkdir -p $(FS_DIR)
 	@if [ -f "$(CD1)" ] || [ ! -d $(FS_DIR)/DRIVER2 ]; then python3 tools/extract_cd.py --cd1 "$(CD1)" --out $(FS_DIR) --cities "$(CITIES)" --lang-from "$(LANGDIR)"; fi
 
+ifeq ($(D2_VADPCM),1)
+FS_STAGE = $(BUILD_DIR)/fs
+$(BUILD_DIR)/d2_n64.dfs: stage-data
+	@mkdir -p $(dir $@) $(FS_STAGE)
+	@echo "    [DFS STAGE VADPCM] $(FS_STAGE)"
+	@cp -al $(FS_DIR)/* $(FS_STAGE)/ 2>/dev/null || cp -r $(FS_DIR)/* $(FS_STAGE)/
+	@cp -al filesystem_vadpcm/* $(FS_STAGE)/ 2>/dev/null || cp -r filesystem_vadpcm/* $(FS_STAGE)/
+	@echo "    [DFS] $@"
+	$(N64_MKDFS) $@ $(FS_STAGE)
+else
 $(BUILD_DIR)/d2_n64.dfs: stage-data
 	@mkdir -p $(dir $@)
 	@echo "    [DFS] $@"
 	$(N64_MKDFS) $@ $(FS_DIR)
+endif
 
 $(BUILD_DIR)/d2_n64.elf: $(OBJS)
 

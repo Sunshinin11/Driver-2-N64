@@ -13,6 +13,11 @@ extern "C" {
 #endif
 FILE *d2_fopen(const char *path, const char *mode); /* port/n64/sys_n64.c: redireciona para rom:/ (DragonFS) */
 void d2_audio_pump(void);
+#if D2_VADPCM
+void d2_vadpcm_set_current_lump(int lump);
+void d2_vadpcm_reset(void);
+int d2_vadpcm_process_lump(int dbank, int start_idx, int num_samples, void *samps_ptr);
+#endif
 #ifdef __cplusplus
 }
 #endif

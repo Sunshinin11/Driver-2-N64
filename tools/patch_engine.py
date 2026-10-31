@@ -44,15 +44,27 @@ P('Game/C/system.c',
   "\tprintWarning(\"Cannot open '%s'\\n\", namebuffer);\n\treturn 0;")
 # ---- som ----
 P('Game/C/sound.c',
+  "int banksize[2] = { 88064, 412672 };\n",
+  "#if D2_VADPCM\nint banksize[2] = { 88064, 1024 };\n#else\nint banksize[2] = { 88064, 412672 };\n#endif\n")
+P('Game/C/sound.c',
   "\tnum_samples = *(int *)address;\n\tslength = num_samples * sizeof(SAMPLE_DATA) + sizeof(int);\n\n\t// copy sample info\n\tmemcpy((u_char*)samples[bank], (u_char*)(address + sizeof(int)), num_samples * sizeof(SAMPLE_DATA));\n",
   "\tnum_samples = (int)d2_rd32(address);\n\tslength = num_samples * sizeof(SAMPLE_DATA) + sizeof(int);\n\n\t// copy sample info\n\tmemcpy((u_char*)samples[bank], (u_char*)(address + sizeof(int)), num_samples * sizeof(SAMPLE_DATA));\n\td2_swap32_array(samples[bank], num_samples * 4);\n")
 P('Game/C/sound.c',
   "\tnum_samples = *(int *)address;\n\tslength = num_samples * sizeof(SAMPLE_DATA) + sizeof(int);\n\n\tmemcpy((u_char*)(samples[dbank] + lsbTabs.count[dbank]), (u_char*)(address + sizeof(int)), num_samples * sizeof(SAMPLE_DATA));\n",
   "\tnum_samples = (int)d2_rd32(address);\n\tslength = num_samples * sizeof(SAMPLE_DATA) + sizeof(int);\n\n\tmemcpy((u_char*)(samples[dbank] + lsbTabs.count[dbank]), (u_char*)(address + sizeof(int)), num_samples * sizeof(SAMPLE_DATA));\n\td2_swap32_array(samples[dbank] + lsbTabs.count[dbank], num_samples * 4);\n")
+P('Game/C/sound.c',
+  "\t\t\tcase 0:\n\t\t\t\tif (dbank == 0)\n\t\t\t\t{\n\t\t\t\t\tlsbTabs.append = 0;\n\t\t\t\t\tprintInfo(\"*---LSBD(): successful init---*\\n\");\n\t\t\t\t}\n\t\t\t\tbreak;",
+  "\t\t\tcase 0:\n\t\t\t\tif (dbank == 0)\n\t\t\t\t{\n\t\t\t\t\tlsbTabs.append = 0;\n\t\t\t\t\tprintInfo(\"*---LSBD(): successful init---*\\n\");\n#if D2_VADPCM\n\t\t\t\t\td2_vadpcm_reset();\n#endif\n\t\t\t\t}\n\t\t\t\tbreak;")
+P('Game/C/sound.c',
+  "\td2_swap32_array(samples[dbank] + lsbTabs.count[dbank], num_samples * 4);\n\n\tSpuSetTransferMode(SPU_TRANSFER_BY_DMA);",
+  "\td2_swap32_array(samples[dbank] + lsbTabs.count[dbank], num_samples * 4);\n#if D2_VADPCM\n\tif (d2_vadpcm_process_lump(dbank, lsbTabs.count[dbank], num_samples, samples[dbank] + lsbTabs.count[dbank]))\n\t{\n\t\tlsbTabs.count[dbank] += num_samples;\n\t\treturn num_samples;\n\t}\n#endif\n\n\tSpuSetTransferMode(SPU_TRANSFER_BY_DMA);")
 
 P('Game/C/gamesnd.c',
   "\t\tLoadfileSeg(name, (char*)blockLimit, 0, sizeof(blockLimit));\n",
   "\t\t{ LoadfileSeg(name, (char*)blockLimit, 0, sizeof(blockLimit)); d2_swap32_array(blockLimit, 73); }\n")
+P('Game/C/gamesnd.c',
+  "\tLoadfileSeg(name, (char*)_sbank_buffer, blockLimit[lump], size);\n\tif (size > 0 && blockLimit[lump] && blockLimit[lump + 1]) // [A]\n\t{\n\t\tLoadSoundBankDynamic((char*)_sbank_buffer, size, bank);\n\t}",
+  "\tLoadfileSeg(name, (char*)_sbank_buffer, blockLimit[lump], size);\n\tif (size > 0 && blockLimit[lump] && blockLimit[lump + 1]) // [A]\n\t{\n#if D2_VADPCM\n\t\td2_vadpcm_set_current_lump(lump);\n#endif\n\t\tLoadSoundBankDynamic((char*)_sbank_buffer, size, bank);\n\t}")
 P('Game/C/gamesnd.c',
   "\tLoadfileSeg(name, (char*)musicpos, musicnum * 8, sizeof(musicpos));\n",
   "\tLoadfileSeg(name, (char*)musicpos, musicnum * 8, sizeof(musicpos));\n\td2_swap32_array(musicpos, 3);\n")
