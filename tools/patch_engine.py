@@ -945,6 +945,172 @@ P('Game/C/motion_c.c',
   "\t\t\tTannerShadow(pPed, &v, moon_position + GameLevel, &cV, pPed->dir.vy);\n\t\t}\n\t\telse\n\t\t{\n\t\t\tcV.b = cV.g = cV.r = 32;\n\t\t\tTannerShadow(pPed, &v, sun_position + GameLevel, &cV, pPed->dir.vy);",
   "#ifndef D2_NO_TANNER_SHADOW\n\t\t\tTannerShadow(pPed, &v, moon_position + GameLevel, &cV, pPed->dir.vy);\n#endif\n\t\t}\n\t\telse\n\t\t{\n\t\t\tcV.b = cV.g = cV.r = 32;\n#ifndef D2_NO_TANNER_SHADOW\n\t\t\tTannerShadow(pPed, &v, sun_position + GameLevel, &cV, pPed->dir.vy);\n#endif")
 
+# ---- Etapa 2b: DrawSkyDome / PlotSkyPoly sem recorte UV float por quadro ----
+P('Game/C/sky.c',
+  """void PlotSkyPoly(POLYFT4* polys, int skytexnum, unsigned char r, unsigned char g, unsigned char b)
+{
+\tPOLYFT4* src;
+\tPOLY_FT4* poly;
+
+\tsrc = polys;
+\tpoly = (POLY_FT4*)current->primptr;
+
+#if USE_PGXP
+\tDVECTORF* outpoints = scratchPad_skyVertices;
+#else
+\tDVECTOR* outpoints = scratchPad_skyVertices;
+#endif
+
+#ifdef PSX
+\tif ((outpoints[src->v0].vy > -1 || outpoints[src->v1].vy > -1 || outpoints[src->v2].vy > -1 || outpoints[src->v3].vy > -1) &&
+\t\t(outpoints[src->v0].vx > -1 || outpoints[src->v1].vx > -1 || outpoints[src->v2].vx > -1 || outpoints[src->v3].vx > -1) &&
+\t\t(outpoints[src->v0].vx < 321 || outpoints[src->v1].vx < 321 || outpoints[src->v2].vx < 321 || outpoints[src->v3].vx < 321))
+#endif
+\t{
+\t\tsetPolyFT4(poly);
+
+\t\tpoly->r0 = r;
+\t\tpoly->g0 = g;
+\t\tpoly->b0 = b;
+
+\t\t*(u_int*)&poly->x0 = *(u_int*)&outpoints[src->v0].vx;
+\t\t*(u_int*)&poly->x1 = *(u_int*)&outpoints[src->v1].vx;
+\t\t*(u_int*)&poly->x2 = *(u_int*)&outpoints[src->v3].vx;
+\t\t*(u_int*)&poly->x3 = *(u_int*)&outpoints[src->v2].vx;
+\t
+\t\t*(ushort*)&poly->u0 = *(ushort*)&skytexuv[skytexnum].u2;
+\t\t*(ushort*)&poly->u1 = *(ushort*)&skytexuv[skytexnum].u3;
+\t\t*(ushort*)&poly->u2 = *(ushort*)&skytexuv[skytexnum].u0;
+\t\t*(ushort*)&poly->u3 = *(ushort*)&skytexuv[skytexnum].u1;
+\t\t
+\t\tpoly->clut = skyclut[skytexnum];
+\t\tpoly->tpage = skytpage[skytexnum];
+
+\t\taddPrim(current->ot + OTSIZE - 1, poly);
+
+#if USE_PGXP && USE_EXTENDED_PRIM_POINTERS
+\t\tpoly->pgxp_index = outpoints[src->v0].pgxp_index;
+#endif 
+
+\t\tcurrent->primptr += sizeof(POLY_FT4);
+\t}
+}""",
+  """void PlotSkyPoly(POLYFT4* polys, int skytexnum, unsigned char r, unsigned char g, unsigned char b)
+{
+\tPOLYFT4* src = polys;
+\tDVECTOR* outpoints = scratchPad_skyVertices;
+\tshort px00 = outpoints[src->v0].vx, py00 = outpoints[src->v0].vy;
+\tshort px20 = outpoints[src->v1].vx, py20 = outpoints[src->v1].vy;
+\tshort px02 = outpoints[src->v3].vx, py02 = outpoints[src->v3].vy;
+\tshort px22 = outpoints[src->v2].vx, py22 = outpoints[src->v2].vy;
+
+\tif (!((py00 > -1 || py20 > -1 || py02 > -1 || py22 > -1) &&
+\t\t  (py00 < 257 || py20 < 257 || py02 < 257 || py22 < 257) &&
+\t\t  (px00 > -1 || px20 > -1 || px02 > -1 || px22 > -1) &&
+\t\t  (px00 < 321 || px20 < 321 || px02 < 321 || px22 < 321)))
+\t\treturn;
+
+\tunsigned char qu0 = skytexuv[skytexnum].u2;
+\tunsigned char qv0 = skytexuv[skytexnum].v2;
+\tunsigned char qu1 = skytexuv[skytexnum].u3;
+\tunsigned char qv2 = skytexuv[skytexnum].v0;
+\tshort clut = skyclut[skytexnum];
+\tshort tpage = skytpage[skytexnum];
+
+\tif (qu0 == qu1 && qv0 == qv2)
+\t{
+\t\tPOLY_FT4* poly = (POLY_FT4*)current->primptr;
+\t\tsetPolyFT4(poly);
+\t\tpoly->r0 = r; poly->g0 = g; poly->b0 = b;
+\t\tpoly->x0 = px00; poly->y0 = py00;
+\t\tpoly->x1 = px20; poly->y1 = py20;
+\t\tpoly->x2 = px02; poly->y2 = py02;
+\t\tpoly->x3 = px22; poly->y3 = py22;
+\t\tpoly->u0 = qu0; poly->v0 = qv0;
+\t\tpoly->u1 = qu0; poly->v1 = qv0;
+\t\tpoly->u2 = qu0; poly->v2 = qv0;
+\t\tpoly->u3 = qu0; poly->v3 = qv0;
+\t\tpoly->clut = clut;
+\t\tpoly->tpage = tpage;
+\t\taddPrim(current->ot + OTSIZE - 1, poly);
+\t\tcurrent->primptr += sizeof(POLY_FT4);
+\t\treturn;
+\t}
+
+\t/* Subdivide patches 128x84 CI4 (> 2 KB TMEM) em grade 2x2 de 64x42 (1344 B <= 2 KB TMEM) */
+\tshort gx[3][3], gy[3][3];
+\tgx[0][0] = px00; gy[0][0] = py00;
+\tgx[0][2] = px20; gy[0][2] = py20;
+\tgx[2][0] = px02; gy[2][0] = py02;
+\tgx[2][2] = px22; gy[2][2] = py22;
+\tgx[0][1] = (short)(((int)px00 + (int)px20) >> 1);
+\tgy[0][1] = (short)(((int)py00 + (int)py20) >> 1);
+\tgx[2][1] = (short)(((int)px02 + (int)px22) >> 1);
+\tgy[2][1] = (short)(((int)py02 + (int)py22) >> 1);
+\tgx[1][0] = (short)(((int)px00 + (int)px02) >> 1);
+\tgy[1][0] = (short)(((int)py00 + (int)py02) >> 1);
+\tgx[1][2] = (short)(((int)px20 + (int)px22) >> 1);
+\tgy[1][2] = (short)(((int)py20 + (int)py22) >> 1);
+\tgx[1][1] = (short)(((int)px00 + (int)px20 + (int)px02 + (int)px22 + 2) >> 2);
+\tgy[1][1] = (short)(((int)py00 + (int)py20 + (int)py02 + (int)py22 + 2) >> 2);
+
+\tunsigned char us0[2], us1[2], vs0[2], vs1[2];
+\tus0[0] = qu0;
+\tus1[0] = (unsigned char)(qu0 + 63);
+\tus0[1] = (unsigned char)(qu0 + 64);
+\tus1[1] = qu1;
+\tif (qv0 <= qv2)
+\t{
+\t\tvs0[0] = qv0;
+\t\tvs1[0] = (unsigned char)(qv0 + 41);
+\t\tvs0[1] = (unsigned char)(qv0 + 42);
+\t\tvs1[1] = qv2;
+\t}
+\telse
+\t{
+\t\tvs0[0] = qv0;
+\t\tvs1[0] = (unsigned char)(qv2 + 42);
+\t\tvs0[1] = (unsigned char)(qv2 + 41);
+\t\tvs1[1] = qv2;
+\t}
+
+\tfor (int iy = 0; iy < 2; iy++)
+\t{
+\t\tfor (int ix = 0; ix < 2; ix++)
+\t\t{
+\t\t\tshort sx00 = gx[iy][ix],         sy00 = gy[iy][ix];
+\t\t\tshort sx10 = gx[iy][ix + 1],     sy10 = gy[iy][ix + 1];
+\t\t\tshort sx01 = gx[iy + 1][ix],     sy01 = gy[iy + 1][ix];
+\t\t\tshort sx11 = gx[iy + 1][ix + 1], sy11 = gy[iy + 1][ix + 1];
+\t\t\tif (!((sy00 > -1 || sy10 > -1 || sy01 > -1 || sy11 > -1) &&
+\t\t\t\t  (sy00 < 257 || sy10 < 257 || sy01 < 257 || sy11 < 257) &&
+\t\t\t\t  (sx00 > -1 || sx10 > -1 || sx01 > -1 || sx11 > -1) &&
+\t\t\t\t  (sx00 < 321 || sx10 < 321 || sx01 < 321 || sx11 < 321)))
+\t\t\t\tcontinue;
+
+\t\t\tPOLY_FT4* poly = (POLY_FT4*)current->primptr;
+\t\t\tsetPolyFT4(poly);
+\t\t\tpoly->r0 = r; poly->g0 = g; poly->b0 = b;
+\t\t\tpoly->x0 = sx00; poly->y0 = sy00;
+\t\t\tpoly->x1 = sx10; poly->y1 = sy10;
+\t\t\tpoly->x2 = sx01; poly->y2 = sy01;
+\t\t\tpoly->x3 = sx11; poly->y3 = sy11;
+\t\t\tpoly->u0 = us0[ix]; poly->v0 = vs0[iy];
+\t\t\tpoly->u1 = us1[ix]; poly->v1 = vs0[iy];
+\t\t\tpoly->u2 = us0[ix]; poly->v2 = vs1[iy];
+\t\t\tpoly->u3 = us1[ix]; poly->v3 = vs1[iy];
+\t\t\tpoly->clut = clut;
+\t\t\tpoly->tpage = tpage;
+\t\t\taddPrim(current->ot + OTSIZE - 1, poly);
+\t\t\tcurrent->primptr += sizeof(POLY_FT4);
+\t\t}
+\t}
+}""")
+
+P('Game/C/sky.c',
+  "#ifdef PSX\n\t// FIXME: use frustrum angle instead?",
+  "#if defined(PSX) || defined(D2_PSX_FIDELITY)\n\t// FIXME: use frustrum angle instead?")
+
 def main():
     ok = skipped = missing = 0
     cache = {}
