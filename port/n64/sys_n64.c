@@ -101,16 +101,16 @@ int d2_pad_poll(int port, d2_pad_raw_t *o)
         }
 #else
         if (cc == 0) {
-            if (v >= 760 && v < 766) b |= D2_DD;
-            else if (v >= 790 && v < 796) b |= D2_A;
-            else if (v >= 860 && v < 866) b |= D2_A;
-            else if (v >= 930 && v < 936) b |= D2_A;
-            else if (v >= 1000 && v < 1006) b |= D2_A;
+            if (v >= 850 && v < 856) b |= D2_DD;
+            else if (v >= 880 && v < 886) b |= D2_A;
+            else if (v >= 950 && v < 956) b |= D2_A;
+            else if (v >= 1020 && v < 1026) b |= D2_A;
+            else if (v >= 1090 && v < 1096) b |= D2_A;
         } else if (cc >= 128) {
             b |= D2_A; // acelera o carro em Chicago exatamente a partir de CameraCnt == 128
         }
 #endif
-        if (b && ((cc == 0 && v >= 760 && v <= 1010) || cc == 128)) debugf("[bench] vbl=%d cc=%d b=%04x\n", v, cc, b);
+        if (b && ((cc == 0 && v >= 760 && v <= 1110) || cc == 128)) debugf("[bench] vbl=%d cc=%d b=%04x\n", v, cc, b);
     }
 #endif
     o->btn = b; o->sx = sx; o->sy = sy;

@@ -2430,9 +2430,7 @@ extern "C" void d2_native_draw_ot(u_long *ot)
 #ifdef D2_ORIGIN_PROF
                     uint32_t _t3d0 = d2_oprof_cnt0();
                     d2_t3d_draw_queued_buildings();
-                    uint32_t _dt3d = d2_oprof_cnt0() - _t3d0;
-                    g_d2_oprof.bk_ticks[OPROF_T3D_BLD] += _dt3d;
-                    _ot_prim_acc += _dt3d;
+                    _ot_prim_acc += d2_oprof_cnt0() - _t3d0;
 #else
                     d2_t3d_draw_queued_buildings();
 #endif
@@ -2527,9 +2525,7 @@ extern "C" void d2_native_draw_ot(u_long *ot)
 #ifdef D2_ORIGIN_PROF
         uint32_t _t3d0 = d2_oprof_cnt0();
         d2_t3d_draw_queued_buildings();
-        uint32_t _dt3d = d2_oprof_cnt0() - _t3d0;
-        g_d2_oprof.bk_ticks[OPROF_T3D_BLD] += _dt3d;
-        _ot_prim_acc += _dt3d;
+        _ot_prim_acc += d2_oprof_cnt0() - _t3d0;
 #else
         d2_t3d_draw_queued_buildings();
 #endif

@@ -22,7 +22,8 @@ static const char * const s_cat_names[OPROF_COUNT] = {
     "EFFECTS",
     "SKY",
     "HUD",
-    "T3D_BLD"
+    "T3D_BLD",
+    "T3D_GRD"
 };
 
 extern "C" void d2_oprof_window_report(int cc, int nframes)

@@ -22,7 +22,8 @@ enum D2OProfCat {
     OPROF_SKY       = 10,
     OPROF_HUD       = 11,
     OPROF_T3D_BLD   = 12,
-    OPROF_COUNT     = 13
+    OPROF_T3D_GRD   = 13,
+    OPROF_COUNT     = 14
 };
 
 typedef struct D2OProfData {
