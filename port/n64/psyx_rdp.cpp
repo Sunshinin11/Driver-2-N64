@@ -675,12 +675,22 @@ extern "C" void d2_rdp_invalidate_backend_cache(void)
     rdpq_sync_pipe();
     rdpq_sync_load();
     rdpq_sync_tile();
+
+    // Restaura o scissor ativo do backend do Driver 2
+    rdpq_set_scissor(s_scx0, s_scy0, s_scx1, s_scy1);
+
     s_modeKey = -1;
-    s_lastUp.slot = 0;
-    s_lastUp.clut = -1;
-    s_lastUp.palEnt = 0;
     s_curRgbaMode = -1;
     s_curBlend = (BlendMode)-1;
+
+    memset(&s_lastUp, 0, sizeof(s_lastUp));
+    s_lastUp.clut = -1;
+    s_lastUp.palVer = (unsigned int)-1;
+
+    s_shLast.k0 = 0;
+    s_shLast.k1 = 0;
+    s_shLast.sig = 0;
+
 #ifdef D2_TEXWIN
     s_leanTiles = false;
     s_tmemWin = false;
@@ -688,6 +698,7 @@ extern "C" void d2_rdp_invalidate_backend_cache(void)
 #ifdef D2_PALBANK
     s_curBank = -1;
     s_pbClut = -1;
+    banks_invalidate();
 #endif
 #endif
 }
