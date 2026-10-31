@@ -2263,64 +2263,12 @@ extern "C" int d2_native_draw_prim(P_TAG *tag)
     if (__builtin_expect(n <= 0, 0)) debugf("[native-gpu] primitiva isolada desconhecida code=%02x\n", tag ? tag->code : 0);
     return n;
 }
-static inline int d2_prim_words(P_TAG *tag)
-{
-    if (__builtin_expect(tag->code == 0xB3, 1)) return 9;
-    const int type = tag->code & 0xF0;
-    if (__builtin_expect(type == 0x20 || type == 0x30, 1)) {
-        const int code = tag->code;
-        const bool tex = (code & 0x04) != 0, quad = (code & 0x08) != 0, gour = (code & 0x10) != 0;
-        return gour ? (tex ? (quad ? 12 : 9) : (quad ? 8 : 6)) : (tex ? (quad ? 9 : 7) : (quad ? 5 : 4));
-    }
-    if (type == 0x60 || type == 0x70) {
-        const int sub = tag->code & 0x1C;
-        if (sub == 0x04) return 4;
-        if (sub == 0x14 || sub == 0x1C) return 3;
-        if (sub == 0x00) return 3;
-        return 2;
-    }
-    if (type == 0x40 || type == 0x50) {
-        return (tag->code & 0x0C) == 0x0C ? 5 : 3;
-    }
-    if (type == 0xE0) return 1;
-    return getlen(tag);
-}
-
-struct BatchPrim {
-    P_TAG *tag;
-    uint32_t key;
-};
-#define MAX_OT_BATCH 512
-static BatchPrim s_otBatch[MAX_OT_BATCH];
-static int s_otBatchCount = 0;
-
-static inline void flush_ot_batch(void)
-{
-    if (s_otBatchCount <= 0) return;
-    if (s_otBatchCount > 1) {
-        for (int i = 1; i < s_otBatchCount; i++) {
-            BatchPrim item = s_otBatch[i];
-            int j = i - 1;
-            while (j >= 0 && s_otBatch[j].key > item.key) {
-                s_otBatch[j + 1] = s_otBatch[j];
-                j--;
-            }
-            s_otBatch[j + 1] = item;
-        }
-    }
-    for (int i = 0; i < s_otBatchCount; i++) {
-        d2_native_dispatch(s_otBatch[i].tag);
-    }
-    s_otBatchCount = 0;
-}
-
 extern "C" void d2_native_draw_ot(u_long *ot)
 {
     if (!ot) return;
 #ifdef D2_PERFDBG
     uint32_t t_ot0 = perf_cnt0();
 #endif
-    s_otBatchCount = 0;
     P_TAG *base = (P_TAG*)ot;
     unsigned nodes = 0;
     for (;;) {
@@ -2330,43 +2278,71 @@ extern "C" void d2_native_draw_ot(u_long *ot)
             uintptr_t cur = (uintptr_t)base, end = cur + (words + P_LEN) * sizeof(u_int);
             while (cur < end) {
                 P_TAG *tag = (P_TAG*)cur;
-                int prim_len = d2_prim_words(tag);
-                uintptr_t next = cur + (prim_len + P_LEN) * sizeof(u_int);
-                if (__builtin_expect(prim_len <= 0 || next <= cur || next > end, 0)) {
-                    flush_ot_batch();
-                    d2_native_dispatch(tag);
+#ifdef D2_ORIGIN
+                short xs[4] = {0}, ys[4] = {0};
+                uint32_t col = 0;
+                int nv = 0;
+                {
+                    const int type = tag->code & 0xF0;
+                    if (tag->code == 0xB3) {
+                        POLY_FT4 *p = (POLY_FT4*)tag;
+                        xs[0] = p->x0; ys[0] = p->y0; xs[1] = p->x1; ys[1] = p->y1;
+                        xs[2] = p->x2; ys[2] = p->y2; xs[3] = p->x3; ys[3] = p->y3;
+                        col = ((uint32_t)p->r0 << 16) | ((uint32_t)p->g0 << 8) | p->b0;
+                        nv = 4;
+                    } else if (type == 0x20 || type == 0x30) {
+                        const unsigned int *w = (const unsigned int *)tag + P_LEN;
+                        const bool quad = (tag->code & 0x08) != 0, gour = (tag->code & 0x10) != 0, tex = (tag->code & 0x04) != 0;
+                        const int stride = (gour ? 1 : 0) + 1 + (tex ? 1 : 0);
+                        nv = quad ? 4 : 3;
+                        for (int i = 0; i < nv; i++) {
+                            const short *pxy = (const short *)(gour ? (w + i * stride + 1) : (w + 1 + i * stride));
+                            xs[i] = pxy[0]; ys[i] = pxy[1];
+                        }
+                        col = *w & 0xFFFFFF;
+                    } else if (type == 0x40 || type == 0x50) {
+                        const int sub = tag->code & 0x0C;
+                        if (sub == 0x0C) {
+                            LINE_F4 *p = (LINE_F4*)tag;
+                            xs[0] = p->x0; ys[0] = p->y0; xs[1] = p->x1; ys[1] = p->y1;
+                            xs[2] = p->x2; ys[2] = p->y2; xs[3] = p->x3; ys[3] = p->y3;
+                            col = ((uint32_t)p->r0 << 16) | ((uint32_t)p->g0 << 8) | p->b0;
+                            nv = 4;
+                        } else {
+                            LINE_F2 *p = (LINE_F2*)tag;
+                            xs[0] = p->x0; ys[0] = p->y0; xs[1] = p->x1; ys[1] = p->y1;
+                            col = ((uint32_t)p->r0 << 16) | ((uint32_t)p->g0 << 8) | p->b0;
+                            nv = 2;
+                        }
+                    } else if (type == 0x60 || type == 0x70) {
+                        SPRT *p = (SPRT*)tag;
+                        xs[0] = p->x0; ys[0] = p->y0; xs[1] = p->x0 + p->w; ys[1] = p->y0;
+                        xs[2] = p->x0; ys[2] = p->y0 + p->h; xs[3] = p->x0 + p->w; ys[3] = p->y0 + p->h;
+                        col = ((uint32_t)p->r0 << 16) | ((uint32_t)p->g0 << 8) | p->b0;
+                        nv = 4;
+                    } else if (type == 0xE0) {
+                        col = *(const unsigned int *)&tag->pad0;
+                        nv = 0;
+                    }
+                }
+#endif
+                int n = d2_native_dispatch(tag);
+#ifdef D2_ORIGIN
+                d2_origin_log_hud(tag, tag->code, (tag->code & 2) != 0, col, xs, ys, nv, s_lastSetModeTextured, s_lastSetModeFmt, s_lastSetModeBlend);
+#endif
+                uintptr_t next = cur + (n + P_LEN) * sizeof(u_int);
+                if (__builtin_expect(n <= 0 || next <= cur || next > end, 0)) {
                     cur = end;
                     break;
                 }
-                const int code = tag->code;
-                const bool is_poly = (code & 0x60) == 0x20;
-                const bool is_tex = (code & 0x04) != 0;
-                const bool is_semi = (code & 0x02) != 0;
-                if (is_poly && is_tex && !is_semi) {
-                    if (s_otBatchCount >= MAX_OT_BATCH) flush_ot_batch();
-                    const bool gour = (code & 0x10) != 0;
-                    const unsigned int *w = (const unsigned int *)tag + P_LEN;
-                    const unsigned short *uvp0 = (const unsigned short *)(w + 2);
-                    const unsigned short *uvp1 = (const unsigned short *)(gour ? (w + 6) : (w + 5));
-                    uint32_t key = ((uint32_t)uvp1[1] << 16) | (uint32_t)uvp0[1];
-                    s_otBatch[s_otBatchCount].tag = tag;
-                    s_otBatch[s_otBatchCount].key = key;
-                    s_otBatchCount++;
-                } else {
-                    flush_ot_batch();
-                    d2_native_dispatch(tag);
-                }
                 cur = next;
             }
-        } else {
-            flush_ot_batch();
         }
-        if (isendprim(base)) { flush_ot_batch(); break; }
+        if (isendprim(base)) break;
         P_TAG *next = (P_TAG*)nextPrim(base);
-        if (__builtin_expect(!next || next == base, 0)) { flush_ot_batch(); break; }
+        if (__builtin_expect(!next || next == base, 0)) break;
         base = next;
     }
-    flush_ot_batch();
 #if D2_RSP_GPU
     if (s_d2gpuOvl) rspq_write(s_d2gpuOvl, D2G_CMD_DRAW_END);
 #endif
