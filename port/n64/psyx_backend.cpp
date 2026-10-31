@@ -18,6 +18,7 @@ typedef struct { unsigned short btn; signed char sx, sy; } d2_pad_raw_t;
 void d2_sys_init(void);
 int  d2_sys_vbl_count(void);
 void d2_sys_set_vbl_cb(void (*f)(void));
+void d2_sys_pump_vbl_cb(void);
 void d2_sys_wait_vbl_until(int target);
 int  d2_pad_poll(int port, d2_pad_raw_t *o);
 
@@ -111,37 +112,66 @@ struct D2SpuVoice {
     u_short pitch;
 };
 struct D2SpuDecode {
-    u_int start, block;
+    u_int start, block, loopBlock;
     int next, s1, s2, nib;
     short pcm[28];
 };
 static D2SpuVoice s_spuVoice[D2_SPU_VOICES];
 
-static void d2_spu_decode_block(D2SpuDecode *d)
+static inline void d2_spu_decode_28(const u_char *p, short * __restrict out, int &s1, int &s2)
 {
     static const int f0[5] = { 0, 60, 115, 98, 122 };
     static const int f1[5] = { 0, 0, -52, -55, -60 };
-    if (d->block + 16 > D2_SPU_RAM_SIZE) { memset(d->pcm, 0, sizeof d->pcm); return; }
-    const u_char *p = s_spuRam + d->block;
     int shift = p[0] & 15, filter = p[0] >> 4;
-    if (shift > 12) shift = 12; if (filter > 4) filter = 0;
-    for (int i = 0; i < 28; i++)
+    if (shift > 12) shift = 12;
+    if (filter > 4) filter = 0;
+    const int k0 = f0[filter], k1 = f1[filter];
+    const int sh = 12 - shift;
+    int prev1 = s1, prev2 = s2;
+    for (int b = 2; b < 16; b++)
     {
-        int n = (p[2 + (i >> 1)] >> ((i & 1) * 4)) & 15;
-        if (n & 8) n -= 16;
-        int v = (n << 12) >> shift;
-        v += (d->s1 * f0[filter] + d->s2 * f1[filter] + 32) >> 6;
-        if (v > 32767) v = 32767; else if (v < -32768) v = -32768;
-        d->pcm[i] = (short)v; d->s2 = d->s1; d->s1 = v;
+        int byte = p[b];
+        int n0 = byte & 15; if (n0 & 8) n0 -= 16;
+        int v0 = (n0 << sh) + ((prev1 * k0 + prev2 * k1 + 32) >> 6);
+        if (v0 > 32767) v0 = 32767; else if (v0 < -32768) v0 = -32768;
+        *out++ = (short)v0;
+
+        int n1 = byte >> 4; if (n1 & 8) n1 -= 16;
+        int v1 = (n1 << sh) + ((v0 * k0 + prev1 * k1 + 32) >> 6);
+        if (v1 > 32767) v1 = 32767; else if (v1 < -32768) v1 = -32768;
+        *out++ = (short)v1;
+
+        prev2 = v0; prev1 = v1;
     }
+    s1 = prev1; s2 = prev2;
+}
+
+static void d2_spu_decode_block(D2SpuDecode *d)
+{
+    if (d->block + 16 > D2_SPU_RAM_SIZE) { memset(d->pcm, 0, sizeof d->pcm); return; }
+    d2_spu_decode_28(s_spuRam + d->block, d->pcm, d->s1, d->s2);
 }
 
 static void d2_spu_seek(D2SpuDecode *d, int pos)
 {
-    d->block = d->start; d->next = d->nib = d->s1 = d->s2 = 0;
-    while (d->next + 28 <= pos && d->block + 16 <= D2_SPU_RAM_SIZE)
-    { d2_spu_decode_block(d); d->block += 16; d->next += 28; }
-    d2_spu_decode_block(d); d->nib = pos - d->next;
+    if (pos < 0) pos = 0;
+    u_int targetBlk = (u_int)(pos / 28);
+    if (pos == 0) {
+        d->s1 = d->s2 = 0;
+    } else if (targetBlk != d->loopBlock) {
+        // Aquecimento O(1) do filtro IIR no bloco imediatamente anterior
+        d->s1 = d->s2 = 0;
+        if (targetBlk > 0) {
+            u_int warmAddr = d->start + (targetBlk - 1) * 16;
+            if (warmAddr + 16 <= D2_SPU_RAM_SIZE)
+                d2_spu_decode_28(s_spuRam + warmAddr, d->pcm, d->s1, d->s2);
+        }
+    }
+    // Se targetBlk == d->loopBlock, preserva s1/s2 do fim da iteracao anterior (comportamento real do SPU do PS1)
+    d->block = d->start + targetBlk * 16;
+    d->next = (int)(targetBlk * 28);
+    d2_spu_decode_block(d);
+    d->nib = pos - d->next;
 }
 
 static void d2_spu_read(void *ctx, samplebuffer_t *sbuf, int wpos, int wlen, bool seeking)
@@ -149,40 +179,85 @@ static void d2_spu_read(void *ctx, samplebuffer_t *sbuf, int wpos, int wlen, boo
     D2SpuDecode *d = (D2SpuDecode *)ctx;
     if (seeking || wpos != d->next + d->nib) d2_spu_seek(d, wpos);
     short *out = (short *)samplebuffer_append(sbuf, wlen);
-    for (int i = 0; i < wlen; i++)
+    int rem = wlen;
+    while (rem > 0)
     {
+        if (d->nib >= 28 && rem >= 28 && d->block + 32 <= D2_SPU_RAM_SIZE)
+        {
+            d->block += 16; d->next += 28;
+            d2_spu_decode_28(s_spuRam + d->block, out, d->s1, d->s2);
+            out += 28; rem -= 28; d->nib = 28;
+            continue;
+        }
         if (d->nib >= 28) { d->block += 16; d->next += 28; d->nib = 0; d2_spu_decode_block(d); }
-        out[i] = d->pcm[d->nib++];
+        int avail = 28 - d->nib;
+        int take = rem < avail ? rem : avail;
+        memcpy(out, d->pcm + d->nib, (size_t)take * sizeof(short));
+        out += take; d->nib += take; rem -= take;
     }
+}
+
+static constexpr float D2_SPU_MASTER_VOL = 0.35f;
+static constexpr float D2_SPU_MAX_FREQ   = 44100.0f;
+
+static float d2_spu_calc_freq(u_short pitch)
+{
+    float freq = 44100.0f * (float)pitch / 4096.0f;
+    if (freq < 100.0f) freq = 100.0f;
+    if (freq > D2_SPU_MAX_FREQ) freq = D2_SPU_MAX_FREQ;
+    return freq;
+}
+
+static void d2_spu_apply_voice(const D2SpuVoice *v, int ch)
+{
+    if (!s_spuInited || !mixer_ch_playing(ch)) return;
+    float vl = s_spuMute ? 0.0f : ((float)v->volL / 16384.0f) * D2_SPU_MASTER_VOL;
+    float vr = s_spuMute ? 0.0f : ((float)v->volR / 16384.0f) * D2_SPU_MASTER_VOL;
+    if (vl < -1.0f) vl = -1.0f; else if (vl > 1.0f) vl = 1.0f;
+    if (vr < -1.0f) vr = -1.0f; else if (vr > 1.0f) vr = 1.0f;
+    mixer_ch_set_vol(ch, vl, vr);
+    mixer_ch_set_freq(ch, d2_spu_calc_freq(v->pitch));
 }
 
 static void d2_spu_shape(D2SpuVoice *v, int ch)
 {
+    mixer_ch_stop(ch);
     int blocks = 0, loopBlock = -1; bool repeat = false;
-    for (u_int a = v->addr; a + 16 <= D2_SPU_RAM_SIZE && blocks < 32768; a += 16, blocks++)
+    for (u_int a = v->addr; a + 16 <= D2_SPU_RAM_SIZE && blocks < 8192; a += 16, blocks++)
     {
         int flags = s_spuRam[a + 1];
         if (flags & 4) loopBlock = blocks;
         if (flags & 1) { repeat = (flags & 2) != 0; blocks++; break; }
     }
     if (blocks <= 0) blocks = 1;
+    if (loopBlock < 0 && v->loopAddr >= v->addr) {
+        int lb = (int)((v->loopAddr - v->addr) >> 4);
+        if (lb < blocks) loopBlock = lb;
+    }
+    int loopStart = (loopBlock >= 0 && loopBlock < blocks) ? loopBlock : 0;
     D2SpuDecode *d = (D2SpuDecode *)v->wave.ctx;
-    memset(d, 0, sizeof *d); d->start = v->addr; d2_spu_seek(d, 0);
-    v->wave.frequency = 44100.0f; v->wave.len = blocks * 28;
-    v->wave.loop_len = repeat ? (blocks - (loopBlock >= 0 ? loopBlock : 0)) * 28 : 0;
+    memset(d, 0, sizeof *d);
+    d->start = v->addr;
+    d->loopBlock = (u_int)loopStart;
+    d2_spu_seek(d, 0);
+    v->wave.__uuid = 0;
+    v->wave.frequency = d2_spu_calc_freq(v->pitch);
+    v->wave.len = blocks * 28;
+    v->wave.loop_len = repeat ? (blocks - loopStart) * 28 : 0;
     mixer_ch_play(ch, &v->wave);
-    mixer_ch_set_loop(ch, v->wave.loop_len != 0);
+    d2_spu_apply_voice(v, ch);
 }
 
 int PsyX_SPUAL_InitSound()
 {
     if (s_spuInited) return 1;
-    audio_init(44100, 4); mixer_init(D2_SPU_VOICES);
+    audio_init(32000, 4); mixer_init(D2_SPU_VOICES);
     for (int i = 0; i < D2_SPU_VOICES; i++)
     {
+        mixer_ch_set_limits(i, 16, D2_SPU_MAX_FREQ, 0);
         D2SpuVoice *v = &s_spuVoice[i]; memset(v, 0, sizeof *v);
         v->pitch = 4096; v->wave.name = "psx-adpcm"; v->wave.bits = 16; v->wave.channels = 1;
-        v->wave.frequency = 44100.0f; v->wave.read = d2_spu_read; v->wave.append_units = 28;
+        v->wave.frequency = 32000.0f; v->wave.read = d2_spu_read; v->wave.append_units = 28;
         v->wave.ctx = malloc(sizeof(D2SpuDecode));
     }
     s_spuInited = true; return 1;
@@ -206,20 +281,22 @@ void PsyX_SPUAL_SetVoiceAttr(SpuVoiceAttr *a)
         if (a->mask & SPU_VOICE_PITCH) v->pitch = a->pitch;
         if (a->mask & SPU_VOICE_WDSA) v->addr = a->addr;
         if (a->mask & SPU_VOICE_LSAX) v->loopAddr = a->loop_addr;
-        if (s_spuInited) { mixer_ch_set_vol(n, s_spuMute ? 0 : (float)v->volL / 16384.0f, s_spuMute ? 0 : (float)v->volR / 16384.0f); mixer_ch_set_freq(n, 44100.0f * v->pitch / 4096.0f); }
+        if (s_spuInited) d2_spu_apply_voice(v, n);
     }
 }
 void PsyX_SPUAL_SetKey(int on, u_int bits) { if (!s_spuInited) return; for (int n = 0; n < D2_SPU_VOICES; n++) if (bits & (1u << n)) { if (on) d2_spu_shape(&s_spuVoice[n], n); else mixer_ch_stop(n); } }
 int PsyX_SPUAL_GetKeyStatus(u_int bits) { int r = 0; if (s_spuInited) for (int n = 0; n < D2_SPU_VOICES; n++) if ((bits & (1u << n)) && mixer_ch_playing(n)) r |= 1u << n; return r; }
 void PsyX_SPUAL_GetAllKeysStatus(char *s) { for (int n = 0; n < D2_SPU_VOICES; n++) s[n] = s_spuInited && mixer_ch_playing(n); }
-int PsyX_SPUAL_SetMute(int on) { int old = s_spuMute; s_spuMute = on != 0; for (int n = 0; n < D2_SPU_VOICES; n++) { D2SpuVoice *v = &s_spuVoice[n]; mixer_ch_set_vol(n, s_spuMute ? 0 : (float)v->volL / 16384.0f, s_spuMute ? 0 : (float)v->volR / 16384.0f); } return old; }
+int PsyX_SPUAL_SetMute(int on) { int old = s_spuMute; s_spuMute = on != 0; if (s_spuInited) { for (int n = 0; n < D2_SPU_VOICES; n++) d2_spu_apply_voice(&s_spuVoice[n], n); } return old; }
 void d2_audio_pump() {
 #ifdef D2_PERFDBG
     uint32_t t0 = perf_cnt0();
+    d2_sys_pump_vbl_cb();
     if (s_spuInited) mixer_try_play();
     g_perf_cur.audio_pump_ticks += perf_cnt0() - t0;
     g_perf_cur.audio_pump_calls++;
 #else
+    d2_sys_pump_vbl_cb();
     if (s_spuInited) mixer_try_play();
 #endif
 }

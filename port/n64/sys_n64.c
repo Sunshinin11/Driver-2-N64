@@ -5,6 +5,7 @@
 
 static volatile int vbl_count;
 static void (*vbl_cb)(void);
+static int last_cb_vbl;
 
 static volatile int last_present_vbl;
 static void d2_hang_report(void);
@@ -13,13 +14,24 @@ extern void d2_audio_pump(void);
 static void vi_handler(void)
 {
     vbl_count++;
-    if (vbl_cb) vbl_cb();
     d2_hang_report();
 }
 
 void d2_sys_init(void) { register_VI_handler(vi_handler); }
 int  d2_sys_vbl_count(void) { return vbl_count; }
-void d2_sys_set_vbl_cb(void (*f)(void)) { vbl_cb = f; }
+void d2_sys_set_vbl_cb(void (*f)(void)) { vbl_cb = f; last_cb_vbl = vbl_count; }
+void d2_sys_pump_vbl_cb(void)
+{
+    int cur = vbl_count;
+    if (!vbl_cb) { last_cb_vbl = cur; return; }
+    int pending = cur - last_cb_vbl;
+    if (pending <= 0) return;
+    if (pending > 8) { last_cb_vbl = cur - 1; pending = 1; }
+    while (pending-- > 0) {
+        last_cb_vbl++;
+        vbl_cb();
+    }
+}
 double d2_sys_now_ms(void) { return (double)timer_ticks() * 1000.0 / (double)TICKS_PER_SECOND; }
 
 // Espera ate o contador de vblank chegar em 'target' (com saida de seguranca se o VI parar: 100 ms por quadro).

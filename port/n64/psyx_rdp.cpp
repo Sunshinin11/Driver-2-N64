@@ -1223,9 +1223,11 @@ extern "C" int __wrap_GTE_operator(int op)
     d2_gp[0] += t1 - t0; d2_gp[1]++; d2_gpf[op & 63][0]++; d2_gpf[op & 63][1] += t1 - t0; return r;
 }
 #endif
+extern "C" void d2_audio_pump(void);
 char PsyX_BeginScene(void)
 {
     if (s_scene) return 0;
+    d2_audio_pump();
     rdp_init_once();
     s_fb = display_get();
     if (s_endStamp[d2_rdp_frames & 1] > s_doneCounter) s_doneCounter = s_endStamp[d2_rdp_frames & 1];   // o quadro de 2 EndScene atras ja foi exibido => RDP terminou
@@ -1298,6 +1300,7 @@ void PsyX_EndScene(void)
 #endif
     track_ovl_switch(0);
     rdpq_detach_show();
+    d2_audio_pump();
 #ifdef D2_ORIGIN_PROF
     g_d2_oprof.ot_overhead_ticks += d2_oprof_cnt0() - _oprof_end0;
 #endif
