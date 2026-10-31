@@ -245,18 +245,10 @@ void d2_t3d_draw_queued_buildings(void)
     float h = (float)scr_z;
     if (h < 1.0f) h = 256.0f;
 
-    T3DMat4 proj;
-    memset(&proj, 0, sizeof(proj));
-    proj.m[0][0] = h / 160.0f;
-    proj.m[1][1] = h / 120.0f;
-    proj.m[2][2] = farP / (nearP - farP);
-    proj.m[2][3] = -1.0f;
-    proj.m[3][2] = -2.0f * farP * nearP / (farP - nearP);
-
+    float fov = 2.0f * atanf(120.0f / h);
     s_t3d_viewport._bufferIdx = d2_rdp_frame_count() & 1;
 
-    t3d_viewport_set_w_normalize(&s_t3d_viewport, nearP, farP);
-    t3d_viewport_set_projection_matrix(&s_t3d_viewport, &proj);
+    t3d_viewport_set_perspective(&s_t3d_viewport, fov, 320.0f / 240.0f, nearP, farP);
     t3d_viewport_look_at(&s_t3d_viewport, &e, &tg, &u);
     t3d_viewport_attach(&s_t3d_viewport);
 
