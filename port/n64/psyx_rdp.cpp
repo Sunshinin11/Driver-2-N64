@@ -162,10 +162,27 @@ static void rdp_wait_idle(void) { rspq_wait(); s_doneCounter = s_useCounter; }
 static int s_palClut = -1, s_palFmt = -1;
 static unsigned int s_palVer;
 
-static inline unsigned short conv_color(unsigned short v)
+#define D2_ADD_DARK_THRESHOLD 4
+
+static bool s_isAdditive = false;
+
+static inline unsigned short conv_color(unsigned short v, bool is_add = false)
 {
     // PS1: xBBBBBGGGGGRRRRR (0x0000 = transparente) -> RDP: RRRRRGGGGGBBBBBA
-    return (unsigned short)(((v & 31) << 11) | (((v >> 5) & 31) << 6) | (((v >> 10) & 31) << 1) | (v != 0));
+    if (v == 0) return 0;
+    const int r = v & 31, g = (v >> 5) & 31, b = (v >> 10) & 31;
+    int a = 1;
+    if (is_add)
+    {
+        const int maxc = r > g ? (r > b ? r : b) : (g > b ? g : b);
+        if (maxc < D2_ADD_DARK_THRESHOLD) a = 0;
+    }
+    return (unsigned short)((r << 11) | (g << 6) | (b << 1) | a);
+}
+
+static inline int pal_key(int clut, bool is_add)
+{
+    return (clut & 0xFFFF) | (is_add ? 0x10000 : 0);
 }
 
 struct PalEnt { int clut; unsigned int sig, gen, use, vw; int valid, bank; unsigned short pal[16] __attribute__((aligned(16))); };
@@ -255,7 +272,8 @@ static TexSlot *get_region(int px, int py, int fmt, int u0, int v0, int w, int h
     if (bytes > TEX_BYTES) return 0;                       // paletas ocupam a metade alta da TMEM
     *outW = sw; *outH = sh; *outWpad = wpad;
 
-    unsigned int k0 = (unsigned)px | ((unsigned)py << 10) | ((unsigned)fmt << 20) | ((unsigned)step << 24);
+    const unsigned int addBit = (s_isAdditive && fmt == TF_16_BIT) ? (1u << 28) : 0;
+    unsigned int k0 = (unsigned)px | ((unsigned)py << 10) | ((unsigned)fmt << 20) | ((unsigned)step << 24) | addBit;
     unsigned int k1 = ((unsigned)u0 & 0xFF) | (((unsigned)v0 & 0xFF) << 8) | (((unsigned)(w > 0 ? w - 1 : 0) & 0xFF) << 16) | (((unsigned)(h > 0 ? h - 1 : 0) & 0xFF) << 24);
     unsigned int hsh = (k0 * 0x9E3779B1u) ^ (k1 * 0x85EBCA6Bu);
     hsh ^= hsh >> 15; hsh *= 0x2C1B3C6Du; hsh ^= hsh >> 13;
@@ -338,7 +356,7 @@ static TexSlot *get_region(int px, int py, int fmt, int u0, int v0, int w, int h
         else
         {
             unsigned short *d = (unsigned short *)(dst + y * wpad * 2);
-            for (int x = 0; x < sw; x++) d[x] = conv_color(row[(px + u0 + x * step) & 1023]);
+            for (int x = 0; x < sw; x++) d[x] = conv_color(row[(px + u0 + x * step) & 1023], s_isAdditive);
             for (int x = sw; x < wpad; x++) d[x] = 0;
         }
     }
@@ -381,10 +399,24 @@ static void set_mode(bool textured, int fmt, BlendMode blend)
     s_lastSetModeFmt = fmt;
     s_lastSetModeBlend = (int)blend;
 #endif
+    const bool isAdd = (blend == BM_ADD || blend == BM_ADD_QUATER_SOURCE);
+    if (isAdd != s_isAdditive)
+    {
+        s_lastUp.clut = -1;
+        s_lastUp.palEnt = 0;
+#ifdef D2_TEXWIN
+#ifdef D2_PALBANK
+        banks_invalidate();
+#endif
+#endif
+        s_isAdditive = isAdd;
+    }
     int key = textured ? (1 + fmt) * 8 + (int)blend : (int)blend;
     if (key == s_modeKey) return;
     s_modeKey = key;
     s_lastUp.slot = 0;     // o estado de textura se perde ao trocar de modo (palette/tlut)
+    s_lastUp.clut = -1;
+    s_lastUp.palEnt = 0;
 #ifdef D2_TEXWIN
     s_leanTiles = false;
     s_tmemWin = false;
@@ -399,20 +431,21 @@ static void set_mode(bool textured, int fmt, BlendMode blend)
     rdpq_mode_antialias(AA_NONE);
     rdpq_mode_dithering(DITHER_NONE_NONE);
     rdpq_mode_filter(FILTER_POINT);
-    int pa = 0, add = 0;
+    int pa = 0;
     switch (blend)
     {
         case BM_AVERAGE:           pa = 128; break;   // 0.5 B + 0.5 F
         case BM_SUBTRACT:          pa = 110; break;   // B - F (aproximado: escurece)
-        case BM_ADD:               pa = 170; add = 1; break;
-        case BM_ADD_QUATER_SOURCE: pa = 64;  add = 1; break;
+        case BM_ADD:               pa = 128; break;   // mistura comum, sem overflow
+        case BM_ADD_QUATER_SOURCE: pa = 64;  break;   // mistura comum, sem overflow
         default: break;
     }
     if (textured)
     {
-        // texels transparentes (indice 0) tem alfa 0 => tanto o alpha-compare (opaco) quanto a mistura (alfa do texel x constante) os ignoram
+        // texels transparentes (indice 0 ou escuros aditivos) tem alfa 0 => descartados pelo alpha compare
         if (pa) rdpq_mode_combiner(RDPQ_COMBINER1((TEX0, ZERO, SHADE, ZERO), (TEX0, ZERO, PRIM, ZERO)));
-        else    { rdpq_mode_combiner(RDPQ_COMBINER_TEX_SHADE); rdpq_mode_alphacompare(1); }
+        else    rdpq_mode_combiner(RDPQ_COMBINER_TEX_SHADE);
+        rdpq_mode_alphacompare(1);
         rdpq_mode_tlut(fmt == TF_16_BIT ? TLUT_NONE : TLUT_RGBA16);
     }
     else
@@ -423,8 +456,7 @@ static void set_mode(bool textured, int fmt, BlendMode blend)
     if (pa)
     {
         rdpq_set_prim_color(RGBA32(255, 255, 255, pa));
-        if (add) rdpq_mode_blender(RDPQ_BLENDER((IN_RGB, IN_ALPHA, MEMORY_RGB, ONE)));
-        else     rdpq_mode_blender(RDPQ_BLENDER((IN_RGB, IN_ALPHA, MEMORY_RGB, INV_MUX_ALPHA)));
+        rdpq_mode_blender(RDPQ_BLENDER((IN_RGB, IN_ALPHA, MEMORY_RGB, INV_MUX_ALPHA)));
     }
     else rdpq_mode_blender(0);
 }
@@ -433,11 +465,12 @@ static void set_mode(bool textured, int fmt, BlendMode blend)
 #ifdef D2_TEXWIN
 static void upload_pal_bank(int clut)
 {
-    if (clut == s_pbClut && s_pbVw == s_vramWrites && s_curBank > 0 && s_bank[s_curBank].clut == clut) { s_bank[s_curBank].lru = ++s_bankLru; return; }
-    s_pbClut = clut; s_pbVw = s_vramWrites;
-    PalEnt *e = &s_palCache[(clut ^ (clut >> 8)) & (PAL_CACHE - 1)];
-    const int cx = (clut & 63) * 16, cy = clut >> 6;
-    bool ok = e->valid && e->clut == clut;
+    const int pkey = pal_key(clut, s_isAdditive);
+    if (pkey == s_pbClut && s_pbVw == s_vramWrites && s_curBank > 0 && s_bank[s_curBank].clut == pkey) { s_bank[s_curBank].lru = ++s_bankLru; return; }
+    s_pbClut = pkey; s_pbVw = s_vramWrites;
+    PalEnt *e = &s_palCache[(pkey ^ (pkey >> 8)) & (PAL_CACHE - 1)];
+    const int cx = (clut & 63) * 16, cy = (clut & 0xFFFF) >> 6;
+    bool ok = e->valid && e->clut == pkey;
     if (ok && e->vw != s_vramWrites)
     {
         const unsigned int sig = cell_signature(cx, cy, 16, 1);
@@ -447,19 +480,19 @@ static void upload_pal_bank(int clut)
     {
         if (e->valid && e->use > s_doneCounter) rdp_wait_idle();      // o RDP ainda pode estar lendo esta paleta
         const unsigned short *src = vram + ((cy & 511) << 10);
-        for (int i = 0; i < 16; i++) e->pal[i] = conv_color(src[(cx + i) & 1023]);
+        for (int i = 0; i < 16; i++) e->pal[i] = conv_color(src[(cx + i) & 1023], s_isAdditive);
         data_cache_hit_writeback(e->pal, 32);
-        e->clut = clut; e->sig = cell_signature(cx, cy, 16, 1); e->vw = s_vramWrites; e->valid = 1; e->gen = ++s_genCounter;
+        e->clut = pkey; e->sig = cell_signature(cx, cy, 16, 1); e->vw = s_vramWrites; e->valid = 1; e->gen = ++s_genCounter;
     }
     int b = 0;
-    if (e->bank > 0 && e->bank < 16 && s_bank[e->bank].clut == clut && s_bank[e->bank].gen == e->gen)
+    if (e->bank > 0 && e->bank < 16 && s_bank[e->bank].clut == pkey && s_bank[e->bank].gen == e->gen)
     {
         b = e->bank;
     }
     else
     {
         for (int i = 1; i < 16; i++) {
-            if (s_bank[i].clut == clut && s_bank[i].gen == e->gen) {
+            if (s_bank[i].clut == pkey && s_bank[i].gen == e->gen) {
                 b = i;
                 break;
             }
@@ -473,7 +506,7 @@ static void upload_pal_bank(int clut)
         for (int i = 2; i < 16; i++) if (s_bank[i].lru < s_bank[b].lru) b = i;
         rdpq_tex_upload_tlut(e->pal, b * 16, 16); s_cTlut++; s_winBase = -1;
         e->use = ++s_useCounter;
-        s_bank[b].clut = clut; s_bank[b].gen = e->gen;
+        s_bank[b].clut = pkey; s_bank[b].gen = e->gen;
         s_tmemDirty = true;
         s_lastUp.clut = -1;
     }
@@ -636,47 +669,48 @@ static bool upload_region(int page, int clut, int u0, int v0, int w, int h, int 
     }
 
     const bool paletted = s_texFormat != TF_16_BIT;
+    const int pkey = pal_key(clut, s_isAdditive);
 #ifndef D2_NOPALCACHE
     if (s_texFormat == TF_4_BIT)
     {
         // paletas de 16 cores: cache por CLUT (convertidas uma vez; invalidadas pela versao das celulas da VRAM)
-        const int cx = (clut & 63) * 16, cy = clut >> 6;
-        PalEnt *e = &s_palCache[(clut ^ (clut >> 8)) & (PAL_CACHE - 1)];
+        const int cx = (clut & 63) * 16, cy = (clut & 0xFFFF) >> 6;
+        PalEnt *e = &s_palCache[(pkey ^ (pkey >> 8)) & (PAL_CACHE - 1)];
         const unsigned int sig = cell_signature(cx, cy, 16, 1);
-        if (!e->valid || e->clut != clut || e->sig != sig)
+        if (!e->valid || e->clut != pkey || e->sig != sig)
         {
             if (e->use > s_doneCounter) rdp_wait_idle();          // o RDP ainda pode estar lendo esta paleta
             const unsigned short *src = vram + ((cy & 511) << 10);
-            for (int i = 0; i < 16; i++) e->pal[i] = conv_color(src[(cx + i) & 1023]);
+            for (int i = 0; i < 16; i++) e->pal[i] = conv_color(src[(cx + i) & 1023], s_isAdditive);
             data_cache_hit_writeback(e->pal, 32);
-            e->clut = clut; e->sig = sig; e->valid = 1; e->gen = ++s_genCounter;
+            e->clut = pkey; e->sig = sig; e->valid = 1; e->gen = ++s_genCounter;
         }
-        if (s_lastUp.slot == 0 || s_lastUp.fmt != s_texFormat || s_lastUp.palEnt != e || s_lastUp.palGen != e->gen)
+        if (s_lastUp.slot == 0 || s_lastUp.fmt != s_texFormat || s_lastUp.palEnt != e || s_lastUp.palGen != e->gen || s_lastUp.clut != pkey)
         {
             rdpq_tex_upload_tlut(e->pal, 0, 16); s_cTlut++; s_winBase = -1; s_bank[0].clut = -1;
             e->use = ++s_useCounter;
-            s_lastUp.fmt = s_texFormat; s_lastUp.palEnt = e; s_lastUp.palGen = e->gen; s_lastUp.clut = clut;
+            s_lastUp.fmt = s_texFormat; s_lastUp.palEnt = e; s_lastUp.palGen = e->gen; s_lastUp.clut = pkey;
         }
     }
 #else
     if (false) {}
 #endif
-    else if (paletted && (s_lastUp.clut != clut || s_lastUp.fmt != s_texFormat || s_lastUp.palVer != s_vramWrites || s_lastUp.slot == 0))
+    else if (paletted && (s_lastUp.clut != pkey || s_lastUp.fmt != s_texFormat || s_lastUp.palVer != s_vramWrites || s_lastUp.slot == 0))
     {
-        const int cx = (clut & 63) * 16, cy = clut >> 6;
+        const int cx = (clut & 63) * 16, cy = (clut & 0xFFFF) >> 6;
         const unsigned short *src = vram + ((cy & 511) << 10);
         const int n = s_texFormat == TF_4_BIT ? 16 : 256;
         s_palIdx = (s_palIdx + 1) % PAL_RING;
         if (s_palUse[s_palIdx] > s_doneCounter) rdp_wait_idle();
         unsigned short *pal = s_palRing[s_palIdx];
-        for (int i = 0; i < n; i++) pal[i] = conv_color(src[(cx + i) & 1023]);
+        for (int i = 0; i < n; i++) pal[i] = conv_color(src[(cx + i) & 1023], s_isAdditive);
         data_cache_hit_writeback(pal, n * 2);
         rdpq_tex_upload_tlut(pal, 0, n); s_cTlut++; s_winBase = -1; if (n > 16) banks_invalidate(); else s_bank[0].clut = -1;
 #ifdef D2_PALBANK
         if (n > 16) banks_invalidate();
 #endif
         s_palUse[s_palIdx] = ++s_useCounter;
-        s_lastUp.clut = clut; s_lastUp.fmt = s_texFormat; s_lastUp.palVer = s_vramWrites; s_lastUp.palEnt = 0;
+        s_lastUp.clut = pkey; s_lastUp.fmt = s_texFormat; s_lastUp.palVer = s_vramWrites; s_lastUp.palEnt = 0;
     }
     else if (s_texFormat == TF_8_BIT)
     {
@@ -756,21 +790,22 @@ static bool upload_region(int page, int clut, int u0, int v0, int w, int h, int 
 // paleta de 16 ou 256 cores (recarrega se mudou CLUT, formato, VRAM ou modo)
 static bool upload_pal(int clut)
 {
-    if (s_lastUp.clut == clut && s_lastUp.fmt == s_texFormat && s_lastUp.palVer == s_vramWrites && s_lastUp.slot != 0) return false;
-    const int cx = (clut & 63) * 16, cy = clut >> 6;
+    const int pkey = pal_key(clut, s_isAdditive);
+    if (s_lastUp.clut == pkey && s_lastUp.fmt == s_texFormat && s_lastUp.palVer == s_vramWrites && s_lastUp.slot != 0) return false;
+    const int cx = (clut & 63) * 16, cy = (clut & 0xFFFF) >> 6;
     const unsigned short *src = vram + ((cy & 511) << 10);
     const int n = s_texFormat == TF_4_BIT ? 16 : 256;
     s_palIdx = (s_palIdx + 1) % PAL_RING;
     if (s_palUse[s_palIdx] > s_doneCounter) rdp_wait_idle();
     unsigned short *pal = s_palRing[s_palIdx];
-    for (int i = 0; i < n; i++) pal[i] = conv_color(src[(cx + i) & 1023]);
+    for (int i = 0; i < n; i++) pal[i] = conv_color(src[(cx + i) & 1023], s_isAdditive);
     data_cache_hit_writeback(pal, n * 2);
     rdpq_tex_upload_tlut(pal, 0, n); s_cTlut++; s_winBase = -1; if (n > 16) banks_invalidate(); else s_bank[0].clut = -1;
 #ifdef D2_PALBANK
     if (n > 16) banks_invalidate();
 #endif
     s_palUse[s_palIdx] = ++s_useCounter;
-    s_lastUp.clut = clut; s_lastUp.fmt = s_texFormat; s_lastUp.palVer = s_vramWrites; s_lastUp.palEnt = 0;
+    s_lastUp.clut = pkey; s_lastUp.fmt = s_texFormat; s_lastUp.palVer = s_vramWrites; s_lastUp.palEnt = 0;
     return true;
 }
 #endif
