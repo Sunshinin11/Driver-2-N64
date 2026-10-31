@@ -765,6 +765,15 @@ P('Game/C/mission.c',
   "\tif(wantedTimeOfDay > -1)\n\t\tgTimeOfDay = wantedTimeOfDay;",
   "#ifdef D2_TRANSDBG\n\tgTimeOfDay = TIME_NIGHT;\n#else\n\tif(wantedTimeOfDay > -1)\n\t\tgTimeOfDay = wantedTimeOfDay;\n#endif")
 
+# ---- sombra do Tanner: render offscreen nao suportado no N64 ----
+P('Game/C/motion_c.c',
+  "\t\t\tTannerShadow(pPed, &v, moon_position + GameLevel, &cV, pPed->dir.vy);\n\t\t}\n\t\telse\n\t\t{\n\t\t\tcV.b = 32;\n\t\t\tcV.g = 32;\n\t\t\tcV.r = 32;\n\t\t\tTannerShadow(pPed, &v, sun_position + GameLevel, &cV, pPed->dir.vy);",
+  "#ifndef D2_NO_TANNER_SHADOW\n\t\t\tTannerShadow(pPed, &v, moon_position + GameLevel, &cV, pPed->dir.vy);\n#endif\n\t\t}\n\t\telse\n\t\t{\n\t\t\tcV.b = 32;\n\t\t\tcV.g = 32;\n\t\t\tcV.r = 32;\n#ifndef D2_NO_TANNER_SHADOW\n\t\t\tTannerShadow(pPed, &v, sun_position + GameLevel, &cV, pPed->dir.vy);\n#endif")
+
+P('Game/C/motion_c.c',
+  "\t\t\tTannerShadow(pPed, &v, moon_position + GameLevel, &cV, pPed->dir.vy);\n\t\t}\n\t\telse\n\t\t{\n\t\t\tcV.b = cV.g = cV.r = 32;\n\t\t\tTannerShadow(pPed, &v, sun_position + GameLevel, &cV, pPed->dir.vy);",
+  "#ifndef D2_NO_TANNER_SHADOW\n\t\t\tTannerShadow(pPed, &v, moon_position + GameLevel, &cV, pPed->dir.vy);\n#endif\n\t\t}\n\t\telse\n\t\t{\n\t\t\tcV.b = cV.g = cV.r = 32;\n#ifndef D2_NO_TANNER_SHADOW\n\t\t\tTannerShadow(pPed, &v, sun_position + GameLevel, &cV, pPed->dir.vy);\n#endif")
+
 def main():
     ok = skipped = missing = 0
     cache = {}
