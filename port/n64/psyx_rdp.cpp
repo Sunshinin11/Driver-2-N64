@@ -158,7 +158,17 @@ static unsigned int s_palUse[PAL_RING];
 static int s_palIdx;
 static unsigned int s_useCounter, s_doneCounter;     // carimbos de uso x ultimo ponto em que o RDP comprovadamente terminou
 static unsigned int s_endStamp[2];
+#ifdef D2_PERFDBG
+static void rdp_wait_idle(void) {
+    uint32_t t0 = perf_cnt0();
+    rspq_wait();
+    g_perf_cur.bk_wait_idle_ticks += perf_cnt0() - t0;
+    g_perf_cur.bk_wait_idle_calls++;
+    s_doneCounter = s_useCounter;
+}
+#else
 static void rdp_wait_idle(void) { rspq_wait(); s_doneCounter = s_useCounter; }
+#endif
 static int s_palClut = -1, s_palFmt = -1;
 static unsigned int s_palVer;
 
@@ -263,9 +273,71 @@ static void shadow_sync(int wx, int wy, int ww, int wh)      // celulas tocadas 
         }
 }
 
+static inline void d2_perf_tlut_upload(const void *pal, int idx, int n) {
+#ifdef D2_PERFDBG
+    uint32_t t0 = perf_cnt0();
+    rdpq_tex_upload_tlut(pal, idx, n);
+    g_perf_cur.bk_tlut_upload_ticks += perf_cnt0() - t0;
+    g_perf_cur.cnt_tlut_uploads++;
+#else
+    rdpq_tex_upload_tlut(pal, idx, n);
+#endif
+}
+#define rdpq_tex_upload_tlut d2_perf_tlut_upload
+
+static inline void d2_perf_load_tile(rdpq_tile_t tile, int s0, int t0, int s1, int t1) {
+#ifdef D2_PERFDBG
+    uint32_t c0 = perf_cnt0();
+    rdpq_load_tile(tile, s0, t0, s1, t1);
+    g_perf_cur.bk_tex_upload_ticks += perf_cnt0() - c0;
+    g_perf_cur.cnt_tex_uploads++;
+#else
+    rdpq_load_tile(tile, s0, t0, s1, t1);
+#endif
+}
+#define rdpq_load_tile d2_perf_load_tile
+
+static inline size_t d2_perf_upload_sub(rdpq_tile_t tile, const surface_t *surf, const rdpq_texparms_t *parms, int s0, int t0, int s1, int t1) {
+#ifdef D2_PERFDBG
+    uint32_t c0 = perf_cnt0();
+    size_t res = rdpq_tex_upload_sub(tile, surf, parms, s0, t0, s1, t1);
+    g_perf_cur.bk_tex_upload_ticks += perf_cnt0() - c0;
+    g_perf_cur.cnt_tex_uploads++;
+    return res;
+#else
+    return rdpq_tex_upload_sub(tile, surf, parms, s0, t0, s1, t1);
+#endif
+}
+#define rdpq_tex_upload_sub d2_perf_upload_sub
+
+static inline void d2_perf_shadow_sync(int x, int y, int w, int h) {
+#ifdef D2_PERFDBG
+    uint32_t t0 = perf_cnt0();
+    shadow_sync(x, y, w, h);
+    g_perf_cur.bk_shadow_sync_ticks += perf_cnt0() - t0;
+#else
+    shadow_sync(x, y, w, h);
+#endif
+}
+#define shadow_sync d2_perf_shadow_sync
+
+static inline void d2_perf_shadow_sync_all(void) {
+#ifdef D2_PERFDBG
+    uint32_t t0 = perf_cnt0();
+    shadow_sync_all();
+    g_perf_cur.bk_shadow_sync_ticks += perf_cnt0() - t0;
+#else
+    shadow_sync_all();
+#endif
+}
+#define shadow_sync_all d2_perf_shadow_sync_all
+
 // decodifica a regiao (u0,v0,w,h com passo step) da pagina (px,py) para o slot; retorna false se nao couber
 static TexSlot *get_region(int px, int py, int fmt, int u0, int v0, int w, int h, int step, int *outW, int *outH, int *outWpad, int clut, int rgba_mode)
 {
+#ifdef D2_PERFDBG
+    uint32_t gr_t0 = perf_cnt0();
+#endif
     const bool is_rgba32 = (rgba_mode != 0);
     const int sw = (w + step - 1) / step, sh = (h + step - 1) / step;
     int wpad;
@@ -309,7 +381,19 @@ static TexSlot *get_region(int px, int py, int fmt, int u0, int v0, int w, int h
     for (int i = 0; i < 4; i++)
     {
         TexSlot *c = &s_slots[(base + i) % TEX_SLOTS];
-        if (c->valid && c->key0 == k0 && c->key1 == k1 && c->key2 == k2 && c->sig == sig) { c->use = ++s_useCounter; s_dbgHit++; return c; }
+        if (c->valid && c->key0 == k0 && c->key1 == k1 && c->key2 == k2 && c->sig == sig) {
+            c->use = ++s_useCounter; s_dbgHit++;
+#ifdef D2_PERFDBG
+            uint32_t gr_el = perf_cnt0() - gr_t0;
+            if (is_rgba32) {
+                if (rgba_mode == 1) g_perf_cur.bk_get_region_rgba32_add_ticks += gr_el;
+                else g_perf_cur.bk_get_region_rgba32_sub_ticks += gr_el;
+            } else if (fmt == TF_4_BIT) g_perf_cur.bk_get_region_ci4_ticks += gr_el;
+            else if (fmt == TF_8_BIT) g_perf_cur.bk_get_region_ci8_ticks += gr_el;
+            else g_perf_cur.bk_get_region_16b_ticks += gr_el;
+#endif
+            return c;
+        }
     }
     // precisa decodificar: so reutiliza um slot cujos dados o RDP ja terminou de ler
     for (int i = 0; i < 4 && !s; i++)
@@ -321,6 +405,9 @@ static TexSlot *get_region(int px, int py, int fmt, int u0, int v0, int w, int h
 
     // decodifica
     s_dbgMiss++; s_dbgTex += sw * sh; s_dbgPM[fmt & 3]++; s_dbgPT[fmt & 3] += sw * sh; if (step > 1) s_dbgTexStep += sw * sh;
+#ifdef D2_PERFDBG
+    g_perf_cur.cnt_miss_slots++;
+#endif
     unsigned char *dst = s->data;
     if (is_rgba32)
     {
@@ -427,6 +514,27 @@ static TexSlot *get_region(int px, int py, int fmt, int u0, int v0, int w, int h
     }
     data_cache_hit_writeback(dst, (bytes + 15) & ~15);
     s->key0 = k0; s->key1 = k1; s->key2 = k2; s->sig = sig; s->valid = 1; s->gen = ++s_genCounter; s->use = ++s_useCounter;
+#ifdef D2_PERFDBG
+    uint32_t gr_el = perf_cnt0() - gr_t0;
+    if (is_rgba32) {
+        if (rgba_mode == 1) {
+            g_perf_cur.bk_get_region_rgba32_add_ticks += gr_el;
+            g_perf_cur.cnt_texels_rgba32_add += sw * sh;
+        } else {
+            g_perf_cur.bk_get_region_rgba32_sub_ticks += gr_el;
+            g_perf_cur.cnt_texels_rgba32_sub += sw * sh;
+        }
+    } else if (fmt == TF_4_BIT) {
+        g_perf_cur.bk_get_region_ci4_ticks += gr_el;
+        g_perf_cur.cnt_texels_ci4 += sw * sh;
+    } else if (fmt == TF_8_BIT) {
+        g_perf_cur.bk_get_region_ci8_ticks += gr_el;
+        g_perf_cur.cnt_texels_ci8 += sw * sh;
+    } else {
+        g_perf_cur.bk_get_region_16b_ticks += gr_el;
+        g_perf_cur.cnt_texels_16b += sw * sh;
+    }
+#endif
     return s;
 }
 
@@ -1069,6 +1177,9 @@ char PsyX_BeginScene(void)
 
 void PsyX_EndScene(void)
 {
+#ifdef D2_PERFDBG
+    PERF_START(bk_end);
+#endif
 #ifdef D2_GTEPROF
     if ((d2_rdp_frames % 30) == 0) { debugf("[gte] ops=%u ticks=%u\n", d2_gp[1], d2_gp[0]); for (int i = 0; i < 64; i++) if (d2_gpf[i][0]) debugf("[gtef] %02x n=%u t=%u\n", i, d2_gpf[i][0], d2_gpf[i][1]); }
     memset(d2_gpf, 0, sizeof d2_gpf);
@@ -1114,6 +1225,9 @@ void PsyX_EndScene(void)
     s_endStamp[d2_rdp_frames & 1] = s_useCounter;
     d2_rdp_frames++;
     d2_sys_note_frame();
+#ifdef D2_PERFDBG
+    PERF_END_ADD(bk_end, backend_ticks);
+#endif
 }
 
 // aborta o quadro em andamento (usado antes de mostrar texto de diagnostico)
@@ -1301,6 +1415,9 @@ static void tri_core(const PV *A, const PV *B, const PV *C, int page, int clut)
     // recorta contra o viewport estendido para evitar que predios desaparecam ou gerem artefatos gigantes
     if (mnx < -256 || mxx > 1536 || mny < -256 || mxy > 1216 || mxx - mnx > 16000 || mxy - mny > 16000)
     {
+#ifdef D2_PERFDBG
+        PERF_START(sclip);
+#endif
         DV pin[3], ptmp1[8], ptmp2[8];
         for (int i = 0; i < 3; i++) {
             pin[i].x = X4[i] * 0.25f; pin[i].y = Y4[i] * 0.25f;
@@ -1313,6 +1430,10 @@ static void tri_core(const PV *A, const PV *B, const PV *C, int page, int clut)
         int np = 3;
         np = clip_poly_screen(pin, np, ptmp1, 0, -64.0f, true);
         if (np < 3) {
+#ifdef D2_PERFDBG
+            PERF_END_ADD(sclip, bk_screen_clip_ticks);
+            g_perf_cur.cnt_clipped_polys++;
+#endif
 #ifdef D2_DPROF
             s_rejScreenClip++;
 #endif
@@ -1320,6 +1441,10 @@ static void tri_core(const PV *A, const PV *B, const PV *C, int page, int clut)
         }
         np = clip_poly_screen(ptmp1, np, ptmp2, 0, (float)(SCREEN_W + 64), false);
         if (np < 3) {
+#ifdef D2_PERFDBG
+            PERF_END_ADD(sclip, bk_screen_clip_ticks);
+            g_perf_cur.cnt_clipped_polys++;
+#endif
 #ifdef D2_DPROF
             s_rejScreenClip++;
 #endif
@@ -1327,6 +1452,10 @@ static void tri_core(const PV *A, const PV *B, const PV *C, int page, int clut)
         }
         np = clip_poly_screen(ptmp2, np, ptmp1, 1, -64.0f, true);
         if (np < 3) {
+#ifdef D2_PERFDBG
+            PERF_END_ADD(sclip, bk_screen_clip_ticks);
+            g_perf_cur.cnt_clipped_polys++;
+#endif
 #ifdef D2_DPROF
             s_rejScreenClip++;
 #endif
@@ -1334,11 +1463,19 @@ static void tri_core(const PV *A, const PV *B, const PV *C, int page, int clut)
         }
         np = clip_poly_screen(ptmp1, np, ptmp2, 1, (float)(SCREEN_H + 64), false);
         if (np < 3) {
+#ifdef D2_PERFDBG
+            PERF_END_ADD(sclip, bk_screen_clip_ticks);
+            g_perf_cur.cnt_clipped_polys++;
+#endif
 #ifdef D2_DPROF
             s_rejScreenClip++;
 #endif
             return;
         }
+#ifdef D2_PERFDBG
+        PERF_END_ADD(sclip, bk_screen_clip_ticks);
+        g_perf_cur.cnt_clipped_polys++;
+#endif
 
         for (int i = 1; i + 1 < np; i++) {
             PV sub[3];
@@ -1372,6 +1509,9 @@ static void tri_core(const PV *A, const PV *B, const PV *C, int page, int clut)
     }
 
     s_triCount++;
+#ifdef D2_PERFDBG
+    g_perf_cur.cnt_triangles++;
+#endif
     if (!s_ctxTex)
     {
         uint32_t res = AUTOSYNC_PIPE;
@@ -1471,6 +1611,9 @@ static void tri_core(const PV *A, const PV *B, const PV *C, int page, int clut)
     }
     const int bw = tileW * step, bh = tileH * step;
     const int tu0 = (umin / bw) * bw, tv0 = (vmin / bh) * bh;
+#ifdef D2_PERFDBG
+    PERF_START(bclip);
+#endif
     for (int tv = tv0; tv <= vmax && tv < 256; tv += bh)
         for (int tu = tu0; tu <= umax && tu < 256; tu += bw)
         {
@@ -1511,8 +1654,17 @@ static void tri_core(const PV *A, const PV *B, const PV *C, int page, int clut)
 #endif
                 continue;
             }
-            for (int i = 1; i + 1 < n; i++) { emit_tri(true, a[0], a[i], a[i + 1], (float)(step == 1 ? s_upOu : tu), (float)(step == 1 ? s_upOv : tv), 1.0f / step, 1.0f, 1.0f); s_nSub++; }
+            for (int i = 1; i + 1 < n; i++) {
+                emit_tri(true, a[0], a[i], a[i + 1], (float)(step == 1 ? s_upOu : tu), (float)(step == 1 ? s_upOv : tv), 1.0f / step, 1.0f, 1.0f);
+                s_nSub++;
+#ifdef D2_PERFDBG
+                g_perf_cur.cnt_sub_triangles++;
+#endif
+            }
         }
+#ifdef D2_PERFDBG
+    PERF_END_ADD(bclip, bk_tex_block_clip_ticks);
+#endif
 }
 
 #ifdef D2_XP_NOEMIT
@@ -1544,7 +1696,7 @@ static inline uint32_t shade_rgba(unsigned r, unsigned g, unsigned b)
            ((uint32_t)s_shadeLut[b & 255] << 8)  | 255;
 }
 
-static inline uint32_t calc_vertex_color(unsigned r, unsigned g, unsigned b, BlendMode blend, bool textured)
+static inline uint32_t calc_vertex_color_raw(unsigned r, unsigned g, unsigned b, BlendMode blend, bool textured)
 {
     const uint32_t sr = textured ? s_shadeLut[r & 255] : (r & 255);
     const uint32_t sg = textured ? s_shadeLut[g & 255] : (g & 255);
@@ -1566,8 +1718,23 @@ static inline uint32_t calc_vertex_color(unsigned r, unsigned g, unsigned b, Ble
     return (sr << 24) | (sg << 16) | (sb << 8) | 255;
 }
 
+static inline uint32_t calc_vertex_color(unsigned r, unsigned g, unsigned b, BlendMode blend, bool textured)
+{
+#ifdef D2_PERFDBG
+    uint32_t t0 = perf_cnt0();
+    uint32_t res = calc_vertex_color_raw(r, g, b, blend, textured);
+    g_perf_cur.bk_calc_color_ticks += perf_cnt0() - t0;
+    return res;
+#else
+    return calc_vertex_color_raw(r, g, b, blend, textured);
+#endif
+}
+
 static inline void calc_primitive_colors(uint32_t *outRgba, int count, const uint8_t *cr, const uint8_t *cg, const uint8_t *cb, BlendMode bm, bool textured)
 {
+#ifdef D2_PERFDBG
+    uint32_t t0 = perf_cnt0();
+#endif
     if (bm == BM_ADD || bm == BM_ADD_QUATER_SOURCE)
     {
         uint32_t sr[4], sg[4], sb[4], as[4];
@@ -1616,6 +1783,9 @@ static inline void calc_primitive_colors(uint32_t *outRgba, int count, const uin
             outRgba[i] = calc_vertex_color(r, g, b, bm, textured);
         }
     }
+#ifdef D2_PERFDBG
+    g_perf_cur.bk_calc_color_ticks += perf_cnt0() - t0;
+#endif
 }
 
 void GR_DrawTriangles(int start, int count)
@@ -2045,6 +2215,9 @@ extern "C" int d2_native_draw_prim(P_TAG *tag)
 extern "C" void d2_native_draw_ot(u_long *ot)
 {
     if (!ot) return;
+#ifdef D2_PERFDBG
+    uint32_t t_ot0 = perf_cnt0();
+#endif
     P_TAG *base = (P_TAG*)ot;
     unsigned nodes = 0;
     for (;;) {
@@ -2124,6 +2297,9 @@ extern "C" void d2_native_draw_ot(u_long *ot)
 #endif
 #ifdef D2_ORIGIN
     d2_origin_frame_begin();
+#endif
+#ifdef D2_PERFDBG
+    g_perf_cur.bk_ot_walk_ticks += perf_cnt0() - t_ot0;
 #endif
 }
 int d2_direct_poly(P_TAG *tag)

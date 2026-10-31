@@ -771,11 +771,89 @@ P('Game/C/targets.c',
 
 P('Game/Frontend/FEmain.c',
   "wantedTimeOfDay = TIME_DAY;",
-  "#ifdef D2_TRANSDBG\n\t\twantedTimeOfDay = TIME_NIGHT;\n#else\n\t\twantedTimeOfDay = TIME_DAY;\n#endif")
+  "#if defined(D2_TRANSDBG) || defined(D2_PERF_NIGHT)\n\t\twantedTimeOfDay = TIME_NIGHT;\n#else\n\t\twantedTimeOfDay = TIME_DAY;\n#endif")
 
 P('Game/C/mission.c',
   "\tif(wantedTimeOfDay > -1)\n\t\tgTimeOfDay = wantedTimeOfDay;",
-  "#ifdef D2_TRANSDBG\n\tgTimeOfDay = TIME_NIGHT;\n#else\n\tif(wantedTimeOfDay > -1)\n\t\tgTimeOfDay = wantedTimeOfDay;\n#endif")
+  "#if defined(D2_TRANSDBG) || defined(D2_PERF_NIGHT)\n\tgTimeOfDay = TIME_NIGHT;\n#else\n\tif(wantedTimeOfDay > -1)\n\t\tgTimeOfDay = wantedTimeOfDay;\n#endif")
+
+
+# ---- D2_PERFDBG: instrumentacao de desempenho ----
+P('Game/C/system.c',
+  "\tPutDispEnv(&current->disp);\n\tPutDrawEnv(&current->draw);\n\tDrawOTag((u_long*)(current->ot + OTSIZE-1));\n",
+  "\tPutDispEnv(&current->disp);\n\tPutDrawEnv(&current->draw);\n#ifdef D2_PERFDBG\n\tPERF_START(bk);\n\tDrawOTag((u_long*)(current->ot + OTSIZE-1));\n\tPERF_END_ADD(bk, backend_ticks);\n#else\n\tDrawOTag((u_long*)(current->ot + OTSIZE-1));\n#endif\n")
+
+P('Game/C/main.c',
+  "\tif (!FilterFrameTime())\n\t\treturn;\n\n\tUpdatePadData();",
+  "#ifdef D2_PERFDBG\n\tPERF_START(vbl);\n\twhile (!FilterFrameTime())\n\t{\n\t\td2_audio_pump();\n\t}\n\tPERF_END_ADD(vbl, vblank_wait_ticks);\n\tperf_frame_start();\n#else\n\tif (!FilterFrameTime())\n\t\treturn;\n#endif\n\n\tUpdatePadData();")
+
+P('Game/C/main.c',
+  "\tcnt = FastForward ? 7 : 1;\n\twhile (--cnt >= 0)\n\t\tStepGame();",
+  "\tcnt = FastForward ? 7 : 1;\n#ifdef D2_PERFDBG\n\tPERF_START(step);\n\twhile (--cnt >= 0)\n\t\tStepGame();\n\tPERF_END_ADD(step, stepgame_ticks);\n#else\n\twhile (--cnt >= 0)\n\t\tStepGame();\n#endif")
+
+P('Game/C/main.c',
+  "\t_CutRec_Draw();\n\tDrawGame();\n\t\n\tif (game_over)",
+  "\t_CutRec_Draw();\n\tDrawGame();\n#ifdef D2_PERFDBG\n\tperf_frame_end();\n#endif\n\t\n\tif (game_over)")
+
+P('Game/C/main.c',
+  "\t\tObjectDrawnValue = FrameCnt;\n\t\tDrawPauseMenus();\n\n\t\tRenderGame2(0);\n\t\tSwapDrawBuffers();",
+  "\t\tObjectDrawnValue = FrameCnt;\n\t\tDrawPauseMenus();\n\n#ifdef D2_PERFDBG\n\t\tPERF_START(draw);\n\t\tRenderGame2(0);\n\t\tPERF_END_ADD(draw, drawgame_ticks);\n\t\tSwapDrawBuffers();\n#else\n\t\tRenderGame2(0);\n\t\tSwapDrawBuffers();\n#endif")
+
+P('Game/C/main.c',
+  "\tif (doSpooling)\n\t{\n\t\tCheckValidSpoolData();\n\t\tControlMap();\n\t}",
+  "\tif (doSpooling)\n\t{\n#ifdef D2_PERFDBG\n\t\tPERF_START(spool);\n\t\tCheckValidSpoolData();\n\t\tControlMap();\n\t\tPERF_END_ADD(spool, step_spool_ticks);\n#else\n\t\tCheckValidSpoolData();\n\t\tControlMap();\n#endif\n\t}")
+
+P('Game/C/main.c',
+  "\tif (gInGameCutsceneActive == 0)\n\t{\n\t\tCheckSpecialSpool();\n\t}",
+  "\tif (gInGameCutsceneActive == 0)\n\t{\n#ifdef D2_PERFDBG\n\t\tPERF_START(s_spool);\n\t\tCheckSpecialSpool();\n\t\tPERF_END_ADD(s_spool, step_spool_ticks);\n#else\n\t\tCheckSpecialSpool();\n#endif\n\t}")
+
+P('Game/C/main.c',
+  "\t\t\tcase CONTROL_TYPE_CIV_AI:\n\t\t\t\tCivControl(cp);\n\t\t\t\tbreak;\n\t\t\tcase CONTROL_TYPE_PURSUER_AI:\n\t\t\t\tCopControl(cp);\n\t\t\t\tbreak;",
+  "\t\t\tcase CONTROL_TYPE_CIV_AI:\n#ifdef D2_PERFDBG\n\t\t\t\t{\n\t\t\t\t\tPERF_START(cai);\n\t\t\t\t\tCivControl(cp);\n\t\t\t\t\tPERF_END_ADD(cai, step_ai_ticks);\n\t\t\t\t}\n#else\n\t\t\t\tCivControl(cp);\n#endif\n\t\t\t\tbreak;\n\t\t\tcase CONTROL_TYPE_PURSUER_AI:\n#ifdef D2_PERFDBG\n\t\t\t\t{\n\t\t\t\t\tPERF_START(pai);\n\t\t\t\t\tCopControl(cp);\n\t\t\t\t\tPERF_END_ADD(pai, step_ai_ticks);\n\t\t\t\t}\n#else\n\t\t\t\tCopControl(cp);\n#endif\n\t\t\t\tbreak;")
+
+P('Game/C/main.c',
+  "\t\tStepCarPhysics(cp);\n\t\tcp++;",
+  "#ifdef D2_PERFDBG\n\t\tPERF_START(phys);\n\t\tStepCarPhysics(cp);\n\t\tPERF_END_ADD(phys, step_cars_physics_ticks);\n#else\n\t\tStepCarPhysics(cp);\n#endif\n\t\tcp++;")
+
+P('Game/C/main.c',
+  "\t\tProcessTannerPad(pl->pPed, t0, t1, t2);\n\t}",
+  "#ifdef D2_PERFDBG\n\t\tPERF_START(tpad);\n\t\tProcessTannerPad(pl->pPed, t0, t1, t2);\n\t\tPERF_END_ADD(tpad, step_pedestrians_ticks);\n#else\n\t\tProcessTannerPad(pl->pPed, t0, t1, t2);\n#endif\n\t}")
+
+P('Game/C/main.c',
+  "\tif (!game_over)\n\t{\n\t\tif(pathAILoaded)\n\t\t\tControlCops();\n\n\t\tif (gLoadedMotionCapture)\n\t\t\tHandlePedestrians();\n\t}\n\n\tGlobalTimeStep();\n\tUpdatePlayers();\n\tDoScenaryCollisions();",
+  "\tif (!game_over)\n\t{\n\t\tif(pathAILoaded)\n\t\t{\n#ifdef D2_PERFDBG\n\t\t\tPERF_START(cops);\n\t\t\tControlCops();\n\t\t\tPERF_END_ADD(cops, step_ai_ticks);\n#else\n\t\t\tControlCops();\n#endif\n\t\t}\n\n\t\tif (gLoadedMotionCapture)\n\t\t{\n#ifdef D2_PERFDBG\n\t\t\tPERF_START(hpeds);\n\t\t\tHandlePedestrians();\n\t\t\tPERF_END_ADD(hpeds, step_pedestrians_ticks);\n#else\n\t\t\tHandlePedestrians();\n#endif\n\t\t}\n\t}\n\n#ifdef D2_PERFDBG\n\tPERF_START(gtime);\n\tGlobalTimeStep();\n\tPERF_END_ADD(gtime, step_cars_physics_ticks);\n#else\n\tGlobalTimeStep();\n#endif\n\tUpdatePlayers();\n#ifdef D2_PERFDBG\n\tPERF_START(coll);\n\tDoScenaryCollisions();\n\tPERF_END_ADD(coll, step_collision_ticks);\n#else\n\tDoScenaryCollisions();\n#endif")
+
+P('Game/C/main.c',
+  "\tif (gLoadedMotionCapture != 0)\n\t\tDrawAllPedestrians();",
+  "\tif (gLoadedMotionCapture != 0)\n\t{\n#ifdef D2_PERFDBG\n\t\tPERF_START(ped);\n\t\tDrawAllPedestrians();\n\t\tPERF_END_ADD(ped, draw_pedestrians_ticks);\n#else\n\t\tDrawAllPedestrians();\n#endif\n\t}")
+
+P('Game/C/main.c',
+  "\tDrawSmashable_sprites();\n\tHandleDebris();\n\n\tcurrent->ot -= 10;\n\n\tDrawAllExplosions();",
+  "#ifdef D2_PERFDBG\n\tPERF_START(fx);\n#endif\n\tDrawSmashable_sprites();\n\tHandleDebris();\n\n\tcurrent->ot -= 10;\n\n\tDrawAllExplosions();\n#ifdef D2_PERFDBG\n\tPERF_END_ADD(fx, draw_effects_ticks);\n#endif")
+
+P('Game/C/main.c',
+  "\tif (gLoadedOverlay)\n\t\tDisplayOverlays();",
+  "\tif (gLoadedOverlay)\n\t{\n#ifdef D2_PERFDBG\n\t\tPERF_START(fx_ovl);\n\t\tDisplayOverlays();\n\t\tPERF_END_ADD(fx_ovl, draw_effects_ticks);\n#else\n\t\tDisplayOverlays();\n#endif\n\t}")
+
+P('Game/C/main.c',
+  "\tif (notInDreaAndStevesEvilLair)\n\t{\t\t\n\t\tDrawSkyDome();\n\n\t\tif (current->primtab - (current->primptr - PRIMTAB_SIZE) > 40000)\n\t\t{\n\t\t\tDoWeather(gWeather);\n\t\t}\n\t}\n\n\tif (current->primtab - (current->primptr - PRIMTAB_SIZE) > 37000)\n\t{\n\t\tDrawTyreTracks();\n\t}",
+  "#ifdef D2_PERFDBG\n\tPERF_START(fx_env);\n#endif\n\tif (notInDreaAndStevesEvilLair)\n\t{\t\t\n\t\tDrawSkyDome();\n\n\t\tif (current->primtab - (current->primptr - PRIMTAB_SIZE) > 40000)\n\t\t{\n\t\t\tDoWeather(gWeather);\n\t\t}\n\t}\n\n\tif (current->primtab - (current->primptr - PRIMTAB_SIZE) > 37000)\n\t{\n\t\tDrawTyreTracks();\n\t}\n#ifdef D2_PERFDBG\n\tPERF_END_ADD(fx_env, draw_effects_ticks);\n#endif")
+
+P('Game/C/draw.c',
+  "\tif (drawData.sprites_found)\n\t\tDrawSprites((PACKED_CELL_OBJECT**)spriteList, drawData.sprites_found);\n\n\tif (drawData.tiles_found)\n\t\tDrawTILES((PACKED_CELL_OBJECT**)model_tile_ptrs, drawData.tiles_found);\n\n\tif (drawData.other_models_found)\n\t\tDrawAllBuildings((CELL_OBJECT**)model_object_ptrs, drawData.other_models_found);",
+  "\tif (drawData.sprites_found)\n\t{\n#ifdef D2_PERFDBG\n\t\tPERF_START(spr);\n\t\tDrawSprites((PACKED_CELL_OBJECT**)spriteList, drawData.sprites_found);\n\t\tPERF_END_ADD(spr, draw_sprites_ticks);\n#else\n\t\tDrawSprites((PACKED_CELL_OBJECT**)spriteList, drawData.sprites_found);\n#endif\n\t}\n\n\tif (drawData.tiles_found)\n\t{\n#ifdef D2_PERFDBG\n\t\tPERF_START(tiles);\n\t\tDrawTILES((PACKED_CELL_OBJECT**)model_tile_ptrs, drawData.tiles_found);\n\t\tPERF_END_ADD(tiles, draw_ground_ticks);\n#else\n\t\tDrawTILES((PACKED_CELL_OBJECT**)model_tile_ptrs, drawData.tiles_found);\n#endif\n\t}\n\n\tif (drawData.other_models_found)\n\t{\n#ifdef D2_PERFDBG\n\t\tPERF_START(bld);\n\t\tDrawAllBuildings((CELL_OBJECT**)model_object_ptrs, drawData.other_models_found);\n\t\tPERF_END_ADD(bld, draw_buildings_ticks);\n#else\n\t\tDrawAllBuildings((CELL_OBJECT**)model_object_ptrs, drawData.other_models_found);\n#endif\n\t}")
+
+P('Game/C/draw.c',
+  "\t\t\tDrawCar(cars_to_draw[i], view);\n\t\t\t\n\t\t\tspacefree -= 2000;",
+  "#ifdef D2_PERFDBG\n\t\t\tuint32_t _shd0 = g_perf_cur.draw_shadows_ticks;\n\t\t\tPERF_START(car);\n\t\t\tDrawCar(cars_to_draw[i], view);\n\t\t\tuint32_t _dcar = perf_cnt0() - _pt0_car;\n\t\t\tuint32_t _dshd = g_perf_cur.draw_shadows_ticks - _shd0;\n\t\t\tif (_dcar >= _dshd) g_perf_cur.draw_cars_ticks += (_dcar - _dshd);\n#else\n\t\t\tDrawCar(cars_to_draw[i], view);\n#endif\n\t\t\t\n\t\t\tspacefree -= 2000;")
+
+P('Game/C/shadow.c',
+  "void PlaceShadowForCar(VECTOR *shadowPoints, int subdiv, int zOfs, int flag)\n{\n\tD2_ORIGIN_SET_SCOPE(\"shadow\");",
+  "void PlaceShadowForCar(VECTOR *shadowPoints, int subdiv, int zOfs, int flag)\n{\n\tD2_ORIGIN_SET_SCOPE(\"shadow\");\n#ifdef D2_PERFDBG\n\tPERF_START(shd);\n#endif")
+
+P('Game/C/shadow.c',
+  "\tdrawMesh((MVERTEX(*)[5][5])subdivVerts, subdiv, subdiv, &plotContext);\n\n\tcurrent->primptr = plotContext.primptr;\n}",
+  "\tdrawMesh((MVERTEX(*)[5][5])subdivVerts, subdiv, subdiv, &plotContext);\n\n\tcurrent->primptr = plotContext.primptr;\n#ifdef D2_PERFDBG\n\tPERF_END_ADD(shd, draw_shadows_ticks);\n#endif\n}")
 
 # ---- sombra do Tanner: render offscreen nao suportado no N64 ----
 P('Game/C/motion_c.c',

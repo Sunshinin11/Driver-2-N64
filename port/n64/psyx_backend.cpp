@@ -213,7 +213,16 @@ void PsyX_SPUAL_SetKey(int on, u_int bits) { if (!s_spuInited) return; for (int 
 int PsyX_SPUAL_GetKeyStatus(u_int bits) { int r = 0; if (s_spuInited) for (int n = 0; n < D2_SPU_VOICES; n++) if ((bits & (1u << n)) && mixer_ch_playing(n)) r |= 1u << n; return r; }
 void PsyX_SPUAL_GetAllKeysStatus(char *s) { for (int n = 0; n < D2_SPU_VOICES; n++) s[n] = s_spuInited && mixer_ch_playing(n); }
 int PsyX_SPUAL_SetMute(int on) { int old = s_spuMute; s_spuMute = on != 0; for (int n = 0; n < D2_SPU_VOICES; n++) { D2SpuVoice *v = &s_spuVoice[n]; mixer_ch_set_vol(n, s_spuMute ? 0 : (float)v->volL / 16384.0f, s_spuMute ? 0 : (float)v->volR / 16384.0f); } return old; }
-void d2_audio_pump() { if (s_spuInited) mixer_try_play(); }
+void d2_audio_pump() {
+#ifdef D2_PERFDBG
+    uint32_t t0 = perf_cnt0();
+    if (s_spuInited) mixer_try_play();
+    g_perf_cur.audio_pump_ticks += perf_cnt0() - t0;
+    g_perf_cur.audio_pump_calls++;
+#else
+    if (s_spuInited) mixer_try_play();
+#endif
+}
 int PsyX_SPUAL_SetReverb(int) { return 0; }
 int PsyX_SPUAL_GetReverbState() { return 0; }
 u_int PsyX_SPUAL_SetReverbVoice(int, u_int) { return 0; }

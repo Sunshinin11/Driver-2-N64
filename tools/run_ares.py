@@ -12,12 +12,14 @@ else:
     rom = os.path.join(root, "d2_n64.z64")
 
 print("Starting Ares with ROM:", rom)
-out_path = os.path.join(root, "test_bench_stdout.log")
+out_log = sys.argv[1] if len(sys.argv) > 1 else "test_bench_stdout.log"
+timeout_s = int(sys.argv[2]) if len(sys.argv) > 2 else 100
+out_path = os.path.join(root, out_log) if not os.path.isabs(out_log) else out_log
 err_path = os.path.join(root, "test_bench_stderr.log")
 with open(out_path, "w", encoding="utf-8") as out, open(err_path, "w", encoding="utf-8") as err:
     proc = subprocess.Popen([ares_exe, rom], stdout=out, stderr=err)
     try:
-        time.sleep(100)
+        time.sleep(timeout_s)
     finally:
         proc.kill()
 print("Ares finished. Log written to", out_path)

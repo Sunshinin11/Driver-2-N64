@@ -6,10 +6,12 @@
 #define HOME_ENV "HOME"          /* nao existe pasta de usuario no N64; saves irao para Controller Pak/SRAM (etapa futura) */
 #define _mkdir(str) ((void)(str)) /* sem diretorios gravaveis no N64 */
 #include "../n64/d2_origin.h"
+#include "../n64/d2_perfdbg.h"
 #ifdef __cplusplus
 extern "C" {
 #endif
 FILE *d2_fopen(const char *path, const char *mode); /* port/n64/sys_n64.c: redireciona para rom:/ (DragonFS) */
+void d2_audio_pump(void);
 #ifdef __cplusplus
 }
 #endif
