@@ -2294,15 +2294,29 @@ extern "C" int d2_native_draw_prim(P_TAG *tag)
 extern "C" void d2_native_draw_ot(u_long *ot)
 {
     if (!ot) return;
-#ifdef D2_T3D_WORLD
-    d2_t3d_draw_queued_buildings();
-#endif
 #ifdef D2_PERFDBG
     uint32_t t_ot0 = perf_cnt0();
+#endif
+#ifdef D2_T3D_WORLD
+    bool t3d_drawn = false;
+    uintptr_t uot_top = (uintptr_t)ot;
+    uintptr_t uot_base = uot_top - (0x1080 - 1) * sizeof(u_long);
 #endif
     P_TAG *base = (P_TAG*)ot;
     unsigned nodes = 0;
     for (;;) {
+#ifdef D2_T3D_WORLD
+        if (!t3d_drawn) {
+            uintptr_t ubase = (uintptr_t)base;
+            if (ubase >= uot_base && ubase <= uot_top) {
+                int bucket = (int)((ubase - uot_base) / sizeof(u_long));
+                if (bucket < 0x1070) {
+                    t3d_drawn = true;
+                    d2_t3d_draw_queued_buildings();
+                }
+            }
+        }
+#endif
         if (__builtin_expect(++nodes > 65536, 0)) { debugf("[native-ot] ciclo ou OT invalida\n"); break; }
         const unsigned words = getlen(base);
         if (__builtin_expect(words != 0, 1)) {
@@ -2374,6 +2388,11 @@ extern "C" void d2_native_draw_ot(u_long *ot)
         if (__builtin_expect(!next || next == base, 0)) break;
         base = next;
     }
+#ifdef D2_T3D_WORLD
+    if (!t3d_drawn) {
+        d2_t3d_draw_queued_buildings();
+    }
+#endif
 #if D2_RSP_GPU
     if (s_d2gpuOvl) rspq_write(s_d2gpuOvl, D2G_CMD_DRAW_END);
 #endif
