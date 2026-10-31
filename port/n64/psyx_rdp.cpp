@@ -18,6 +18,7 @@
 #include "PsyX/PsyX_public.h"
 #include "PsyX/PsyX_globals.h"
 #include "PsyX/PsyX_render.h"
+#include "d2_origin.h"
 
 extern "C" {
 extern unsigned short vram[];      // psyx_backend.cpp (valores nativos de 16 bits, ja no formato do PS1)
@@ -368,8 +369,18 @@ static void banks_invalidate(void)
 #endif
 
 // ---------------------------------------------------------------- modos do RDP
+#ifdef D2_ORIGIN
+static bool s_lastSetModeTextured = false;
+static int s_lastSetModeFmt = 0;
+static int s_lastSetModeBlend = 0;
+#endif
 static void set_mode(bool textured, int fmt, BlendMode blend)
 {
+#ifdef D2_ORIGIN
+    s_lastSetModeTextured = textured;
+    s_lastSetModeFmt = fmt;
+    s_lastSetModeBlend = (int)blend;
+#endif
     int key = textured ? (1 + fmt) * 8 + (int)blend : (int)blend;
     if (key == s_modeKey) return;
     s_modeKey = key;
@@ -1025,6 +1036,9 @@ static bool s_ctxTex;                         // contexto do lote atual (definid
 static int s_ctxTileW, s_ctxTileH;
 static int s_ctxCx0, s_ctxCx1, s_ctxCy0, s_ctxCy1;
 static int s_ctxSx16 = 65536, s_ctxSy16 = 65536;
+#ifdef D2_ORIGIN
+static const void *s_curPrim = NULL;
+#endif
 
 static bool ensure_slots(void)
 {
@@ -1052,6 +1066,8 @@ static inline void begin_batch(bool tex, BlendMode bm)
         s_ctxSx16 = (int)(sx * 65536.0f + 0.5f); s_ctxSy16 = (int)(sy * 65536.0f + 0.5f);
     }
 }
+
+static bool s_noSizeLimit = false;
 
 static void tri_core(const PV *A, const PV *B, const PV *C, int page, int clut)
 {
@@ -1084,6 +1100,38 @@ static void tri_core(const PV *A, const PV *B, const PV *C, int page, int clut)
         s_rejDegen++;
 #endif
         return;
+    }
+
+#ifdef D2_ORIGIN
+    {
+        int tw = (mxx - mnx) >> 2, th = (mxy - mny) >> 2;
+        if (tw > 200 || th > 200) {
+            short xs[4] = { (short)(X4[0] >> 2), (short)(X4[1] >> 2), (short)(X4[2] >> 2), 0 };
+            short ys[4] = { (short)(Y4[0] >> 2), (short)(Y4[1] >> 2), (short)(Y4[2] >> 2), 0 };
+            unsigned char us[4] = { (unsigned char)(v[0]->s32 >> 5), (unsigned char)(v[1]->s32 >> 5), (unsigned char)(v[2]->s32 >> 5), 0 };
+            unsigned char vs[4] = { (unsigned char)(v[0]->t32 >> 5), (unsigned char)(v[1]->t32 >> 5), (unsigned char)(v[2]->t32 >> 5), 0 };
+            d2_origin_check_large(s_curPrim, 0x24, page, clut, xs, ys, us, vs, 3);
+        }
+    }
+#endif
+
+    // Regra da GPU do PS1: descarta o triangulo quando a largura for > 1023 ou a altura > 511 em coordenadas PSX
+    if (!s_noSizeLimit)
+    {
+        const int dX4 = mxx - mnx;
+        const int dY4 = mxy - mny;
+        if ((long long)dX4 * 16384LL > 1023LL * (long long)s_ctxSx16 ||
+            (long long)dY4 * 16384LL > 511LL * (long long)s_ctxSy16)
+        {
+#ifdef D2_ORIGIN
+            const D2OriginRecord *rec = d2_origin_lookup(s_curPrim);
+            const char *func = rec ? rec->func_name : "unknown";
+            int model = rec ? rec->model_type : -1;
+            debugf("[SIZE-LIMIT-DISCARD] func=%s model=%d prim=%p dX4=%d dY4=%d (w=%d h=%d)\n",
+                   func, model, s_curPrim, dX4, dY4, dX4 >> 2, dY4 >> 2);
+#endif
+            return;
+        }
     }
 
     // Se o triangulo ultrapassa o range do RDP 12-bit ou tem dimensao extrema (>4000px),
@@ -1434,6 +1482,15 @@ int d2_direct_poly(P_TAG *tag);
 int d2_native_ft4(POLY_FT4 *p)
 {
     if (!activeDrawEnv.dfe || !s_scene) return 9;
+#ifdef D2_ORIGIN
+    {
+        short xs[4] = { p->x0, p->x1, p->x2, p->x3 };
+        short ys[4] = { p->y0, p->y1, p->y2, p->y3 };
+        unsigned char us[4] = { p->u0, p->u1, p->u2, p->u3 };
+        unsigned char vs[4] = { p->v0, p->v1, p->v2, p->v3 };
+        d2_origin_check_large(p, 0xB3, p->tpage, p->clut, xs, ys, us, vs, 4);
+    }
+#endif
     if (!ensure_slots()) return 9;
     d2_flush_splits();
     const RECT16 &c = activeDrawEnv.clip;
@@ -1598,6 +1655,14 @@ int d2_native_rect(P_TAG *tag)
     else if (kind == 0x70 || kind == 0x74) { w = h = 8; len = kind == 0x74 ? 3 : 2; }
     else if (kind == 0x78 || kind == 0x7C) { w = h = 16; len = kind == 0x7C ? 3 : 2; }
     else return 0;
+#ifdef D2_ORIGIN
+    {
+        TILE *base = (TILE *)tag;
+        short xs[4] = { base->x0, (short)(base->x0 + w), base->x0, (short)(base->x0 + w) };
+        short ys[4] = { base->y0, base->y0, (short)(base->y0 + h), (short)(base->y0 + h) };
+        d2_origin_check_large(tag, code, activeDrawEnv.tpage, 0, xs, ys, NULL, NULL, 4);
+    }
+#endif
     if (!activeDrawEnv.dfe || !s_scene || w <= 0 || h <= 0) return len;
     if (!ensure_slots()) return len;
     d2_flush_splits();
@@ -1621,8 +1686,10 @@ int d2_native_rect(P_TAG *tag)
         q[i].X4 = ((x[i] + ofx) * s_ctxSx16) >> 14; q[i].Y4 = ((y[i] + ofy) * s_ctxSy16) >> 14;
         q[i].rgba = col; q[i].s32 = (u0 + ((i & 1) ? w : 0)) << 5; q[i].t32 = (v0 + ((i & 2) ? h : 0)) << 5;
     }
+    s_noSizeLimit = true;
     tri_core(&q[0], &q[1], &q[2], activeDrawEnv.tpage, clut);
     tri_core(&q[1], &q[3], &q[2], activeDrawEnv.tpage, clut);
+    s_noSizeLimit = false;
     return len;
 }
 static void d2_line_segment(short ax, short ay, short bx, short by, uint32_t ca, uint32_t cb, BlendMode bm)
@@ -1634,7 +1701,11 @@ static void d2_line_segment(short ax, short ay, short bx, short by, uint32_t ca,
     else { y[1]++; y[2]++; x[2]++; x[3]++; }
     PV q[4];
     for(int i=0;i<4;i++){ q[i].X4=((x[i]+ox)*s_ctxSx16)>>14; q[i].Y4=((y[i]+oy)*s_ctxSy16)>>14; q[i].rgba=(i==0||i==3)?ca:cb; q[i].s32=q[i].t32=0; }
-    begin_batch(false,bm); tri_core(&q[0],&q[1],&q[3],0,0); tri_core(&q[1],&q[2],&q[3],0,0);
+    begin_batch(false,bm);
+    s_noSizeLimit = true;
+    tri_core(&q[0],&q[1],&q[3],0,0);
+    tri_core(&q[1],&q[2],&q[3],0,0);
+    s_noSizeLimit = false;
 }
 int d2_native_line(P_TAG *tag)
 {
@@ -1703,6 +1774,9 @@ int d2_native_vram_packet(P_TAG *tag)
 }
 extern "C" int d2_native_dispatch(P_TAG *tag)
 {
+#ifdef D2_ORIGIN
+    s_curPrim = tag;
+#endif
     if (__builtin_expect(tag->code == 0xB3, 1)) return d2_native_ft4((POLY_FT4*)tag);
     const int type = tag->code & 0xF0;
     if (__builtin_expect(type == 0x20 || type == 0x30, 1)) return d2_direct_poly(tag);
@@ -1731,7 +1805,58 @@ extern "C" void d2_native_draw_ot(u_long *ot)
             uintptr_t cur = (uintptr_t)base, end = cur + (words + P_LEN) * sizeof(u_int);
             while (cur < end) {
                 P_TAG *tag = (P_TAG*)cur;
+#ifdef D2_ORIGIN
+                short xs[4] = {0}, ys[4] = {0};
+                uint32_t col = 0;
+                int nv = 0;
+                {
+                    const int type = tag->code & 0xF0;
+                    if (tag->code == 0xB3) {
+                        POLY_FT4 *p = (POLY_FT4*)tag;
+                        xs[0] = p->x0; ys[0] = p->y0; xs[1] = p->x1; ys[1] = p->y1;
+                        xs[2] = p->x2; ys[2] = p->y2; xs[3] = p->x3; ys[3] = p->y3;
+                        col = ((uint32_t)p->r0 << 16) | ((uint32_t)p->g0 << 8) | p->b0;
+                        nv = 4;
+                    } else if (type == 0x20 || type == 0x30) {
+                        const unsigned int *w = (const unsigned int *)tag + P_LEN;
+                        const bool quad = (tag->code & 0x08) != 0, gour = (tag->code & 0x10) != 0, tex = (tag->code & 0x04) != 0;
+                        const int stride = (gour ? 1 : 0) + 1 + (tex ? 1 : 0);
+                        nv = quad ? 4 : 3;
+                        for (int i = 0; i < nv; i++) {
+                            const short *pxy = (const short *)(gour ? (w + i * stride + 1) : (w + 1 + i * stride));
+                            xs[i] = pxy[0]; ys[i] = pxy[1];
+                        }
+                        col = *w & 0xFFFFFF;
+                    } else if (type == 0x40 || type == 0x50) {
+                        const int sub = tag->code & 0x0C;
+                        if (sub == 0x0C) {
+                            LINE_F4 *p = (LINE_F4*)tag;
+                            xs[0] = p->x0; ys[0] = p->y0; xs[1] = p->x1; ys[1] = p->y1;
+                            xs[2] = p->x2; ys[2] = p->y2; xs[3] = p->x3; ys[3] = p->y3;
+                            col = ((uint32_t)p->r0 << 16) | ((uint32_t)p->g0 << 8) | p->b0;
+                            nv = 4;
+                        } else {
+                            LINE_F2 *p = (LINE_F2*)tag;
+                            xs[0] = p->x0; ys[0] = p->y0; xs[1] = p->x1; ys[1] = p->y1;
+                            col = ((uint32_t)p->r0 << 16) | ((uint32_t)p->g0 << 8) | p->b0;
+                            nv = 2;
+                        }
+                    } else if (type == 0x60 || type == 0x70) {
+                        SPRT *p = (SPRT*)tag;
+                        xs[0] = p->x0; ys[0] = p->y0; xs[1] = p->x0 + p->w; ys[1] = p->y0;
+                        xs[2] = p->x0; ys[2] = p->y0 + p->h; xs[3] = p->x0 + p->w; ys[3] = p->y0 + p->h;
+                        col = ((uint32_t)p->r0 << 16) | ((uint32_t)p->g0 << 8) | p->b0;
+                        nv = 4;
+                    } else if (type == 0xE0) {
+                        col = *(const unsigned int *)&tag->pad0;
+                        nv = 0;
+                    }
+                }
+#endif
                 int n = d2_native_dispatch(tag);
+#ifdef D2_ORIGIN
+                d2_origin_log_hud(tag, tag->code, (tag->code & 2) != 0, col, xs, ys, nv, s_lastSetModeTextured, s_lastSetModeFmt, s_lastSetModeBlend);
+#endif
                 uintptr_t next = cur + (n + P_LEN) * sizeof(u_int);
                 if (__builtin_expect(n <= 0 || next <= cur || next > end, 0)) {
                     cur = end;
@@ -1747,6 +1872,9 @@ extern "C" void d2_native_draw_ot(u_long *ot)
     }
 #if D2_RSP_GPU
     if (s_d2gpuOvl) rspq_write(s_d2gpuOvl, D2G_CMD_DRAW_END);
+#endif
+#ifdef D2_ORIGIN
+    d2_origin_frame_begin();
 #endif
 }
 int d2_direct_poly(P_TAG *tag)
@@ -1784,6 +1912,9 @@ int d2_direct_poly_i(P_TAG *tag)
             if (i == 1) tpage = ((const unsigned short *)uvp)[1];
         }
     }
+#ifdef D2_ORIGIN
+    d2_origin_check_large(tag, code, tpage, clut, xs, ys, tex ? us : NULL, tex ? vs : NULL, nv);
+#endif
     if (tex)
     {
         if (!quad && !gour) s_ft3Total++;

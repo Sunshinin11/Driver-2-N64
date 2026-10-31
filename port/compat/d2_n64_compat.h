@@ -5,6 +5,7 @@
 #include "d2_endian.h"
 #define HOME_ENV "HOME"          /* nao existe pasta de usuario no N64; saves irao para Controller Pak/SRAM (etapa futura) */
 #define _mkdir(str) ((void)(str)) /* sem diretorios gravaveis no N64 */
+#include "../n64/d2_origin.h"
 #ifdef __cplusplus
 extern "C" {
 #endif

@@ -636,6 +636,83 @@ P('PsyCross/src/gpu/PsyX_GPU.cpp',
   "\t\t\t}\n\n\t\t\tGPUDrawSplit& lastSplit = g_splits[g_splitIndex];\n\t\t\tlastSplit.numVerts = g_vertexIndex - lastSplit.startVertex;\n\n\t\t\tif (isendprim(basePacket))",
   "#ifdef D2_FASTOT\n\t\t\t\tGPUDrawSplit& lastSplit = g_splits[g_splitIndex];\n\t\t\t\tlastSplit.numVerts = g_vertexIndex - lastSplit.startVertex;\n\t\t\t}\n#else\n\t\t\t}\n\n\t\t\tGPUDrawSplit& lastSplit = g_splits[g_splitIndex];\n\t\t\tlastSplit.numVerts = g_vertexIndex - lastSplit.startVertex;\n#endif\n\n\t\t\tif (isendprim(basePacket))")
 
+# ---- Diagnostico de origem de primitivas (D2_ORIGIN) ----
+P('PsyCross/include/psx/libgpu.h',
+  "#else\n#define addPrim(ot, p)\t\tsetaddr(p, getaddr(ot)), setaddr(ot, p)\n#endif\n\n#define addPrims",
+  "#else\n#ifdef D2_ORIGIN\n#define addPrim(ot, p)\t\t(D2_ORIGIN_TAG_AUTO(p), setaddr(p, getaddr(ot)), setaddr(ot, p))\n#else\n#define addPrim(ot, p)\t\tsetaddr(p, getaddr(ot)), setaddr(ot, p)\n#endif\n#endif\n\n#define addPrims")
+
+P('Game/C/draw.c',
+  "model = Z > DRAW_LOD_DIST_LOW ? pLodModels[cop->type] : modelpointers[cop->type];",
+  "D2_ORIGIN_SET_SCOPE(\"PlotBuildingModel\");\n\t\tD2_ORIGIN_SET_CELL(cop->type, cop->pos.vx, cop->pos.vy, cop->pos.vz);\n\t\tmodel = Z > DRAW_LOD_DIST_LOW ? pLodModels[cop->type] : modelpointers[cop->type];")
+
+P('Game/C/draw.c',
+  "numShadows = 0;\n\n\twhile (numFound--)",
+  "numShadows = 0;\n\tD2_ORIGIN_SET_SCOPE(\"DrawSprites\");\n\n\twhile (numFound--)")
+
+P('Game/C/draw.c',
+  "z = Apply_InvCameraMatrixAndSetMatrix((VECTOR_NOPAD*)plotContext.scribble, (MATRIX2*)&face_camera);",
+  "D2_ORIGIN_SET_CELL(modelnumber, pco->pos.vx, pco->pos.vy, pco->pos.vz);\n\t\tz = Apply_InvCameraMatrixAndSetMatrix((VECTOR_NOPAD*)plotContext.scribble, (MATRIX2*)&face_camera);")
+
+P('Game/C/draw.c',
+  "void RenderModel(MODEL* model, MATRIX* matrix, VECTOR* pos, int zBias, int flags, int subdiv, int nrot)\n{",
+  "void RenderModel(MODEL* model, MATRIX* matrix, VECTOR* pos, int zBias, int flags, int subdiv, int nrot)\n{\n\tD2_ORIGIN_SET_SCOPE(\"RenderModel\");\n\tD2_ORIGIN_SET_CELL(-1, pos ? pos->vx : 0, pos ? pos->vy : 0, pos ? pos->vz : 0);")
+
+P('Game/C/draw.c',
+  "void DrawAllTheCars(int view)\n{",
+  "void DrawAllTheCars(int view)\n{\n\tD2_ORIGIN_SET_SCOPE(\"DrawCars\");")
+
+P('Game/C/tile.c',
+  "tilePointers = (PACKED_CELL_OBJECT **)tiles;\n\n\twhile (tile_amount--)",
+  "tilePointers = (PACKED_CELL_OBJECT **)tiles;\n\tD2_ORIGIN_SET_SCOPE(\"DrawTILES\");\n\n\twhile (tile_amount--)")
+
+P('Game/C/tile.c',
+  "model_number = (ppco->value >> 6) | (ppco->pos.vy & 1) << 10;\n\n\t\tif (previous_matrix == yang)",
+  "model_number = (ppco->value >> 6) | (ppco->pos.vy & 1) << 10;\n\t\tD2_ORIGIN_SET_CELL(model_number, ppco->pos.vx, ppco->pos.vy, ppco->pos.vz);\n\n\t\tif (previous_matrix == yang)")
+
+P('Game/C/overlay.c',
+  "void DrawPercentageBar(PERCENTAGE_BAR *bar)\n{",
+  "void DrawPercentageBar(PERCENTAGE_BAR *bar)\n{\n\tD2_ORIGIN_SET_SCOPE(\"overlay/HUD/Bar\");")
+
+P('Game/C/overlay.c',
+  "\t\tpoly = (POLY_G4 *)current->primptr;\n\t\tsetPolyG4(poly);",
+  "\t\tpoly = (POLY_G4 *)current->primptr;\n#ifdef D2_ORIGIN\n\t\tD2_ORIGIN_TAG(poly, \"overlay/HUD/Bar/Fill\", -1, NULL, 0x38, NULL, NULL);\n#endif\n\t\tsetPolyG4(poly);")
+
+P('Game/C/overlay.c',
+  "\tpoly2 = (POLY_G4 *)current->primptr;\n\n\tsetPolyG4(poly2);",
+  "\tpoly2 = (POLY_G4 *)current->primptr;\n#ifdef D2_ORIGIN\n\t\tD2_ORIGIN_TAG(poly2, \"overlay/HUD/Bar/Trans\", -1, NULL, 0x38, NULL, NULL);\n#endif\n\n\tsetPolyG4(poly2);")
+
+P('Game/C/overlay.c',
+  "\tLINE_F4* lineF4 = (LINE_F4*)current->primptr;\n\tsetLineF4(lineF4);",
+  "\tLINE_F4* lineF4 = (LINE_F4*)current->primptr;\n#ifdef D2_ORIGIN\n\t\tD2_ORIGIN_TAG(lineF4, \"overlay/HUD/Bar/Line4\", -1, NULL, 0x4C, NULL, NULL);\n#endif\n\tsetLineF4(lineF4);")
+
+P('Game/C/overlay.c',
+  "\tLINE_F2* lineF2 = (LINE_F2*)current->primptr;\n\tsetLineF2(lineF2);",
+  "\tLINE_F2* lineF2 = (LINE_F2*)current->primptr;\n#ifdef D2_ORIGIN\n\t\tD2_ORIGIN_TAG(lineF2, \"overlay/HUD/Bar/Line2\", -1, NULL, 0x40, NULL, NULL);\n#endif\n\tsetLineF2(lineF2);")
+
+P('Game/C/overlay.c',
+  "\tnull = (DR_TPAGE*)current->primptr;\n\tsetDrawTPage(null, 1, 0, tpage);",
+  "\tnull = (DR_TPAGE*)current->primptr;\n#ifdef D2_ORIGIN\n\t\tD2_ORIGIN_TAG(null, \"overlay/HUD/TransparencyOn\", -1, NULL, 0xE1, NULL, NULL);\n#endif\n\tsetDrawTPage(null, 1, 0, tpage);")
+
+P('Game/C/overlay.c',
+  "void DisplayOverlays(void)\n{",
+  "void DisplayOverlays(void)\n{\n\tD2_ORIGIN_SET_SCOPE(\"overlay/HUD\");")
+
+P('Game/C/shadow.c',
+  "void PlaceShadowForCar(VECTOR *shadowPoints, int subdiv, int zOfs, int flag)\n{",
+  "void PlaceShadowForCar(VECTOR *shadowPoints, int subdiv, int zOfs, int flag)\n{\n\tD2_ORIGIN_SET_SCOPE(\"shadow\");")
+
+P('Game/C/debris.c',
+  "void HandleDebris(void)\n{",
+  "void HandleDebris(void)\n{\n\tD2_ORIGIN_SET_SCOPE(\"debris\");")
+
+P('Game/C/sky.c',
+  "void DrawSkyDome(void)\n{",
+  "void DrawSkyDome(void)\n{\n\tD2_ORIGIN_SET_SCOPE(\"sky\");")
+
+P('Game/C/pres.c',
+  "int PrintStringHires(char* string, int x, int y)\n{",
+  "int PrintStringHires(char* string, int x, int y)\n{\n\tD2_ORIGIN_SET_SCOPE(\"text/pres\");")
+
 def main():
     ok = skipped = missing = 0
     cache = {}

@@ -13,6 +13,7 @@
 #include "C/tile.h"
 #include "C/texture.h"
 #include "ASM/rndrasm.h"
+#include "d2_origin.h"
 
 #if defined(D2_VTXCACHE) && defined(D2_GTE_NATIVE)
 
@@ -135,6 +136,11 @@ void Tile1x1(MODEL *model)
 			*(ushort *)&prims->u2 = *(ushort *)&polys->uv3;
 			*(ushort *)&prims->u3 = *(ushort *)&polys->uv2;
 
+#ifdef D2_ORIGIN
+			short _sxy[4][2] = { {vc_sx(A->xy), vc_sy(A->xy)}, {vc_sx(B->xy), vc_sy(B->xy)}, {vc_sx(C->xy), vc_sy(C->xy)}, {vc_sx(D->xy), vc_sy(D->xy)} };
+			short _sz[4] = { (short)A->z, (short)B->z, (short)C->z, (short)D->z };
+			d2_origin_tag(prims, "Tile1x1", -1, NULL, ptype, _sxy, _sz);
+#endif
 			addPrim(plotContext.ot + (Z >> 1) + ofse, prims);
 			plotContext.primptr += sizeof(POLY_FT4);
 		}
@@ -196,6 +202,11 @@ void Tile1x1Lit(MODEL *model)
 			vc_campos(polys->v3, &tmpPos); GetDLightLevel(&tmpPos, (u_int *)&prims->r2);
 			vc_campos(polys->v2, &tmpPos); GetDLightLevel(&tmpPos, (u_int *)&prims->r3);
 
+#ifdef D2_ORIGIN
+			short _sxy[4][2] = { {vc_sx(A->xy), vc_sy(A->xy)}, {vc_sx(B->xy), vc_sy(B->xy)}, {vc_sx(C->xy), vc_sy(C->xy)}, {vc_sx(D->xy), vc_sy(D->xy)} };
+			short _sz[4] = { (short)A->z, (short)B->z, (short)C->z, (short)D->z };
+			d2_origin_tag(prims, "Tile1x1Lit", -1, NULL, ptype, _sxy, _sz);
+#endif
 			addPrim(plotContext.ot + (Z >> 1) + ofse, prims);
 			plotContext.primptr += sizeof(POLY_GT4);
 		}
@@ -254,6 +265,11 @@ void drawMesh(MVERTEX (*VSP)[5][5], int m, int n, _pct *pc)
 
 			prim->clut = pc->clut;
 			prim->tpage = pc->tpage;
+#ifdef D2_ORIGIN
+			short _sxy[4][2] = { {vc_sx(xy[mp[0]]), vc_sy(xy[mp[0]])}, {vc_sx(xy[mp[1]]), vc_sy(xy[mp[1]])}, {vc_sx(xy[mp[2]]), vc_sy(xy[mp[2]])}, {vc_sx(xy[mp[3]]), vc_sy(xy[mp[3]])} };
+			short _sz[4] = { (short)z[mp[0]], (short)z[mp[1]], (short)z[mp[2]], (short)z[mp[3]] };
+			d2_origin_tag(prim, "drawMesh", -1, NULL, 0, _sxy, _sz);
+#endif
 			addPrim(pc->ot + (zz >> 1), prim);
 			prim++;
 		}
@@ -309,6 +325,11 @@ void drawMeshLit(MVERTEX (*VSP)[5][5], int m, int n, _pct *pc)
 
 			prim->clut = pc->clut;
 			prim->tpage = pc->tpage;
+#ifdef D2_ORIGIN
+			short _sxy[4][2] = { {vc_sx(xy[mp[0]]), vc_sy(xy[mp[0]])}, {vc_sx(xy[mp[1]]), vc_sy(xy[mp[1]])}, {vc_sx(xy[mp[2]]), vc_sy(xy[mp[2]])}, {vc_sx(xy[mp[3]]), vc_sy(xy[mp[3]])} };
+			short _sz[4] = { (short)z[mp[0]], (short)z[mp[1]], (short)z[mp[2]], (short)z[mp[3]] };
+			d2_origin_tag(prim, "drawMeshLit", -1, NULL, 0, _sxy, _sz);
+#endif
 			addPrim(pc->ot + (zz >> 1), prim);
 			prim++;
 		}
@@ -384,6 +405,11 @@ void PlotBuildingModel(MODEL *model, int rot, _pct *pc)
 			*(ushort *)&prims->u2 = uv3;
 			*(ushort *)&prims->u3 = uv2;
 
+#ifdef D2_ORIGIN
+			short _sxy[4][2] = { {vc_sx(A->xy), vc_sy(A->xy)}, {vc_sx(B->xy), vc_sy(B->xy)}, {vc_sx(C->xy), vc_sy(C->xy)}, {vc_sx(D->xy), vc_sy(D->xy)} };
+			short _sz[4] = { (short)A->z, (short)B->z, (short)C->z, (short)D->z };
+			d2_origin_tag(prims, "PlotBuildingModel", -1, NULL, ptype, _sxy, _sz);
+#endif
 			addPrim(pc->ot + (Z >> 1), prims);
 			pc->primptr += sizeof(POLY_FT4);
 		}
@@ -475,6 +501,11 @@ void PlotBuildingModelSubdivNxN(MODEL *model, int rot, _pct *pc, int n)
 				*(ushort *)&prims->u2 = uv3;
 				*(ushort *)&prims->u3 = uv2;
 
+#ifdef D2_ORIGIN
+				short _sxy[4][2] = { {vc_sx(A->xy), vc_sy(A->xy)}, {vc_sx(B->xy), vc_sy(B->xy)}, {vc_sx(C->xy), vc_sy(C->xy)}, {vc_sx(D->xy), vc_sy(D->xy)} };
+				short _sz[4] = { (short)A->z, (short)B->z, (short)C->z, (short)D->z };
+				d2_origin_tag(prims, "PlotBuildingModelSubdivNxN", -1, NULL, ptype, _sxy, _sz);
+#endif
 				addPrim(pc->ot + (Z >> 1), prims);
 				pc->primptr += sizeof(POLY_FT4);
 			}
