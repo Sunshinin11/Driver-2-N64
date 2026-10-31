@@ -30,3 +30,4 @@ port/redriver2/
 # ---- Formatos de video e midia PS1 irrelevantes ----
 *.str
 *.avi
+port/tiny3d/
