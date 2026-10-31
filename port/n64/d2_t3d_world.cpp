@@ -282,26 +282,70 @@ void d2_t3d_draw_queued_buildings(void)
         int yang = s_t3d_queue[i].yang;
         MATRIX2* cmat = &CompoundMatrix[yang];
 
+        // T3DMat4 is column-major: m[column][row]
+        // CompoundMatrix[yang] (from draw.c) is row-major: cmat->m[row][col] (4.12 fixed point, / 4096.0f)
+        // Meaning of CompoundMatrix: inv_camera_matrix * matrixtable[yang], which is the model's
+        // orientation in world space already combined with the camera's orientation (expressed in camera space).
+        // Meaning of tx, ty, tz: the model object's origin in camera space (C2_TRX, C2_TRY, C2_TRZ),
+        // calculated via Apply_InvCameraMatrixAndSetMatrix(&cop->pos, ...).
         T3DMat4 m;
+        // Column 0: X-coefficients of output X, Y, Z, W
         m.m[0][0] = (float)cmat->m[0][0] / 4096.0f;
-        m.m[1][0] = (float)cmat->m[1][0] / 4096.0f;
-        m.m[2][0] = (float)cmat->m[2][0] / 4096.0f;
-        m.m[3][0] = (float)s_t3d_queue[i].tx;
-
         m.m[0][1] = (float)cmat->m[1][0] / 4096.0f;
-        m.m[1][1] = (float)cmat->m[1][1] / 4096.0f;
-        m.m[2][1] = (float)cmat->m[2][1] / 4096.0f;
-        m.m[3][1] = (float)s_t3d_queue[i].ty;
-
         m.m[0][2] = (float)cmat->m[2][0] / 4096.0f;
-        m.m[1][2] = (float)cmat->m[2][1] / 4096.0f;
-        m.m[2][2] = (float)cmat->m[2][2] / 4096.0f;
-        m.m[3][2] = (float)s_t3d_queue[i].tz;
-
         m.m[0][3] = 0.0f;
+
+        // Column 1: Y-coefficients of output X, Y, Z, W
+        m.m[1][0] = (float)cmat->m[0][1] / 4096.0f;
+        m.m[1][1] = (float)cmat->m[1][1] / 4096.0f;
+        m.m[1][2] = (float)cmat->m[2][1] / 4096.0f;
         m.m[1][3] = 0.0f;
+
+        // Column 2: Z-coefficients of output X, Y, Z, W
+        m.m[2][0] = (float)cmat->m[0][2] / 4096.0f;
+        m.m[2][1] = (float)cmat->m[1][2] / 4096.0f;
+        m.m[2][2] = (float)cmat->m[2][2] / 4096.0f;
         m.m[2][3] = 0.0f;
+
+        // Column 3: Translation (camera space)
+        m.m[3][0] = (float)s_t3d_queue[i].tx;
+        m.m[3][1] = (float)s_t3d_queue[i].ty;
+        m.m[3][2] = (float)s_t3d_queue[i].tz;
         m.m[3][3] = 1.0f;
+
+        static bool s_validated_vertex = false;
+        if (!s_validated_vertex && s_t3d_queue[i].z > 500) {
+            s_validated_vertex = true;
+            MODEL* model = modelpointers[mid];
+            if (model && model->num_vertices > 0) {
+                SVECTOR* src_verts = GET_MODEL_DATA(SVECTOR, model, vertices);
+                float vx = (float)src_verts[0].vx;
+                float vy = (float)src_verts[0].vy;
+                float vz = (float)src_verts[0].vz;
+
+                float x_cam = ((float)cmat->m[0][0] * vx + (float)cmat->m[0][1] * vy + (float)cmat->m[0][2] * vz) / 4096.0f + (float)s_t3d_queue[i].tx;
+                float y_cam = ((float)cmat->m[1][0] * vx + (float)cmat->m[1][1] * vy + (float)cmat->m[1][2] * vz) / 4096.0f + (float)s_t3d_queue[i].ty;
+                float z_cam = ((float)cmat->m[2][0] * vx + (float)cmat->m[2][1] * vy + (float)cmat->m[2][2] * vz) / 4096.0f + (float)s_t3d_queue[i].tz;
+
+                float gte_sx = 160.0f + (x_cam * h) / z_cam;
+                float gte_sy = 120.0f + (y_cam * h) / z_cam;
+
+                T3DVec3 worldPos = {{
+                    m.m[0][0] * vx + m.m[1][0] * vy + m.m[2][0] * vz + m.m[3][0],
+                    m.m[0][1] * vx + m.m[1][1] * vy + m.m[2][1] * vz + m.m[3][1],
+                    m.m[0][2] * vx + m.m[1][2] * vy + m.m[2][2] * vz + m.m[3][2]
+                }};
+
+                T3DVec3 screenPos;
+                t3d_viewport_calc_viewspace_pos(&s_t3d_viewport, &screenPos, &worldPos);
+                float t3d_sx = 160.0f + screenPos.v[0] * 160.0f;
+                float t3d_sy = 120.0f - screenPos.v[1] * 120.0f;
+
+                debugf("[T3D_VAL] model=%d v0=(%.0f,%.0f,%.0f) GTE=(%.2f, %.2f) T3D=(%.2f, %.2f) diff=(%.2f, %.2f)\n",
+                       mid, vx, vy, vz, gte_sx, gte_sy, t3d_sx, t3d_sy,
+                       fabsf(gte_sx - t3d_sx), fabsf(gte_sy - t3d_sy));
+            }
+        }
 
         t3d_mat4_to_fixed(&s_t3d_mat_pool[frame_idx][i], &m);
 

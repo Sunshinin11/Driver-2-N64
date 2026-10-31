@@ -38,3 +38,4 @@ static inline void d2_t3d_get_stats(int* vtx_total, int* vtx_used, int* models_c
 #endif
 
 #endif // D2_T3D_WORLD_H
+
