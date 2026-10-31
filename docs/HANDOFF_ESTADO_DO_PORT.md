@@ -1,62 +1,49 @@
 # Driver 2 N64 — Estado do port e passagem de bastão
 
-Atualizado em 31/10/2026. Projeto: `C:\Desenvolvimento\Nintendo 64\Driver 2 64\D2_N64` (versão principal). Base: REDRIVER2 (decomp do PS1) + libdragon (preview) + Expansion Pak. Testes no Ares v148. Build: `.\build_d2.ps1` (WSL, `/opt/libdragon`).
+Atualizado em 31/10/2026. Projeto: `C:\Desenvolvimento\Nintendo 64\Driver 2 64\D2_N64` (versão principal). Base: REDRIVER2 (decomp do PS1) + libdragon (preview) + Tiny3D + Expansion Pak (8 MB). Testes no Ares v148. Build: `./build.sh` via WSL (`/opt/libdragon`).
 
 ## Regras de trabalho (o usuário exige)
 - Um problema por vez. Pesquisa e comparação de código ANTES de qualquer build. Nada de "tiro no escuro".
-- Nenhuma causa é considerada resolvida antes do teste visual do usuário no Ares.
-- Todo número de desempenho precisa vir de log da execução (citar arquivo e linha). Relatórios do Antigravity já inventaram números duas vezes: sempre conferir os logs.
-- FPS real = Δframes × 60 / Δvbl (linhas `[fps]`). A instrumentação `D2_PERFDBG` custa ~30%: medir FPS com ela desligada.
-- Um commit por alteração; flags novas desligadas por padrão até validação.
+- Nenhuma causa é considerada resolvida antes do teste visual/sonoro do usuário no Ares.
+- Todo número de desempenho precisa vir de log da execução (citar arquivo e linha). Relatórios anteriores já inventaram números: sempre conferir os logs.
+- FPS de referência SEMPRE com `D2_PERFDBG=0` e `D2_ORIGIN_PROF=0`: `Δframes × 60 / Δvbl` (linhas `[fps]`) e janelas determinísticas `[bench] cc=...` alinhadas por `CameraCnt`.
+- Um commit por alteração conceitual; ROM raiz `d2_n64.z64` sempre jogável (`D2_BENCH=0`).
 - Não repetir hipóteses já descartadas (lista abaixo).
 
-## Corrigido e validado no Ares
+## Corrigido e validado no Ares (sessões anteriores)
 | Problema | Causa | Commit |
 |---|---|---|
-| Tela de loading com metade em ruído | `load_tile` com largura 0 dava a volta na TMEM e apagava a TLUT de 256 cores | `dbf8f93` (+ reenvio de TLUT 8 bits por bloco em `upload_region`) |
-| Prédios invisíveis + explosões de vértices (parede rosa em Gold Coast) | `d2_swap_model` convertia o bloco de colisão com 11 shorts por pacote; `COLLISION_PACKET` tem 10. Os 2 bytes extras trocavam `id`/`texture_set` do 1º polígono de todos os 216 modelos com colisão | `0ef5efb` |
-| Placas gigantes de chão perto da câmera | Falta a regra da GPU do PS1 (descarta triângulo > 1023×511) em `tri_core` | `ef24b11` |
-| Ruído no HUD e nas batidas | Blender aditivo do RDP não satura (doc do libdragon: dá a volta) | `fa14399`, `de9d5da`, `d3d8398`, `c3838df`, `9292d80`, `1000333` |
-| Luzes, cone do farol, sombras, fumaça | Alfa proporcional ao brilho (textura × vértice, RGBA32); subtração como multiplicação; cor de vértice direta em polígono sem textura; cor uniforme por primitiva no aditivo | idem acima |
-| Sombra do Tanner (quadrado com lixo) | Jogo renderiza o Tanner em área offscreen da VRAM; backend não suporta. Sombra desligada | `8c563d6` (`D2_NO_TANNER_SHADOW`) |
+| Tela de loading com metade em ruído | `load_tile` com largura 0 dava a volta na TMEM e apagava a TLUT de 256 cores | `dbf8f93` |
+| Prédios invisíveis + explosões de vértices (parede rosa em Gold Coast) | `d2_swap_model` convertia o bloco de colisão com 11 shorts por pacote; `COLLISION_PACKET` tem 10 | `0ef5efb` |
+| Placas gigantes de chão perto da câmera | Regra da GPU do PS1 (descarta triângulo > 1023×511) em `tri_core` | `ef24b11` |
+| Ruído no HUD e nas batidas / luzes / sombras / fumaça | Blender aditivo do RDP não satura; alfa proporcional ao brilho | `fa14399`..`1000333` |
+| Sombra do Tanner (quadrado com lixo) | Render offscreen não suportado no backend; sombra desligada | `8c563d6` (`D2_NO_TANNER_SHADOW`) |
 | "L" vermelho da seta de missão a pé | Vértice atrás da câmera (divisão saturada) | `3d5a70f` |
 | Input automático atrapalhando testes | Roteiro de botões só sob `D2_BENCH` | já em `main` |
 
+## Implementado e medido nesta frente (aguardando validação visual/sonora no Ares)
+Detalhes completos e linhas de log em `docs/T3D_ETAPA2_MEDICAO.md` e `docs/T3D_MEDICAO_2026-10-31.md`:
+
+| Etapa | Commit | O que mudou | Resultado medido (`D2_ORIGIN_PROF=0 D2_PERFDBG=0`) |
+|---|---|---|---|
+| Base T3D | `471fa86` | Correção da matriz/luz do Tiny3D (prédios permanentes visíveis) | `4.777.658 -> 4.332.664` ticks em `cc=64` (`9,85 -> 10,85` FPS) |
+| Etapa 1 | `3fffab3` | Perfil leve por origem (`D2_ORIGIN_PROF`) + benchmark determinístico por `CameraCnt` | Mesma posição `(vx,vz)` garantida entre builds lentas e rápidas |
+| Etapa 2a | `c2938c2` | Migração de chão/ruas/água/grama (`DrawTILES`, 132 modelos + LODs) + 293 prédios/canteiros (`425` modelos no RSP, `7.986/9.216` vértices = `124 KB`) | `GROUND` caiu `-87,7%` (`1.367.262 -> 165.138` ticks em `T3D_GRD`, `0` B de upload de textura); Missão 1 a pé chegou a **`19,39` FPS** (`logs/e2_m1_t3d_ref.log:1833`) |
+| Etapa 2b | `9d5edf2` | Culling PSX de quadrantes em `DrawSkyDome` + subdivisão inteira `2x2` (`64x42 <= 2 KB` TMEM) em `PlotSkyPoly` | `uvclip` do céu `38 -> 0`; gameplay (sem áudio bombeado) subiu para **`17,78` FPS** (`2.654.762` ticks em `cc=64`, **`-44,4%` ticks / `+80,5%` FPS** sobre o legado; `logs/e2b_t3d_ref.log:266`) |
+| Etapa 2c | `36b5a73` | `VsyncProc` removido da ISR de VI (`0` `VI WARNING`, `0` corridas no mixer), `d2_audio_pump()` em `BeginScene`/`EndScene`, correção de pitch/volume SPU, mixer a `32 kHz` (`152.992` B de heap livre) e busca ADPCM $O(1)$ (`d->loopBlock`) | Áudio ativo em gameplay medido: **`13,71` FPS** (`3.440.048` ticks em `cc=64`, `logs/e2c_opt_ref.log:146`), economizando até **`2,45M` ticks/quadro (`-27,8%`)** vs busca ADPCM $O(N)$ (`logs/e2c_t3d_ref.log:200,206`) |
+
 ## Revertido (não funcionou / causou regressões) — NÃO repetir
-- `D2_GTE_WIDE` (projeção sem trava de ±1024), agrupamento por textura dentro de cada balde da OT, evitar reenvio de TMEM, recorte em blocos mais barato, cache de `get_region`. Revertidos em `69213c5`..`ddc3a7c`. Ganho medido ~3,8% de ticks, sem ganho de FPS, com regressões (linhas no chão/minimapa, HUD piscando).
-- Hipóteses descartadas: paleta/TMEM como causa das explosões; GTE nativa/cache de vértices como causa das explosões (A/B sem `D2_GTE_NATIVE`/`D2_VTXCACHE` não mudou nada); wrap-around 16 bits no `FrustrumCheck16` (código inofensivo, mas não era a causa).
+- `D2_GTE_WIDE` (projeção sem trava de ±1024), agrupamento por textura dentro de cada balde da OT, evitar reenvio de TMEM, recorte em blocos mais barato, cache de `get_region`. Revertidos em `69213c5`..`ddc3a7c`.
+- Hipóteses descartadas: paleta/TMEM como causa das explosões; GTE nativa/cache de vértices como causa das explosões; wrap-around 16 bits no `FrustrumCheck16`.
 
-## Bugs abertos
-1. **Triângulos/cunhas esticadas a pé** perto de paredes altas (chão e paredes). Causa medida (`logs/diag_mission1.log`, `drawMesh` modelo 725): vértice À FRENTE da câmera (SZ≈1000), mas projeção passa de ±1024 e a GTE trava em ±1024, achatando dois cantos. Solução estrutural: Tiny3D (recorte no RSP). Tentativa de afrouxar a trava foi revertida.
-2. **Sem som no jogo**: `d2_audio_pump` (mixer) só roda na espera de vblank, que nunca acontece no jogo (medido: 0 chamadas). Menu tem som estourado: `d2_spu_shape` chama `mixer_ch_play` com 44100 Hz e perde o pitch; volume sem master; 24 vozes saturam.
-3. **Velocidade do jogo**: 1 `StepGame` por quadro desenhado (não-PSX em `main.c`). A ~10 FPS o jogo roda a ~1/3 da velocidade. Versão PSX tem `gMultiStep`. Confirmar com o usuário e decidir a cadência.
-4. **Prédios distantes com textura de ruído roxo**: usam `texture_set` não carregada (antes da correção do swap era 21). Reavaliar depois do `0ef5efb`.
-5. Bit STP do PS1 ignorado pelo backend (baixa prioridade).
-
-## Desempenho (dados reais, `logs/perf_*.log`, `logs/diag_*.log`)
-- Gargalo é CPU. Espera pelo RDP ~0,3%.
-- Quadro dirigindo de dia: backend ~65%, montagem da cena ~29%, lógica ~4–9%.
-- 144 uploads de textura/quadro, 70% repetidos (ordem de pintor da OT). Recorte em blocos: ~400k ticks para ~42 triângulos.
-- Pedestres: 5–14 mil ticks por pedestre (medição anterior de 535k estava errada).
-- FPS em gameplay: ~9–12 sem instrumentação.
-
-## Tiny3D (direção atual, igual ao port N64 de Silent Hill)
-Referências: https://github.com/SlickAmogus/silent-hill-decomp/tree/n64-port (`n64_port/src/t3d_world.c`, `tools/mkworld.py`), https://github.com/HailToDodongo/tiny3d.
-- Flag `D2_T3D_WORLD` (desligada por padrão). Código: `port/n64/d2_t3d_world.cpp`. Commits: `9f24cdd`, `0baf29c`, `0613f08`, `a95ff2e`, `9daab36`, `09749b1`, `9c59e14`, `bd85fa3`, `fd1bb4f`, `30c2efb`.
-- 297 modelos de prédio convertidos (permanentes); 200 ficam no caminho antigo; modelos do spool de regiões NÃO convertidos (provavelmente a maioria dos prédios visíveis). Arena de vértices estática 128 KB (107 KB usados); blocos rspq no heap (~174 KB; heap livre ~220 KB).
-- **Problema atual: com a flag ligada, nenhum prédio aparece no Ares.** A "validação 0,00 px" foi feita na CPU (`t3d_viewport_calc_viewspace_pos`) e não prova desenho no RSP.
-- **Próximo passo imediato:** testar no Ares a ROM `d2_n64_smoke.z64` (commit `30c2efb`, `D2_T3D_SMOKE`): um triângulo vermelho fixo no centro desenhado pelo Tiny3D. Logs já indicam viewport 320×240 criado após `display_init` e mesmo framebuffer do rdpq.
-  - Se o triângulo **aparece**: pipeline OK; investigar dados/posição dos prédios (winding, eixo Y, escala, ponto de corte 0x1070 na OT, algo pintando por cima).
-  - Se **não aparece**: investigar ordem rspq/rdpq (overlay do Tiny3D carregado? `t3d_frame_start`/modo, sync), scissor, e se o desenho acontece antes de o framebuffer ser anexado/limpo.
-
-## Plano depois do Tiny3D funcionar (parecer do ChatGPT incorporado)
-1. Fatia vertical: chão + prédio texturizado + carro do backend antigo com oclusão correta (Z-buffer exige preservar profundidade por vértice) + troca de região (spool).
-2. Ligar o som cedo para medir o custo.
-3. Decidir cadência da lógica (velocidade do jogo).
-4. Texturas offline no conversor, com opção de reduzir resolução.
-5. Cortes de "demake" configuráveis e medidos (LOD, distância, tráfego por último).
-Meta realista: 20 FPS; 30 FPS só com redução estrutural agressiva.
-
-## Outros projetos analisados (referência)
-- RE1 64 (homebrew): libdragon, tudo convertido offline (fundos RGBA16, `.skin`, `.adp`, `.rmv`), sem emulação de VRAM/GPU do PS1.
-- X-Men/TMNT arcade N64: Musashi (68000) + blocos nativos + pulo de laço ocioso + vídeo HLE no rdpq + áudio nativo; feitos com agente de IA (Codex).
+## Próximos passos priorizados por ganho medido (rumo aos 20 FPS estáveis COM áudio)
+1. **Áudio SPU nativo em `WAVEFORM_FORMAT_VADPCM` no RSP (`port/n64/psyx_backend.cpp` + ferramenta offline)**:
+   - Hoje a decodificação por software de até 24 vozes ADPCM do PS1 + `XM_Update` consome `~514K` ticks/quadro a `13,7 FPS` e `1,75M–2,0M` ticks/quadro em tráfego pesado (`13%–27%` contínuos da CPU VR4300). O `mixer` do libdragon decodifica `VADPCM` diretamente em DMEM no RSP com **zero CPU por amostra**. Avaliar também flag configurável `D2_NO_XM_MUSIC` / limite de canais XM.
+2. **Carros nativos no Tiny3D (`DrawAllTheCars` / `CARS`)**:
+   - Maior custo gráfico isolado restante: `600K–672K` ticks com 4 carros (`cc=96`) até **`1,78M–2,58M` ticks** com 9–12 carros (`cc=352..448`).
+3. **Etapa 3 — Texturas CI4 nativas + ciclo de vida de spool (`d2_t3d_on_spool_change`)**:
+   - Atualmente os 425 modelos no Tiny3D usam cores por face/vértice amostradas da textura PS1 (`sample_poly_color`) sem textura TMEM. Adicionar materiais CI4 pré-empacotados (`<= 2 KB` TMEM) e reconstrução incremental de slots de região no spool.
+4. **Etapa 4 — Z-buffer + 72 modelos restantes (`PERM_BLD` com `uvclip`)**:
+   - Ativar Z-buffer (`display_init` + `rdpq_attach` com Z-buf) preservando profundidade quando o backend legado desenhar carros/pedestres sobre o mundo Tiny3D, e migrar postes/árvores/adereços que ainda custam `254K–502K` ticks/quadro em `PERM_BLD`.
+5. **Cadência da simulação (`StepGame` / `gMultiStep`) e cortes configuráveis de demake (`D2_DRAW_DISTANCE`, LOD, tráfego)**:
+   - Ajustar a velocidade real do jogo após estabilizar o orçamento de CPU com áudio.
