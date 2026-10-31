@@ -73,15 +73,26 @@ int d2_pad_poll(int port, d2_pad_raw_t *o)
     // Roteiro automatico deterministico (in_bench.txt) quando nenhum botao fisico e pressionado:
     if (port == 0 && b == 0) {
         int v = vbl_count;
+#if defined(D2_PERF_MISSION1)
+        if (v >= 760 && v < 766) b |= D2_A;
+        else if (v >= 830 && v < 836) b |= D2_A;
+        else if (v >= 900 && v < 906) b |= D2_A;
+        else if (v >= 970 && v < 976) b |= D2_A;
+        else if (v >= 1650) b |= D2_DU; // Tanner anda no beco em direcao ao carro com a seta
+#elif defined(D2_PERF_APE)
         if (v >= 760 && v < 766) b |= D2_DD;
         else if (v >= 790 && v < 796) b |= D2_A;
         else if (v >= 860 && v < 866) b |= D2_A;
         else if (v >= 930 && v < 936) b |= D2_A;
         else if (v >= 1000 && v < 1006) b |= D2_A;
-#if defined(D2_PERF_APE)
         else if (v >= 1700 && v < 1720) b |= (D2_DU | D2_CU); // Tanner sai do carro
         else if (v >= 1740) b |= D2_DU; // Tanner anda continuamente
 #else
+        if (v >= 760 && v < 766) b |= D2_DD;
+        else if (v >= 790 && v < 796) b |= D2_A;
+        else if (v >= 860 && v < 866) b |= D2_A;
+        else if (v >= 930 && v < 936) b |= D2_A;
+        else if (v >= 1000 && v < 1006) b |= D2_A;
         else if (v >= 2200) b |= D2_A; // acelera o carro em Chicago apos 10s de cena parada
 #endif
         if (b && (v % 60 == 0 || (v >= 760 && v <= 1010))) debugf("[bench] vbl=%d b=%04x\n", v, b);

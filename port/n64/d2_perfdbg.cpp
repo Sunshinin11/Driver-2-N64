@@ -9,12 +9,55 @@ extern "C" {
 perf_frame_data_t g_perf_cur;
 perf_frame_data_t g_perf_acc;
 int g_perf_acc_frames = 0;
+int g_in_pedestrians = 0;
 static uint32_t s_frame_start_t0 = 0;
+
+// Cull counters (commit 3d5a70f)
+uint32_t g_cull_cnt_arrow = 0;
+uint32_t g_cull_cnt_tile1x1 = 0;
+uint32_t g_cull_cnt_tile1x1lit = 0;
+uint32_t g_cull_cnt_bld = 0;
+uint32_t g_cull_cnt_bld_subdiv = 0;
+uint32_t g_cull_cnt_drawmesh = 0;
+uint32_t g_cull_cnt_drawmeshlit = 0;
+
+// Redundant upload tracking
+struct UploadRecord {
+    uint32_t k0; // px, py, u0, v0
+    uint32_t k1; // w, h, step, fmt, rgba
+    uint32_t k2; // clut
+};
+#define MAX_FRAME_UPLOADS 2048
+static UploadRecord s_frame_uploads[MAX_FRAME_UPLOADS];
+static int s_frame_upload_count = 0;
+
+void track_region_upload(int px, int py, int u0, int v0, int w, int h, int step, int clut, int fmt, int rgba)
+{
+    uint32_t k0 = (uint32_t)(px & 0xFFF) | ((uint32_t)(py & 0xFFF) << 12) | ((uint32_t)(u0 & 0xFF) << 24);
+    uint32_t k1 = (uint32_t)(v0 & 0xFF) | ((uint32_t)(w & 0x1FF) << 8) | ((uint32_t)(h & 0x1FF) << 17) |
+                  ((uint32_t)(step & 0xF) << 26) | ((uint32_t)(fmt & 3) << 30);
+    uint32_t k2 = (uint32_t)(clut & 0xFFFF) | ((uint32_t)(rgba ? 1 : 0) << 16);
+
+    for (int i = 0; i < s_frame_upload_count; i++) {
+        if (s_frame_uploads[i].k0 == k0 && s_frame_uploads[i].k1 == k1 && s_frame_uploads[i].k2 == k2) {
+            g_perf_cur.cnt_tex_up_redundant++;
+            return;
+        }
+    }
+    if (s_frame_upload_count < MAX_FRAME_UPLOADS) {
+        s_frame_uploads[s_frame_upload_count].k0 = k0;
+        s_frame_uploads[s_frame_upload_count].k1 = k1;
+        s_frame_uploads[s_frame_upload_count].k2 = k2;
+        s_frame_upload_count++;
+    }
+    g_perf_cur.cnt_tex_up_unique++;
+}
 
 void perf_frame_start(void)
 {
     s_frame_start_t0 = perf_cnt0();
     memset(&g_perf_cur, 0, sizeof(g_perf_cur));
+    s_frame_upload_count = 0;
 }
 
 void perf_frame_end(void)
@@ -54,6 +97,7 @@ void perf_frame_end(void)
     ACC(bk_tex_upload_ticks);
     ACC(bk_screen_clip_ticks);
     ACC(bk_tex_block_clip_ticks);
+    ACC(bk_tex_bclip_upload_ticks);
     ACC(bk_calc_color_ticks);
     ACC(bk_ot_walk_ticks);
     ACC(bk_wait_idle_ticks);
@@ -70,6 +114,36 @@ void perf_frame_end(void)
     ACC(cnt_tex_uploads);
     ACC(cnt_clipped_polys);
     ACC(cnt_sub_triangles);
+
+    // Diag 2
+    ACC(cnt_tri_single_block);
+    ACC(cnt_tri_block_clip);
+    ACC(cnt_tri_subdiv);
+    ACC(cnt_blocks_generated);
+    if (g_perf_cur.max_blocks_per_tri > g_perf_acc.max_blocks_per_tri)
+        g_perf_acc.max_blocks_per_tri = g_perf_cur.max_blocks_per_tri;
+    ACC(cnt_tex_up_redundant);
+    ACC(cnt_tex_up_unique);
+
+    ACC(uv_bld_count); ACC(uv_bld_w_sum); ACC(uv_bld_h_sum);
+    ACC(uv_ground_count); ACC(uv_ground_w_sum); ACC(uv_ground_h_sum);
+    ACC(uv_cars_count); ACC(uv_cars_w_sum); ACC(uv_cars_h_sum);
+    ACC(uv_peds_count); ACC(uv_peds_w_sum); ACC(uv_peds_h_sum);
+    ACC(uv_other_count); ACC(uv_other_w_sum); ACC(uv_other_h_sum);
+
+    // Diag 3
+    ACC(cnt_pedestrians_drawn);
+    ACC(ped_anim_ticks);
+    ACC(ped_transform_ticks);
+    ACC(ped_assembly_ticks);
+
+    ACC(gte_peds_rtps_cnt); ACC(gte_peds_rtps_ticks);
+    ACC(gte_peds_rtpt_cnt); ACC(gte_peds_rtpt_ticks);
+    ACC(gte_peds_nclip_cnt); ACC(gte_peds_nclip_ticks);
+    ACC(gte_peds_avsz3_cnt); ACC(gte_peds_avsz3_ticks);
+    ACC(gte_peds_avsz4_cnt); ACC(gte_peds_avsz4_ticks);
+    ACC(gte_peds_mvmva_cnt); ACC(gte_peds_mvmva_ticks);
+    ACC(gte_peds_emul_cnt); ACC(gte_peds_emul_ticks);
 
     ACC(audio_pump_ticks);
     ACC(audio_pump_calls);
@@ -115,6 +189,7 @@ void perf_frame_end(void)
         uint32_t b_tup = g_perf_acc.bk_tex_upload_ticks / n;
         uint32_t b_sclip = g_perf_acc.bk_screen_clip_ticks / n;
         uint32_t b_bclip = g_perf_acc.bk_tex_block_clip_ticks / n;
+        uint32_t b_bclip_up = g_perf_acc.bk_tex_bclip_upload_ticks / n;
         uint32_t b_col = g_perf_acc.bk_calc_color_ticks / n;
         uint32_t b_ot = g_perf_acc.bk_ot_walk_ticks / n;
         uint32_t b_wait = g_perf_acc.bk_wait_idle_ticks / n;
@@ -132,6 +207,32 @@ void perf_frame_end(void)
         uint32_t c_texup = g_perf_acc.cnt_tex_uploads / n;
         uint32_t c_clip = g_perf_acc.cnt_clipped_polys / n;
         uint32_t c_sub = g_perf_acc.cnt_sub_triangles / n;
+
+        // Diag 2 counts
+        uint32_t c_sblk = g_perf_acc.cnt_tri_single_block / n;
+        uint32_t c_bclip = g_perf_acc.cnt_tri_block_clip / n;
+        uint32_t c_subdiv = g_perf_acc.cnt_tri_subdiv / n;
+        uint32_t c_blks = g_perf_acc.cnt_blocks_generated / n;
+        uint32_t c_max_blks = g_perf_acc.max_blocks_per_tri;
+        uint32_t c_tup_redun = g_perf_acc.cnt_tex_up_redundant / n;
+        uint32_t c_tup_uniq = g_perf_acc.cnt_tex_up_unique / n;
+
+        // Diag 3 counts & ticks
+        uint32_t c_peds_tot = g_perf_acc.cnt_pedestrians_drawn;
+        uint32_t c_peds = (c_peds_tot + n / 2) / n;
+        uint32_t p_anim = g_perf_acc.ped_anim_ticks / n;
+        uint32_t p_trans = g_perf_acc.ped_transform_ticks / n;
+        uint32_t p_assem = g_perf_acc.ped_assembly_ticks / n;
+        int32_t ped_unacc = (int32_t)d_ped - (int32_t)(p_anim + p_trans + p_assem);
+        uint32_t avg_ped = c_peds_tot ? (g_perf_acc.draw_pedestrians_ticks / c_peds_tot) : 0;
+
+        uint32_t g_rtps_c = g_perf_acc.gte_peds_rtps_cnt / n, g_rtps_t = g_perf_acc.gte_peds_rtps_ticks / n;
+        uint32_t g_rtpt_c = g_perf_acc.gte_peds_rtpt_cnt / n, g_rtpt_t = g_perf_acc.gte_peds_rtpt_ticks / n;
+        uint32_t g_nclip_c = g_perf_acc.gte_peds_nclip_cnt / n, g_nclip_t = g_perf_acc.gte_peds_nclip_ticks / n;
+        uint32_t g_avsz3_c = g_perf_acc.gte_peds_avsz3_cnt / n, g_avsz3_t = g_perf_acc.gte_peds_avsz3_ticks / n;
+        uint32_t g_avsz4_c = g_perf_acc.gte_peds_avsz4_cnt / n, g_avsz4_t = g_perf_acc.gte_peds_avsz4_ticks / n;
+        uint32_t g_mvmva_c = g_perf_acc.gte_peds_mvmva_cnt / n, g_mvmva_t = g_perf_acc.gte_peds_mvmva_ticks / n;
+        uint32_t g_emul_c = g_perf_acc.gte_peds_emul_cnt / n, g_emul_t = g_perf_acc.gte_peds_emul_ticks / n;
 
         // Audio
         uint32_t a_ticks = g_perf_acc.audio_pump_ticks / n;
@@ -152,6 +253,39 @@ void perf_frame_end(void)
         debugf("[PERF] AUDIO: ticks=%lu calls=%lu\n",
                (unsigned long)a_ticks, (unsigned long)a_calls);
 
+        debugf("[CULL-3D5A70F] arrow=%lu tile1x1=%lu tile1x1lit=%lu bld=%lu bld_subdiv=%lu drawmesh=%lu drawmeshlit=%lu\n",
+               (unsigned long)g_cull_cnt_arrow, (unsigned long)g_cull_cnt_tile1x1, (unsigned long)g_cull_cnt_tile1x1lit,
+               (unsigned long)g_cull_cnt_bld, (unsigned long)g_cull_cnt_bld_subdiv,
+               (unsigned long)g_cull_cnt_drawmesh, (unsigned long)g_cull_cnt_drawmeshlit);
+
+        debugf("[PERF-DIAG2] bclip_excl=%lu bclip_up=%lu ot_walk=%lu single_blk=%lu blk_clip=%lu subdiv=%lu blks_gen=%lu max_blks=%lu texup_uniq=%lu texup_redun=%lu\n",
+               (unsigned long)((b_bclip > b_bclip_up) ? (b_bclip - b_bclip_up) : 0), (unsigned long)b_bclip_up, (unsigned long)b_ot,
+               (unsigned long)c_sblk, (unsigned long)c_bclip, (unsigned long)c_subdiv, (unsigned long)c_blks, (unsigned long)c_max_blks,
+               (unsigned long)c_tup_uniq, (unsigned long)c_tup_redun);
+
+        uint32_t uv_bld_c = g_perf_acc.uv_bld_count / n;
+        uint32_t uv_grn_c = g_perf_acc.uv_ground_count / n;
+        uint32_t uv_car_c = g_perf_acc.uv_cars_count / n;
+        uint32_t uv_ped_c = g_perf_acc.uv_peds_count / n;
+        uint32_t uv_oth_c = g_perf_acc.uv_other_count / n;
+
+        debugf("[PERF-DIAG2-UV] bld(cnt=%lu avg=%lux%lu) ground(cnt=%lu avg=%lux%lu) cars(cnt=%lu avg=%lux%lu) peds(cnt=%lu avg=%lux%lu) other(cnt=%lu avg=%lux%lu)\n",
+               (unsigned long)uv_bld_c, (unsigned long)(uv_bld_c ? (g_perf_acc.uv_bld_w_sum / (n * uv_bld_c)) : 0), (unsigned long)(uv_bld_c ? (g_perf_acc.uv_bld_h_sum / (n * uv_bld_c)) : 0),
+               (unsigned long)uv_grn_c, (unsigned long)(uv_grn_c ? (g_perf_acc.uv_ground_w_sum / (n * uv_grn_c)) : 0), (unsigned long)(uv_grn_c ? (g_perf_acc.uv_ground_h_sum / (n * uv_grn_c)) : 0),
+               (unsigned long)uv_car_c, (unsigned long)(uv_car_c ? (g_perf_acc.uv_cars_w_sum / (n * uv_car_c)) : 0), (unsigned long)(uv_car_c ? (g_perf_acc.uv_cars_h_sum / (n * uv_car_c)) : 0),
+               (unsigned long)uv_ped_c, (unsigned long)(uv_ped_c ? (g_perf_acc.uv_peds_w_sum / (n * uv_ped_c)) : 0), (unsigned long)(uv_ped_c ? (g_perf_acc.uv_peds_h_sum / (n * uv_ped_c)) : 0),
+               (unsigned long)uv_oth_c, (unsigned long)(uv_oth_c ? (g_perf_acc.uv_other_w_sum / (n * uv_oth_c)) : 0), (unsigned long)(uv_oth_c ? (g_perf_acc.uv_other_h_sum / (n * uv_oth_c)) : 0));
+
+        debugf("[PERF-DIAG3] peds_cnt=%lu avg_ped_ticks=%lu anim=%lu trans=%lu assem=%lu unacc=%ld\n",
+               (unsigned long)c_peds, (unsigned long)avg_ped,
+               (unsigned long)p_anim, (unsigned long)p_trans, (unsigned long)p_assem, (long)ped_unacc);
+
+        debugf("[PERF-DIAG3-GTE] rtps(cnt=%lu t=%lu) rtpt(cnt=%lu t=%lu) nclip(cnt=%lu t=%lu) avsz3(cnt=%lu t=%lu) avsz4(cnt=%lu t=%lu) mvmva(cnt=%lu t=%lu) emul(cnt=%lu t=%lu)\n",
+               (unsigned long)g_rtps_c, (unsigned long)g_rtps_t, (unsigned long)g_rtpt_c, (unsigned long)g_rtpt_t,
+               (unsigned long)g_nclip_c, (unsigned long)g_nclip_t, (unsigned long)g_avsz3_c, (unsigned long)g_avsz3_t,
+               (unsigned long)g_avsz4_c, (unsigned long)g_avsz4_t, (unsigned long)g_mvmva_c, (unsigned long)g_mvmva_t,
+               (unsigned long)g_emul_c, (unsigned long)g_emul_t);
+
         memset(&g_perf_acc, 0, sizeof(g_perf_acc));
         g_perf_acc_frames = 0;
     }
@@ -159,4 +293,3 @@ void perf_frame_end(void)
 
 } // extern "C"
 #endif // D2_PERFDBG
-

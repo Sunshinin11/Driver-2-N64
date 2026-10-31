@@ -49,6 +49,7 @@ typedef struct {
     uint32_t bk_tex_upload_ticks;
     uint32_t bk_screen_clip_ticks;
     uint32_t bk_tex_block_clip_ticks;
+    uint32_t bk_tex_bclip_upload_ticks;
     uint32_t bk_calc_color_ticks;
     uint32_t bk_ot_walk_ticks;
     uint32_t bk_wait_idle_ticks;
@@ -67,6 +68,37 @@ typedef struct {
     uint32_t cnt_clipped_polys;
     uint32_t cnt_sub_triangles;
 
+    // Diagnostico 2: tri_core paths & blocks
+    uint32_t cnt_tri_single_block;
+    uint32_t cnt_tri_block_clip;
+    uint32_t cnt_tri_subdiv;
+    uint32_t cnt_blocks_generated;
+    uint32_t max_blocks_per_tri;
+    uint32_t cnt_tex_up_redundant;
+    uint32_t cnt_tex_up_unique;
+
+    // Diagnostico 2: UV distribution
+    uint32_t uv_bld_count, uv_bld_w_sum, uv_bld_h_sum;
+    uint32_t uv_ground_count, uv_ground_w_sum, uv_ground_h_sum;
+    uint32_t uv_cars_count, uv_cars_w_sum, uv_cars_h_sum;
+    uint32_t uv_peds_count, uv_peds_w_sum, uv_peds_h_sum;
+    uint32_t uv_other_count, uv_other_w_sum, uv_other_h_sum;
+
+    // Diagnostico 3: Pedestrians
+    uint32_t cnt_pedestrians_drawn;
+    uint32_t ped_anim_ticks;
+    uint32_t ped_transform_ticks;
+    uint32_t ped_assembly_ticks;
+
+    // Diagnostico 3: GTE inside pedestrians
+    uint32_t gte_peds_rtps_cnt, gte_peds_rtps_ticks;
+    uint32_t gte_peds_rtpt_cnt, gte_peds_rtpt_ticks;
+    uint32_t gte_peds_nclip_cnt, gte_peds_nclip_ticks;
+    uint32_t gte_peds_avsz3_cnt, gte_peds_avsz3_ticks;
+    uint32_t gte_peds_avsz4_cnt, gte_peds_avsz4_ticks;
+    uint32_t gte_peds_mvmva_cnt, gte_peds_mvmva_ticks;
+    uint32_t gte_peds_emul_cnt, gte_peds_emul_ticks;
+
     // f) Audio
     uint32_t audio_pump_ticks;
     uint32_t audio_pump_calls;
@@ -76,9 +108,20 @@ typedef struct {
 extern perf_frame_data_t g_perf_cur;
 extern perf_frame_data_t g_perf_acc;
 extern int g_perf_acc_frames;
+extern int g_in_pedestrians;
+
+// Cull counters (commit 3d5a70f)
+extern uint32_t g_cull_cnt_arrow;
+extern uint32_t g_cull_cnt_tile1x1;
+extern uint32_t g_cull_cnt_tile1x1lit;
+extern uint32_t g_cull_cnt_bld;
+extern uint32_t g_cull_cnt_bld_subdiv;
+extern uint32_t g_cull_cnt_drawmesh;
+extern uint32_t g_cull_cnt_drawmeshlit;
 
 void perf_frame_end(void);
 void perf_frame_start(void);
+void track_region_upload(int px, int py, int u0, int v0, int w, int h, int step, int clut, int fmt, int rgba);
 
 #define PERF_START(t) uint32_t _pt0_##t = perf_cnt0()
 #define PERF_END_ADD(t, field) do { g_perf_cur.field += (perf_cnt0() - _pt0_##t); } while(0)
@@ -94,4 +137,3 @@ void perf_frame_start(void);
 
 #endif // D2_PERFDBG
 #endif // D2_PERFDBG_H
-

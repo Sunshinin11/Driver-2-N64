@@ -25,7 +25,7 @@ PLAT_CXX  := port/n64/d2_entry.cpp port/n64/psyx_backend.cpp port/n64/libetc_n64
 PLAT_OBJS := $(patsubst %.c,$(OBJ_DIR)/%.o,$(PLAT_C)) $(patsubst %.cpp,$(OBJ_DIR)/%.o,$(PLAT_CXX))
 OBJS := $(GAME_OBJS) $(PSYX_OBJS) $(PLAT_OBJS)
 
-D2_INC = -I$(SRC)/Game -I$(SRC)/PsyCross/include -I$(SRC)/PsyCross/include/psx -Iport/compat
+D2_INC = -I$(SRC)/Game -I$(SRC)/PsyCross/include -I$(SRC)/PsyCross/include/psx -Iport/compat -Iport/n64
 N64_LDFLAGS += $(D2_LDEXTRA)
 # funcoes quentes juntas no inicio do .text (o cache de instrucoes do VR4300 tem 16 KB: espalhadas, elas se expulsam). Gerado por tools/hot.py.
 HOT_LD ?= hot.ld
@@ -63,6 +63,11 @@ endif
 D2_PERF_APE ?= 0
 ifeq ($(D2_PERF_APE),1)
 D2_OPT += -DD2_PERF_APE
+endif
+
+D2_PERF_MISSION1 ?= 0
+ifeq ($(D2_PERF_MISSION1),1)
+D2_OPT += -DD2_PERF_MISSION1
 endif
 
 D2_BENCH ?= 0

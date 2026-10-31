@@ -152,6 +152,10 @@ D2_AI void d2n_setmacir(int a1, int a2, int a3)
 	C2_IR1 = d2n_clamp(a1, -0x8000, 0x7fff); C2_IR2 = d2n_clamp(a2, -0x8000, 0x7fff); C2_IR3 = d2n_clamp(a3, -0x8000, 0x7fff);
 }
 
+#ifdef D2_PERFDBG
+#include "d2_perfdbg.h"
+#endif
+
 #ifdef __cplusplus
 extern "C" { int doCOP2(int op); void d2n_op_rtps(void); void d2n_op_rtpt(void); void d2n_op_mvmva(int op); }
 #else
@@ -159,19 +163,39 @@ extern int doCOP2(int op); extern void d2n_op_rtps(void); extern void d2n_op_rtp
 #endif
 D2_AI int d2n_cop2(int op)
 {
+#ifdef D2_PERFDBG
+	uint32_t t0 = 0;
+	if (g_in_pedestrians) t0 = perf_cnt0();
+#endif
 	switch (op)
 	{
-	case 0x0180001: d2n_op_rtps(); return 1;                                          /* RTPS  */
-	case 0x0280030: d2n_op_rtpt(); return 1;                   /* RTPT  */
+	case 0x0180001:
+		d2n_op_rtps();
+#ifdef D2_PERFDBG
+		if (g_in_pedestrians) { g_perf_cur.gte_peds_rtps_cnt++; g_perf_cur.gte_peds_rtps_ticks += perf_cnt0() - t0; }
+#endif
+		return 1;                                          /* RTPS  */
+	case 0x0280030:
+		d2n_op_rtpt();
+#ifdef D2_PERFDBG
+		if (g_in_pedestrians) { g_perf_cur.gte_peds_rtpt_cnt++; g_perf_cur.gte_peds_rtpt_ticks += perf_cnt0() - t0; }
+#endif
+		return 1;                   /* RTPT  */
 	case 0x01400006:                                                                                            /* NCLIP */
 		C2_FLAG = 0;
 		C2_MAC0 = (C2_SX0 * C2_SY1) + (C2_SX1 * C2_SY2) + (C2_SX2 * C2_SY0) - (C2_SX0 * C2_SY2) - (C2_SX1 * C2_SY0) - (C2_SX2 * C2_SY1);
+#ifdef D2_PERFDBG
+		if (g_in_pedestrians) { g_perf_cur.gte_peds_nclip_cnt++; g_perf_cur.gte_peds_nclip_ticks += perf_cnt0() - t0; }
+#endif
 		return 1;
 	case 0x0158002D:                                                                                            /* AVSZ3 */
 	{
 		C2_FLAG = 0;
 		const long long m = (long long)C2_ZSF3 * ((int)C2_SZ1 + (int)C2_SZ2 + (int)C2_SZ3);
 		C2_MAC0 = (int)m; C2_OTZ = d2n_clamp((int)(m >> 12), 0, 0xffff);
+#ifdef D2_PERFDBG
+		if (g_in_pedestrians) { g_perf_cur.gte_peds_avsz3_cnt++; g_perf_cur.gte_peds_avsz3_ticks += perf_cnt0() - t0; }
+#endif
 		return 1;
 	}
 	case 0x0168002E:                                                                                            /* AVSZ4 */
@@ -179,6 +203,9 @@ D2_AI int d2n_cop2(int op)
 		C2_FLAG = 0;
 		const long long m = (long long)C2_ZSF4 * ((int)C2_SZ0 + (int)C2_SZ1 + (int)C2_SZ2 + (int)C2_SZ3);
 		C2_MAC0 = (int)m; C2_OTZ = d2n_clamp((int)(m >> 12), 0, 0xffff);
+#ifdef D2_PERFDBG
+		if (g_in_pedestrians) { g_perf_cur.gte_peds_avsz4_cnt++; g_perf_cur.gte_peds_avsz4_ticks += perf_cnt0() - t0; }
+#endif
 		return 1;
 	}
 	default:
@@ -186,9 +213,18 @@ D2_AI int d2n_cop2(int op)
 		if ((op & 0x3f) == 0x12 && (op & (1 << 19)) && ((op >> 17) & 3) == 0 && (((op >> 13) & 3) == 0 || ((op >> 13) & 3) == 3))
 		{
 			d2n_op_mvmva(op);
+#ifdef D2_PERFDBG
+			if (g_in_pedestrians) { g_perf_cur.gte_peds_mvmva_cnt++; g_perf_cur.gte_peds_mvmva_ticks += perf_cnt0() - t0; }
+#endif
 			return 1;
 		}
-		return (doCOP2)(op);
+		{
+			int res = (doCOP2)(op);
+#ifdef D2_PERFDBG
+			if (g_in_pedestrians) { g_perf_cur.gte_peds_emul_cnt++; g_perf_cur.gte_peds_emul_ticks += perf_cnt0() - t0; }
+#endif
+			return res;
+		}
 	}
 }
 #define doCOP2(op) d2n_cop2(op)

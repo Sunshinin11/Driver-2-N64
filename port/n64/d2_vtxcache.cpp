@@ -14,6 +14,9 @@
 #include "C/texture.h"
 #include "ASM/rndrasm.h"
 #include "d2_origin.h"
+#ifdef D2_PERFDBG
+#include "d2_perfdbg.h"
+#endif
 
 #if defined(D2_VTXCACHE) && defined(D2_GTE_NATIVE)
 
@@ -124,6 +127,9 @@ void Tile1x1(MODEL *model)
 			const VCEnt *D = vc_get(polys->v2);
 			if (vc_saturated4(A->z, B->z, C->z, D->z, s_vcCam0.h))
 			{
+#ifdef D2_PERFDBG
+				g_cull_cnt_tile1x1++;
+#endif
 				polys = (PL_POLYFT4 *)((char *)polys + plotContext.polySizes[ptype]);
 				continue;
 			}
@@ -187,6 +193,9 @@ void Tile1x1Lit(MODEL *model)
 			const VCEnt *D = vc_get_lit(polys->v2);
 			if (vc_saturated4(A->z, B->z, C->z, D->z, s_vcCam0.h))
 			{
+#ifdef D2_PERFDBG
+				g_cull_cnt_tile1x1lit++;
+#endif
 				polys = (PL_POLYFT4 *)((char *)polys + plotContext.polySizes[ptype]);
 				continue;
 			}
@@ -270,7 +279,12 @@ void drawMesh(MVERTEX (*VSP)[5][5], int m, int n, _pct *pc)
 		if (opz > 0 && zz > 5)
 		{
 			if (vc_saturated4(z[mp[0]], z[mp[1]], z[mp[2]], z[mp[3]], s_vcCam0.h))
+			{
+#ifdef D2_PERFDBG
+				g_cull_cnt_drawmesh++;
+#endif
 				continue;
+			}
 
 			d2_st_ss(&prim->x0, xy[mp[0]]);
 			d2_st_ss(&prim->x1, xy[mp[1]]);
@@ -319,7 +333,12 @@ void drawMeshLit(MVERTEX (*VSP)[5][5], int m, int n, _pct *pc)
 		if (opz > 0 && zz > 5)
 		{
 			if (vc_saturated4(z[mp[0]], z[mp[1]], z[mp[2]], z[mp[3]], s_vcCam0.h))
+			{
+#ifdef D2_PERFDBG
+				g_cull_cnt_drawmeshlit++;
+#endif
 				continue;
+			}
 
 			d2_st_ss(&prim->x0, xy[mp[0]]);
 			d2_st_ss(&prim->x1, xy[mp[1]]);
@@ -397,6 +416,9 @@ void PlotBuildingModel(MODEL *model, int rot, _pct *pc)
 			const VCEnt *D = vc_get(polys->v2);
 			if (vc_saturated4(A->z, B->z, C->z, D->z, s_vcCam0.h))
 			{
+#ifdef D2_PERFDBG
+				g_cull_cnt_bld++;
+#endif
 				polys = (PL_POLYFT4 *)((char *)polys + pc->polySizes[ptype]);
 				continue;
 			}
@@ -512,6 +534,9 @@ void PlotBuildingModelSubdivNxN(MODEL *model, int rot, _pct *pc, int n)
 				const VCEnt *D = vc_get(polys->v2);
 				if (vc_saturated4(A->z, B->z, C->z, D->z, s_vcCam0.h))
 				{
+#ifdef D2_PERFDBG
+					g_cull_cnt_bld_subdiv++;
+#endif
 					polys = (PL_POLYFT4 *)((char *)polys + pc->polySizes[ptype]);
 					continue;
 				}

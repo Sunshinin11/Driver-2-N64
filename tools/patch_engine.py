@@ -638,8 +638,8 @@ P('PsyCross/src/gpu/PsyX_GPU.cpp',
 
 # ---- Diagnostico de origem de primitivas (D2_ORIGIN) ----
 P('PsyCross/include/psx/libgpu.h',
-  "#else\n#define addPrim(ot, p)\t\tsetaddr(p, getaddr(ot)), setaddr(ot, p)\n#endif\n\n#define addPrims",
-  "#else\n#ifdef D2_ORIGIN\n#define addPrim(ot, p)\t\t(D2_ORIGIN_TAG_AUTO(p), setaddr(p, getaddr(ot)), setaddr(ot, p))\n#else\n#define addPrim(ot, p)\t\tsetaddr(p, getaddr(ot)), setaddr(ot, p)\n#endif\n#endif\n\n#define addPrims")
+  "#else\n#define addPrim(ot, p)\t\tsetaddr(p, getaddr(ot)), setaddr(ot, p)\n#endif\n\n#define addPrims(ot, p0, p1)\tsetaddr(p1, getaddr(ot)),setaddr(ot, p0)",
+  "#else\n#ifdef D2_ORIGIN\n#define addPrim(ot, p)\t\t(D2_ORIGIN_TAG_AUTO(p), setaddr(p, getaddr(ot)), setaddr(ot, p))\n#define addPrims(ot, p0, p1)\t(D2_ORIGIN_TAG_CHAIN(p0, p1), setaddr(p1, getaddr(ot)), setaddr(ot, p0))\n#else\n#define addPrim(ot, p)\t\tsetaddr(p, getaddr(ot)), setaddr(ot, p)\n#define addPrims(ot, p0, p1)\tsetaddr(p1, getaddr(ot)),setaddr(ot, p0)\n#endif\n#endif")
 
 P('Game/C/draw.c',
   "model = Z > DRAW_LOD_DIST_LOW ? pLodModels[cop->type] : modelpointers[cop->type];",
@@ -763,7 +763,67 @@ P('Game/C/targets.c',
 
 P('Game/C/targets.c',
   "\t\ttri_indices += 3;\n\t\tgte_rtpt();\n\n\t\tsetPolyF3(poly);",
-  "\t\ttri_indices += 3;\n\t\tgte_rtpt();\n\t\tconst unsigned int _h = (unsigned short)C2_H;\n\t\tif (2 * (unsigned int)C2_SZ1 <= _h || 2 * (unsigned int)C2_SZ2 <= _h || 2 * (unsigned int)C2_SZ3 <= _h)\n\t\t\tcontinue;\n\n\t\tsetPolyF3(poly);")
+  "\t\ttri_indices += 3;\n\t\tgte_rtpt();\n\t\tconst unsigned int _h = (unsigned short)C2_H;\n\t\tif (2 * (unsigned int)C2_SZ1 <= _h || 2 * (unsigned int)C2_SZ2 <= _h || 2 * (unsigned int)C2_SZ3 <= _h)\n\t\t{\n#ifdef D2_PERFDBG\n\t\t\tg_cull_cnt_arrow++;\n#endif\n\t\t\tcontinue;\n\t\t}\n\n\t\tsetPolyF3(poly);")
+
+P('Game/C/draw.c',
+  "void PlotModelSubdivNxN(MODEL* model, int rot, _pct* pc, int n)\n{",
+  "void PlotModelSubdivNxN(MODEL* model, int rot, _pct* pc, int n)\n{\n\tD2_ORIGIN_SET_SCOPE(\"PlotModelSubdivNxN\");")
+
+P('Game/C/system.c',
+  "\tClearOTagR((u_long*)current->ot, OTSIZE);\n\tcurrent->primptr = current->primtab;\n}",
+  "\tClearOTagR((u_long*)current->ot, OTSIZE);\n\tcurrent->primptr = current->primtab;\n#ifdef D2_ORIGIN\n\textern void d2_origin_frame_begin(void);\n\td2_origin_frame_begin();\n#endif\n}")
+
+P('Game/C/system.c',
+  "\tClearOTagR((u_long*)current->ot, OTSIZE);\n\tcurrent->primptr = current->primtab;\n}\n\nshort paddp;",
+  "\tClearOTagR((u_long*)current->ot, OTSIZE);\n\tcurrent->primptr = current->primtab;\n#ifdef D2_ORIGIN\n\textern void d2_origin_frame_begin(void);\n\td2_origin_frame_begin();\n#endif\n}\n\nshort paddp;")
+
+P('Game/C/pedest.c',
+  "void DrawAllPedestrians(void)\n{\n\tLPPEDESTRIAN pPed;\n\n\tpPed = pUsedPeds;",
+  "void DrawAllPedestrians(void)\n{\n\tLPPEDESTRIAN pPed;\n\tD2_ORIGIN_SET_SCOPE(\"DrawPedestrians\");\n#ifdef D2_PERFDBG\n\textern int g_in_pedestrians;\n\tg_in_pedestrians = 1;\n#endif\n\n\tpPed = pUsedPeds;")
+
+P('Game/C/pedest.c',
+  "\t\tpPed = pPed->pNext;\n\t}\n\n\t/*\n\tpPed = pUsedPeds;",
+  "\t\tpPed = pPed->pNext;\n\t}\n#ifdef D2_PERFDBG\n\tg_in_pedestrians = 0;\n#endif\n\n\t/*\n\tpPed = pUsedPeds;")
+
+P('Game/C/motion_c.c',
+  "void DrawCiv(LPPEDESTRIAN pPed)\n{",
+  "void DrawCiv(LPPEDESTRIAN pPed)\n{\n\tD2_ORIGIN_SET_SCOPE(\"DrawCiv\");\n#ifdef D2_PERFDBG\n\tg_perf_cur.cnt_pedestrians_drawn++;\n\tuint32_t _t_anim0 = perf_cnt0();\n#endif")
+
+P('Game/C/motion_c.c',
+  "\tpos.vx = pPed->position.vx - camera_position.vx;\n\tpos.vy = pPed->position.vy - camera_position.vy;\n\tpos.vz = pPed->position.vz - camera_position.vz;",
+  "#ifdef D2_PERFDBG\n\tg_perf_cur.ped_anim_ticks += perf_cnt0() - _t_anim0;\n\tuint32_t _t_tr0 = perf_cnt0();\n#endif\n\tpos.vx = pPed->position.vx - camera_position.vx;\n\tpos.vy = pPed->position.vy - camera_position.vy;\n\tpos.vz = pPed->position.vz - camera_position.vz;")
+
+P('Game/C/motion_c.c',
+  "\t// translate bones to screen and draw sprites\n\tj = 0;",
+  "#ifdef D2_PERFDBG\n\tg_perf_cur.ped_transform_ticks += perf_cnt0() - _t_tr0;\n\tuint32_t _t_as0 = perf_cnt0();\n#endif\n\t// translate bones to screen and draw sprites\n\tj = 0;")
+
+P('Game/C/motion_c.c',
+  "\tRoundShadow(&ppos, &cv, size);\n}",
+  "\tRoundShadow(&ppos, &cv, size);\n#ifdef D2_PERFDBG\n\tg_perf_cur.ped_assembly_ticks += perf_cnt0() - _t_as0;\n#endif\n}")
+
+P('Game/C/motion_c.c',
+  "void DrawTanner(LPPEDESTRIAN pPed)\n{",
+  "void DrawTanner(LPPEDESTRIAN pPed)\n{\n\tD2_ORIGIN_SET_SCOPE(\"DrawTanner\");\n#ifdef D2_PERFDBG\n\tg_perf_cur.cnt_pedestrians_drawn++;\n\tuint32_t _t_anim0 = perf_cnt0();\n#endif")
+
+P('Game/C/motion_c.c',
+  "\tnewRotateBones(pPed, &Skel[LOWERBACK]);",
+  "#ifdef D2_PERFDBG\n\tg_perf_cur.ped_anim_ticks += perf_cnt0() - _t_anim0;\n\tuint32_t _t_tr0 = perf_cnt0();\n#endif\n\tnewRotateBones(pPed, &Skel[LOWERBACK]);\n#ifdef D2_PERFDBG\n\tg_perf_cur.ped_transform_ticks += perf_cnt0() - _t_tr0;\n\tuint32_t _t_as0 = perf_cnt0();\n#endif")
+
+P('Game/C/motion_c.c',
+  "\tbDoingShadow = 0;\n}\n\n// [D] [T]\nint DrawCharacter",
+  "\tbDoingShadow = 0;\n#ifdef D2_PERFDBG\n\tg_perf_cur.ped_assembly_ticks += perf_cnt0() - _t_as0;\n#endif\n}\n\n// [D] [T]\nint DrawCharacter")
+
+P('Game/C/motion_c.c',
+  "int DrawCharacter(LPPEDESTRIAN pPed)\n{",
+  "int DrawCharacter(LPPEDESTRIAN pPed)\n{\n\tD2_ORIGIN_SET_SCOPE(\"DrawCharacter\");\n#ifdef D2_PERFDBG\n\tg_perf_cur.cnt_pedestrians_drawn++;\n\tuint32_t _t_anim0 = perf_cnt0();\n#endif")
+
+P('Game/C/motion_c.c',
+  "\tnewRotateBones(pPed, &Skel[LOWERBACK]);\n\n\tgte_SetRotMatrix(&inv_camera_matrix);",
+  "#ifdef D2_PERFDBG\n\tg_perf_cur.ped_anim_ticks += perf_cnt0() - _t_anim0;\n\tuint32_t _t_tr0 = perf_cnt0();\n#endif\n\tnewRotateBones(pPed, &Skel[LOWERBACK]);\n#ifdef D2_PERFDBG\n\tg_perf_cur.ped_transform_ticks += perf_cnt0() - _t_tr0;\n\tuint32_t _t_as0 = perf_cnt0();\n#endif\n\n\tgte_SetRotMatrix(&inv_camera_matrix);")
+
+P('Game/C/motion_c.c',
+  "\t\tRoundShadow(&pos, &cv, size);\n\t}\n\n\treturn 1;\n}",
+  "\t\tRoundShadow(&pos, &cv, size);\n\t}\n#ifdef D2_PERFDBG\n\tg_perf_cur.ped_assembly_ticks += perf_cnt0() - _t_as0;\n#endif\n\n\treturn 1;\n}")
 
 P('Game/C/targets.c',
   "\t\taddPrim(current->ot + z, poly);\n\n\t\tcurrent->primptr += sizeof(POLY_F3);",

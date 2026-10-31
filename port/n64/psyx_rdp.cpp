@@ -959,6 +959,9 @@ static bool upload_region(int page, int clut, int u0, int v0, int w, int h, int 
     }
     else if (s_lastUp.slot != slot || s_lastUp.gen != slot->gen)
     {
+#ifdef D2_PERFDBG
+        track_region_upload(px, py, u0, v0, w, h, step, clut, (int)s_texFormat, s_curRgbaMode ? 1 : 0);
+#endif
         if (s_curRgbaMode)
         {
             surface_t surf = surface_make(slot->data, FMT_RGBA32, wpad, sh, wpad * 4);
@@ -1536,6 +1539,33 @@ static void tri_core(const PV *A, const PV *B, const PV *C, int page, int clut)
     if (umax > 255) umax = 255;
     if (vmax > 255) vmax = 255;
     const int uw = umax - umin + 1, vh = vmax - vmin + 1;
+#if defined(D2_PERFDBG) && defined(D2_ORIGIN)
+    {
+        const D2OriginRecord *rec = d2_origin_lookup(s_curPrim);
+        const char *fn = rec ? rec->func_name : "unknown";
+        if (strstr(fn, "Building")) {
+            g_perf_cur.uv_bld_count++;
+            g_perf_cur.uv_bld_w_sum += uw;
+            g_perf_cur.uv_bld_h_sum += vh;
+        } else if (strstr(fn, "Tile") || strstr(fn, "drawMesh")) {
+            g_perf_cur.uv_ground_count++;
+            g_perf_cur.uv_ground_w_sum += uw;
+            g_perf_cur.uv_ground_h_sum += vh;
+        } else if (strstr(fn, "Car")) {
+            g_perf_cur.uv_cars_count++;
+            g_perf_cur.uv_cars_w_sum += uw;
+            g_perf_cur.uv_cars_h_sum += vh;
+        } else if (strstr(fn, "Ped") || strstr(fn, "Tanner") || strstr(fn, "Civ") || strstr(fn, "Character")) {
+            g_perf_cur.uv_peds_count++;
+            g_perf_cur.uv_peds_w_sum += uw;
+            g_perf_cur.uv_peds_h_sum += vh;
+        } else {
+            g_perf_cur.uv_other_count++;
+            g_perf_cur.uv_other_w_sum += uw;
+            g_perf_cur.uv_other_h_sum += vh;
+        }
+    }
+#endif
     const int tileW = s_ctxTileW, tileH = s_ctxTileH;
 
     // quanto da tela cobre vs. quanto de textura: define o passo (como um "mip" por amostragem de ponto)
@@ -1547,6 +1577,9 @@ static void tri_core(const PV *A, const PV *B, const PV *C, int page, int clut)
 
     if (s_subq)
     {
+#ifdef D2_PERFDBG
+        g_perf_cur.cnt_tri_subdiv++;
+#endif
         // pedaco de quad subdividido: usa o bloco alinhado inteiro (a mesma regiao para todos os pedacos do bloco = acerto no cache)
         const int w = s_subTu + tileW > 256 ? 256 - s_subTu : tileW, h = s_subTv + tileH > 256 ? 256 - s_subTv : tileH;
         if (!upload_region(page, clut, s_subTu, s_subTv, w, h, 1))
@@ -1567,6 +1600,9 @@ static void tri_core(const PV *A, const PV *B, const PV *C, int page, int clut)
     }
     if (uw <= tileW * step && vh <= tileH * step)
     {
+#ifdef D2_PERFDBG
+        g_perf_cur.cnt_tri_single_block++;
+#endif
         // cabe em um bloco so
         int w = uw + 1, h = vh + 1;
         if (umin + w > 256) w = 256 - umin;
@@ -1613,6 +1649,8 @@ static void tri_core(const PV *A, const PV *B, const PV *C, int page, int clut)
     const int tu0 = (umin / bw) * bw, tv0 = (vmin / bh) * bh;
 #ifdef D2_PERFDBG
     PERF_START(bclip);
+    g_perf_cur.cnt_tri_block_clip++;
+    int blocks_this_tri = 0;
 #endif
     for (int tv = tv0; tv <= vmax && tv < 256; tv += bh)
         for (int tu = tu0; tu <= umax && tu < 256; tu += bw)
@@ -1648,12 +1686,23 @@ static void tri_core(const PV *A, const PV *B, const PV *C, int page, int clut)
             if (tu + w > 256) w = 256 - tu;
             if (tv + h > 256) h = 256 - tv;
             if (w <= 0 || h <= 0) continue;
-            if (!upload_region(page, clut, tu, tv, w, h, step)) {
+#ifdef D2_PERFDBG
+            uint32_t _tu0 = perf_cnt0();
+#endif
+            bool up_ok = upload_region(page, clut, tu, tv, w, h, step);
+#ifdef D2_PERFDBG
+            g_perf_cur.bk_tex_bclip_upload_ticks += perf_cnt0() - _tu0;
+#endif
+            if (!up_ok) {
 #ifdef D2_DPROF
                 s_rejUpload++;
 #endif
                 continue;
             }
+#ifdef D2_PERFDBG
+            blocks_this_tri++;
+            g_perf_cur.cnt_blocks_generated++;
+#endif
             for (int i = 1; i + 1 < n; i++) {
                 emit_tri(true, a[0], a[i], a[i + 1], (float)(step == 1 ? s_upOu : tu), (float)(step == 1 ? s_upOv : tv), 1.0f / step, 1.0f, 1.0f);
                 s_nSub++;
@@ -1664,6 +1713,8 @@ static void tri_core(const PV *A, const PV *B, const PV *C, int page, int clut)
         }
 #ifdef D2_PERFDBG
     PERF_END_ADD(bclip, bk_tex_block_clip_ticks);
+    if (blocks_this_tri > g_perf_cur.max_blocks_per_tri)
+        g_perf_cur.max_blocks_per_tri = blocks_this_tri;
 #endif
 }
 
@@ -2294,9 +2345,6 @@ extern "C" void d2_native_draw_ot(u_long *ot)
     }
 #if D2_RSP_GPU
     if (s_d2gpuOvl) rspq_write(s_d2gpuOvl, D2G_CMD_DRAW_END);
-#endif
-#ifdef D2_ORIGIN
-    d2_origin_frame_begin();
 #endif
 #ifdef D2_PERFDBG
     g_perf_cur.bk_ot_walk_ticks += perf_cnt0() - t_ot0;

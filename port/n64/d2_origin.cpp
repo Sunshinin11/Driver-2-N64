@@ -5,7 +5,7 @@
 
 #ifdef D2_ORIGIN
 
-#define ORIGIN_TABLE_SIZE 2048
+#define ORIGIN_TABLE_SIZE 4096
 #define ORIGIN_TABLE_MASK (ORIGIN_TABLE_SIZE - 1)
 
 static D2OriginRecord s_originTable[ORIGIN_TABLE_SIZE];
@@ -22,6 +22,26 @@ void d2_origin_init(void)
 
 void d2_origin_frame_begin(void)
 {
+    // Log tag counts from previous frame before clearing if in gameplay
+    if (d2_rdp_frames > 200 && (d2_rdp_frames % 30 == 0)) {
+        int cnt_bld = 0, cnt_ground = 0, cnt_cars = 0, cnt_peds = 0, cnt_models = 0, cnt_sprites = 0, cnt_arrow = 0, cnt_unk = 0, cnt_other = 0;
+        for (int i = 0; i < ORIGIN_TABLE_SIZE; i++) {
+            if (!s_originTable[i].prim) continue;
+            const char *fn = s_originTable[i].func_name;
+            if (!fn || strcmp(fn, "unknown") == 0) cnt_unk++;
+            else if (strstr(fn, "Building")) cnt_bld++;
+            else if (strstr(fn, "Tile") || strstr(fn, "drawMesh")) cnt_ground++;
+            else if (strstr(fn, "Car")) cnt_cars++;
+            else if (strstr(fn, "Ped") || strstr(fn, "Tanner") || strstr(fn, "Civ") || strstr(fn, "Character")) cnt_peds++;
+            else if (strstr(fn, "RenderModel") || strstr(fn, "PlotModel")) cnt_models++;
+            else if (strstr(fn, "Sprite")) cnt_sprites++;
+            else if (strstr(fn, "Arrow")) cnt_arrow++;
+            else cnt_other++;
+        }
+        debugf("[ORIGIN-VALIDATION] f=%d tags: bld=%d ground=%d cars=%d peds=%d models=%d sprites=%d arrow=%d other=%d unk=%d\n",
+               d2_rdp_frames, cnt_bld, cnt_ground, cnt_cars, cnt_peds, cnt_models, cnt_sprites, cnt_arrow, cnt_other, cnt_unk);
+    }
+
     memset(s_originTable, 0, sizeof(s_originTable));
     s_curScope = "unknown";
     s_curModelType = -1;
@@ -54,12 +74,29 @@ void d2_origin_tag(const void *prim, const char *func, int model_type, const int
 void d2_origin_tag_cull(const void *prim, const char *func, int model_type, const int cell_pos[3], int ptype, const short sxy[4][2], const short sz[4], int opz, int otz)
 {
     if (!prim) return;
-    unsigned int h = (((uintptr_t)prim >> 2) ^ ((uintptr_t)prim >> 8)) & ORIGIN_TABLE_MASK;
-    for (int i = 0; i < 32; i++) {
+    unsigned int h = (((uintptr_t)prim >> 2) * 2654435761u) & ORIGIN_TABLE_MASK;
+    for (int i = 0; i < 64; i++) {
         unsigned int idx = (h + i) & ORIGIN_TABLE_MASK;
-        if (s_originTable[idx].prim == NULL || s_originTable[idx].prim == prim) {
+        if (s_originTable[idx].prim == prim) {
+            // Already present: update fields if new data has better info
+            if (func && strcmp(func, "unknown") != 0 && (!s_originTable[idx].func_name || strcmp(s_originTable[idx].func_name, "unknown") == 0)) {
+                s_originTable[idx].func_name = func;
+            }
+            if (model_type >= 0) s_originTable[idx].model_type = (short)model_type;
+            if (ptype >= 0) s_originTable[idx].ptype = (short)ptype;
+            if (sxy && (s_originTable[idx].sxy[0][0] == 0 && s_originTable[idx].sxy[0][1] == 0 && s_originTable[idx].sxy[1][0] == 0)) {
+                memcpy(s_originTable[idx].sxy, sxy, sizeof(s_originTable[idx].sxy));
+            }
+            if (sz && (s_originTable[idx].sz[0] == 0 && s_originTable[idx].sz[1] == 0 && s_originTable[idx].sz[2] == 0)) {
+                memcpy(s_originTable[idx].sz, sz, sizeof(s_originTable[idx].sz));
+            }
+            if (opz != 0) s_originTable[idx].opz = opz;
+            if (otz != 0) s_originTable[idx].otz = otz;
+            return;
+        }
+        if (s_originTable[idx].prim == NULL) {
             s_originTable[idx].prim = prim;
-            s_originTable[idx].func_name = func ? func : s_curScope;
+            s_originTable[idx].func_name = (func && strcmp(func, "unknown") != 0) ? func : s_curScope;
             s_originTable[idx].model_type = (short)(model_type >= 0 ? model_type : s_curModelType);
             s_originTable[idx].ptype = (short)ptype;
             if (cell_pos) {
@@ -89,11 +126,23 @@ void d2_origin_tag_auto(const void *prim)
     d2_origin_tag_cull(prim, s_curScope, s_curModelType, s_curCellPos, -1, NULL, NULL, 0, 0);
 }
 
+void d2_origin_tag_chain(const void *p0, const void *p1)
+{
+    const unsigned int *p = (const unsigned int *)p0;
+    while (p) {
+        d2_origin_tag_auto(p);
+        if (p == (const unsigned int *)p1) break;
+        unsigned int addr = *p & 0x00FFFFFF;
+        if (!addr) break;
+        p = (const unsigned int *)(0x80000000 | addr);
+    }
+}
+
 const D2OriginRecord *d2_origin_lookup(const void *prim)
 {
     if (!prim) return NULL;
-    unsigned int h = (((uintptr_t)prim >> 2) ^ ((uintptr_t)prim >> 8)) & ORIGIN_TABLE_MASK;
-    for (int i = 0; i < 32; i++) {
+    unsigned int h = (((uintptr_t)prim >> 2) * 2654435761u) & ORIGIN_TABLE_MASK;
+    for (int i = 0; i < 64; i++) {
         unsigned int idx = (h + i) & ORIGIN_TABLE_MASK;
         if (s_originTable[idx].prim == prim) return &s_originTable[idx];
         if (s_originTable[idx].prim == NULL) break;
