@@ -100,17 +100,7 @@ D2_AI unsigned int d2n_rtp(int idx)
 	const unsigned int h = d2n_div((unsigned short)C2_H, sz);
 	const int sx = (int)(((long long)C2_OFX + (long long)ir1 * (int)h) >> 16), sy = (int)(((long long)C2_OFY + (long long)ir2 * (int)h) >> 16);
 	C2_SXY0 = C2_SXY1; C2_SXY1 = C2_SXY2;
-#ifdef D2_GTE_WIDE
-	if (h == 0x1ffff) {
-		C2_SX2 = (short)d2n_clamp(sx, -0x400, 0x3ff);
-		C2_SY2 = (short)d2n_clamp(sy, -0x400, 0x3ff);
-	} else {
-		C2_SX2 = (short)d2n_clamp(sx, -0x2000, 0x1fff);
-		C2_SY2 = (short)d2n_clamp(sy, -0x2000, 0x1fff);
-	}
-#else
 	C2_SX2 = (short)d2n_clamp(sx, -0x400, 0x3ff); C2_SY2 = (short)d2n_clamp(sy, -0x400, 0x3ff);
-#endif
 	return h;
 }
 D2_AI void d2n_depthcue(unsigned int h)
@@ -152,15 +142,8 @@ D2_AI unsigned int d2n_proj(const D2nCam *c, int vx, int vy, int vz, unsigned in
 	const unsigned int sz = (unsigned int)d2n_clamp(a3, 0, 0xffff); *psz = sz;
 	const unsigned int h = d2n_div(c->h, sz); *ph = h;
 	const int ir1 = d2n_clamp(a1, -0x8000, 0x7fff), ir2 = d2n_clamp(a2, -0x8000, 0x7fff);
-#ifdef D2_GTE_WIDE
-	const int sx = (h == 0x1ffff) ? d2n_clamp((int)(((long long)c->ofx + (long long)ir1 * (int)h) >> 16), -0x400, 0x3ff)
-	                              : d2n_clamp((int)(((long long)c->ofx + (long long)ir1 * (int)h) >> 16), -0x2000, 0x1fff);
-	const int sy = (h == 0x1ffff) ? d2n_clamp((int)(((long long)c->ofy + (long long)ir2 * (int)h) >> 16), -0x400, 0x3ff)
-	                              : d2n_clamp((int)(((long long)c->ofy + (long long)ir2 * (int)h) >> 16), -0x2000, 0x1fff);
-#else
 	const int sx = d2n_clamp((int)(((long long)c->ofx + (long long)ir1 * (int)h) >> 16), -0x400, 0x3ff);
 	const int sy = d2n_clamp((int)(((long long)c->ofy + (long long)ir2 * (int)h) >> 16), -0x400, 0x3ff);
-#endif
 	return ((unsigned int)(unsigned short)sy << 16) | (unsigned short)sx;   /* mesmo valor numerico do registrador SXY */
 }
 D2_AI void d2n_setmacir(int a1, int a2, int a3)
