@@ -144,6 +144,7 @@ struct TexSlot
 {
     unsigned int key0, key1, key2;     // identificam a regiao e variante aditiva/CLUT
     unsigned int sig;
+    unsigned int vw;                   // versao da VRAM no momento da gravacao
     unsigned int gen;            // muda a cada nova decodificacao do slot
     unsigned int use;            // carimbo do ultimo uso (o RDP pode ainda nao ter lido os dados)
     unsigned short wpad, h;      // largura (com padding) e altura em texels
@@ -363,25 +364,33 @@ static TexSlot *get_region(int px, int py, int fmt, int u0, int v0, int w, int h
     unsigned int k2 = is_rgba32 ? ((unsigned int)(clut & 0xFFFF) | ((unsigned int)rgba_mode << 16)) : 0;
     unsigned int hsh = (k0 * 0x9E3779B1u) ^ (k1 * 0x85EBCA6Bu) ^ (k2 * 0xC2B2AE35u);
     hsh ^= hsh >> 15; hsh *= 0x2C1B3C6Du; hsh ^= hsh >> 13;
-    const unsigned int base = hsh % TEX_SLOTS;
+    const unsigned int base = hsh & (TEX_SLOTS - 1);
 
-    // palavras de VRAM que a regiao toca (para a assinatura)
-    int wx, ww;
-    if (fmt == TF_4_BIT) { wx = px + (u0 >> 2); ww = ((u0 + w - 1) >> 2) - (u0 >> 2) + 1; }
-    else if (fmt == TF_8_BIT) { wx = px + (u0 >> 1); ww = ((u0 + w - 1) >> 1) - (u0 >> 1) + 1; }
-    else { wx = px + u0; ww = w; }
-    unsigned int sig = cell_signature(wx, py + v0, ww, h);
-    if (is_rgba32 && fmt != TF_16_BIT)
-    {
-        const int cx = (clut & 63) * 16, cy = clut >> 6;
-        sig ^= cell_signature(cx, cy, fmt == TF_4_BIT ? 16 : 256, 1);
-    }
+    unsigned int sig = 0xFFFFFFFFu;
+    auto get_sig = [&]() -> unsigned int {
+        if (sig != 0xFFFFFFFFu) return sig;
+        int wx, ww;
+        if (fmt == TF_4_BIT) { wx = px + (u0 >> 2); ww = ((u0 + w - 1) >> 2) - (u0 >> 2) + 1; }
+        else if (fmt == TF_8_BIT) { wx = px + (u0 >> 1); ww = ((u0 + w - 1) >> 1) - (u0 >> 1) + 1; }
+        else { wx = px + u0; ww = w; }
+        sig = cell_signature(wx, py + v0, ww, h);
+        if (is_rgba32 && fmt != TF_16_BIT)
+        {
+            const int cx = (clut & 63) * 16, cy = clut >> 6;
+            sig ^= cell_signature(cx, cy, fmt == TF_4_BIT ? 16 : 256, 1);
+        }
+        return sig;
+    };
 
     TexSlot *s = 0;
     for (int i = 0; i < 4; i++)
     {
-        TexSlot *c = &s_slots[(base + i) % TEX_SLOTS];
-        if (c->valid && c->key0 == k0 && c->key1 == k1 && c->key2 == k2 && c->sig == sig) {
+        TexSlot *c = &s_slots[(base + i) & (TEX_SLOTS - 1)];
+        if (c->valid && c->key0 == k0 && c->key1 == k1 && c->key2 == k2) {
+            if (c->vw != s_vramWrites) {
+                if (c->sig != get_sig()) continue;
+                c->vw = s_vramWrites;
+            }
             c->use = ++s_useCounter; s_dbgHit++;
 #ifdef D2_PERFDBG
             uint32_t gr_el = perf_cnt0() - gr_t0;
@@ -398,10 +407,11 @@ static TexSlot *get_region(int px, int py, int fmt, int u0, int v0, int w, int h
     // precisa decodificar: so reutiliza um slot cujos dados o RDP ja terminou de ler
     for (int i = 0; i < 4 && !s; i++)
     {
-        TexSlot *c = &s_slots[(base + i) % TEX_SLOTS];
+        TexSlot *c = &s_slots[(base + i) & (TEX_SLOTS - 1)];
         if (!c->valid || c->use <= s_doneCounter) s = c;
     }
     if (!s) { rdp_wait_idle(); s = &s_slots[base]; }
+    sig = get_sig();
 
     // decodifica
     s_dbgMiss++; s_dbgTex += sw * sh; s_dbgPM[fmt & 3]++; s_dbgPT[fmt & 3] += sw * sh; if (step > 1) s_dbgTexStep += sw * sh;
@@ -513,7 +523,7 @@ static TexSlot *get_region(int px, int py, int fmt, int u0, int v0, int w, int h
         }
     }
     data_cache_hit_writeback(dst, (bytes + 15) & ~15);
-    s->key0 = k0; s->key1 = k1; s->key2 = k2; s->sig = sig; s->valid = 1; s->gen = ++s_genCounter; s->use = ++s_useCounter;
+    s->key0 = k0; s->key1 = k1; s->key2 = k2; s->sig = sig; s->vw = s_vramWrites; s->valid = 1; s->gen = ++s_genCounter; s->use = ++s_useCounter;
 #ifdef D2_PERFDBG
     uint32_t gr_el = perf_cnt0() - gr_t0;
     if (is_rgba32) {
