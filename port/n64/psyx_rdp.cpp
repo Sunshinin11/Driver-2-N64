@@ -162,8 +162,7 @@ static void rdp_wait_idle(void) { rspq_wait(); s_doneCounter = s_useCounter; }
 static int s_palClut = -1, s_palFmt = -1;
 static unsigned int s_palVer;
 
-static bool s_isAdditive = false;
-static bool s_isQuarter = false;
+static int s_curRgbaMode = 0;
 static BlendMode s_curBlend = BM_NONE;
 
 static inline unsigned short conv_color(unsigned short v)
@@ -172,7 +171,7 @@ static inline unsigned short conv_color(unsigned short v)
     return (unsigned short)(((v & 31) << 11) | (((v >> 5) & 31) << 6) | (((v >> 10) & 31) << 1) | (v != 0));
 }
 
-static inline uint32_t psx_to_rgba32(unsigned short v, bool is_quarter)
+static inline uint32_t psx_to_rgba32(unsigned short v)
 {
     if (v == 0) return 0;
     const int r5 = v & 31, g5 = (v >> 5) & 31, b5 = (v >> 10) & 31;
@@ -181,15 +180,13 @@ static inline uint32_t psx_to_rgba32(unsigned short v, bool is_quarter)
     const int b = (b5 << 3) | (b5 >> 2);
     const int maxc = r > g ? (r > b ? r : b) : (g > b ? g : b);
     if (maxc == 0) return 0;
-    int a = is_quarter ? (maxc >> 2) : maxc;
-    if (a == 0) return 0;
     int r_norm = (r * 255) / maxc;
     int g_norm = (g * 255) / maxc;
     int b_norm = (b * 255) / maxc;
     if (r_norm > 255) r_norm = 255;
     if (g_norm > 255) g_norm = 255;
     if (b_norm > 255) b_norm = 255;
-    return ((uint32_t)r_norm << 24) | ((uint32_t)g_norm << 16) | ((uint32_t)b_norm << 8) | (uint32_t)a;
+    return ((uint32_t)r_norm << 24) | ((uint32_t)g_norm << 16) | ((uint32_t)b_norm << 8) | (uint32_t)maxc;
 }
 
 struct PalEnt { int clut; unsigned int sig, gen, use, vw; int valid, bank; unsigned short pal[16] __attribute__((aligned(16))); };
@@ -267,22 +264,23 @@ static void shadow_sync(int wx, int wy, int ww, int wh)      // celulas tocadas 
 }
 
 // decodifica a regiao (u0,v0,w,h com passo step) da pagina (px,py) para o slot; retorna false se nao couber
-static TexSlot *get_region(int px, int py, int fmt, int u0, int v0, int w, int h, int step, int *outW, int *outH, int *outWpad, int clut, bool is_add, bool is_quarter)
+static TexSlot *get_region(int px, int py, int fmt, int u0, int v0, int w, int h, int step, int *outW, int *outH, int *outWpad, int clut, int rgba_mode)
 {
+    const bool is_rgba32 = (rgba_mode != 0);
     const int sw = (w + step - 1) / step, sh = (h + step - 1) / step;
     int wpad;
-    if (is_add) wpad = (sw + 1) & ~1;
+    if (is_rgba32) wpad = (sw + 1) & ~1;
     else if (fmt == TF_4_BIT) wpad = (sw + 15) & ~15;
     else if (fmt == TF_8_BIT) wpad = (sw + 7) & ~7;
     else wpad = (sw + 3) & ~3;
-    int bytes = is_add ? (wpad * 4 * sh) : (fmt == TF_4_BIT ? (wpad / 2) * sh : fmt == TF_8_BIT ? wpad * sh : wpad * 2 * sh);
+    int bytes = is_rgba32 ? (wpad * 4 * sh) : (fmt == TF_4_BIT ? (wpad / 2) * sh : fmt == TF_8_BIT ? wpad * sh : wpad * 2 * sh);
     if (w <= 0 || h <= 0) return 0;
-    if (bytes > (is_add ? TEX_BYTES : 2048)) return 0;   // com paleta: a metade alta da TMEM e da TLUT
+    if (bytes > (is_rgba32 ? TEX_BYTES : 2048)) return 0;   // com paleta: a metade alta da TMEM e da TLUT
     *outW = sw; *outH = sh; *outWpad = wpad;
 
-    unsigned int k0 = (unsigned)px | ((unsigned)py << 10) | ((unsigned)fmt << 20) | ((unsigned)step << 24) | (is_add ? (1u << 28) : 0);
+    unsigned int k0 = (unsigned)px | ((unsigned)py << 10) | ((unsigned)fmt << 20) | ((unsigned)step << 24) | ((unsigned)rgba_mode << 28);
     unsigned int k1 = ((unsigned)u0 & 0xFF) | (((unsigned)v0 & 0xFF) << 8) | (((unsigned)(w > 0 ? w - 1 : 0) & 0xFF) << 16) | (((unsigned)(h > 0 ? h - 1 : 0) & 0xFF) << 24);
-    unsigned int k2 = is_add ? ((unsigned int)(clut & 0xFFFF) | (is_quarter ? 0x10000 : 0)) : 0;
+    unsigned int k2 = is_rgba32 ? ((unsigned int)(clut & 0xFFFF) | ((unsigned int)rgba_mode << 16)) : 0;
     unsigned int hsh = (k0 * 0x9E3779B1u) ^ (k1 * 0x85EBCA6Bu) ^ (k2 * 0xC2B2AE35u);
     hsh ^= hsh >> 15; hsh *= 0x2C1B3C6Du; hsh ^= hsh >> 13;
     const unsigned int base = hsh % TEX_SLOTS;
@@ -293,7 +291,7 @@ static TexSlot *get_region(int px, int py, int fmt, int u0, int v0, int w, int h
     else if (fmt == TF_8_BIT) { wx = px + (u0 >> 1); ww = ((u0 + w - 1) >> 1) - (u0 >> 1) + 1; }
     else { wx = px + u0; ww = w; }
     unsigned int sig = cell_signature(wx, py + v0, ww, h);
-    if (is_add && fmt != TF_16_BIT)
+    if (is_rgba32 && fmt != TF_16_BIT)
     {
         const int cx = (clut & 63) * 16, cy = clut >> 6;
         sig ^= cell_signature(cx, cy, fmt == TF_4_BIT ? 16 : 256, 1);
@@ -316,7 +314,7 @@ static TexSlot *get_region(int px, int py, int fmt, int u0, int v0, int w, int h
     // decodifica
     s_dbgMiss++; s_dbgTex += sw * sh; s_dbgPM[fmt & 3]++; s_dbgPT[fmt & 3] += sw * sh; if (step > 1) s_dbgTexStep += sw * sh;
     unsigned char *dst = s->data;
-    if (is_add)
+    if (is_rgba32)
     {
         uint32_t *d32 = (uint32_t *)dst;
         const int cx = (clut & 63) * 16, cy = clut >> 6;
@@ -333,7 +331,7 @@ static TexSlot *get_region(int px, int py, int fmt, int u0, int v0, int w, int h
                     unsigned int word = row[(px + (u >> 2)) & 1023];
                     int idx = (word >> ((u & 3) * 4)) & 15;
                     unsigned short psx_col = pal[(cx + idx) & 1023];
-                    d[x] = psx_to_rgba32(psx_col, is_quarter);
+                    d[x] = psx_to_rgba32(psx_col);
                 }
             }
             else if (fmt == TF_8_BIT)
@@ -344,7 +342,7 @@ static TexSlot *get_region(int px, int py, int fmt, int u0, int v0, int w, int h
                     unsigned int word = row[(px + (u >> 1)) & 1023];
                     int idx = (word >> ((u & 1) * 8)) & 255;
                     unsigned short psx_col = pal[(cx + idx) & 1023];
-                    d[x] = psx_to_rgba32(psx_col, is_quarter);
+                    d[x] = psx_to_rgba32(psx_col);
                 }
             }
             else
@@ -353,7 +351,7 @@ static TexSlot *get_region(int px, int py, int fmt, int u0, int v0, int w, int h
                 {
                     int u = u0 + x * step;
                     unsigned short psx_col = row[(px + u) & 1023];
-                    d[x] = psx_to_rgba32(psx_col, is_quarter);
+                    d[x] = psx_to_rgba32(psx_col);
                 }
             }
             for (int pb = sw; pb < wpad; pb++) d[pb] = 0;
@@ -458,9 +456,12 @@ static void set_mode(bool textured, int fmt, BlendMode blend)
     s_lastSetModeFmt = fmt;
     s_lastSetModeBlend = (int)blend;
 #endif
-    const bool isAdd = (blend == BM_ADD || blend == BM_ADD_QUATER_SOURCE);
-    const bool isQuarter = (blend == BM_ADD_QUATER_SOURCE);
-    if (isAdd != s_isAdditive || isQuarter != s_isQuarter)
+    int rgba_mode = 0;
+    if (blend == BM_ADD) rgba_mode = 1;
+    else if (blend == BM_ADD_QUATER_SOURCE) rgba_mode = 2;
+    else if (blend == BM_SUBTRACT) rgba_mode = 3;
+
+    if (rgba_mode != s_curRgbaMode)
     {
         s_lastUp.clut = -1;
         s_lastUp.palEnt = 0;
@@ -469,9 +470,9 @@ static void set_mode(bool textured, int fmt, BlendMode blend)
         banks_invalidate();
 #endif
 #endif
-        s_isAdditive = isAdd;
-        s_isQuarter = isQuarter;
+        s_curRgbaMode = rgba_mode;
     }
+    s_curBlend = blend;
     int key = textured ? (1 + fmt) * 8 + (int)blend : (int)blend;
     if (key == s_modeKey) return;
     s_modeKey = key;
@@ -492,37 +493,47 @@ static void set_mode(bool textured, int fmt, BlendMode blend)
     rdpq_mode_antialias(AA_NONE);
     rdpq_mode_dithering(DITHER_NONE_NONE);
     rdpq_mode_filter(FILTER_POINT);
+
+    const bool isRgba32 = (rgba_mode != 0);
+    const bool isSub = (blend == BM_SUBTRACT);
+
     int pa = 0;
-    switch (blend)
+    if (blend == BM_AVERAGE) pa = 128;
+
+    if (isRgba32)
     {
-        case BM_AVERAGE:           pa = 128; break;   // 0.5 B + 0.5 F
-        case BM_SUBTRACT:          pa = 110; break;   // B - F (aproximado: escurece)
-        case BM_ADD:               pa = 128; break;   // mistura comum, sem overflow
-        case BM_ADD_QUATER_SOURCE: pa = 64;  break;   // mistura comum, sem overflow
-        default: break;
-    }
-    if (textured)
-    {
-        if (isAdd)
+        if (textured)
         {
-            rdpq_mode_combiner(RDPQ_COMBINER1((TEX0, ZERO, SHADE, ZERO), (ZERO, ZERO, ZERO, TEX0)));
+            if (isSub)
+                rdpq_mode_combiner(RDPQ_COMBINER1((ZERO, ZERO, ZERO, ZERO), (TEX0, ZERO, SHADE, ZERO)));
+            else
+                rdpq_mode_combiner(RDPQ_COMBINER1((TEX0, ZERO, SHADE, ZERO), (TEX0, ZERO, SHADE, ZERO)));
             rdpq_mode_alphacompare(1);
             rdpq_mode_tlut(TLUT_NONE);
             rdpq_mode_blender(RDPQ_BLENDER((IN_RGB, IN_ALPHA, MEMORY_RGB, INV_MUX_ALPHA)));
         }
         else
         {
-            if (pa) rdpq_mode_combiner(RDPQ_COMBINER1((TEX0, ZERO, SHADE, ZERO), (TEX0, ZERO, PRIM, ZERO)));
-            else    rdpq_mode_combiner(RDPQ_COMBINER_TEX_SHADE);
+            if (isSub)
+                rdpq_mode_combiner(RDPQ_COMBINER1((ZERO, ZERO, ZERO, ZERO), (ZERO, ZERO, ZERO, SHADE)));
+            else
+                rdpq_mode_combiner(RDPQ_COMBINER1((ZERO, ZERO, ZERO, SHADE), (ZERO, ZERO, ZERO, SHADE)));
             rdpq_mode_alphacompare(1);
-            rdpq_mode_tlut(fmt == TF_16_BIT ? TLUT_NONE : TLUT_RGBA16);
-            if (pa)
-            {
-                rdpq_set_prim_color(RGBA32(255, 255, 255, pa));
-                rdpq_mode_blender(RDPQ_BLENDER((IN_RGB, IN_ALPHA, MEMORY_RGB, INV_MUX_ALPHA)));
-            }
-            else rdpq_mode_blender(0);
+            rdpq_mode_blender(RDPQ_BLENDER((IN_RGB, IN_ALPHA, MEMORY_RGB, INV_MUX_ALPHA)));
         }
+    }
+    else if (textured)
+    {
+        if (pa) rdpq_mode_combiner(RDPQ_COMBINER1((TEX0, ZERO, SHADE, ZERO), (TEX0, ZERO, PRIM, ZERO)));
+        else    rdpq_mode_combiner(RDPQ_COMBINER_TEX_SHADE);
+        rdpq_mode_alphacompare(1);
+        rdpq_mode_tlut(fmt == TF_16_BIT ? TLUT_NONE : TLUT_RGBA16);
+        if (pa)
+        {
+            rdpq_set_prim_color(RGBA32(255, 255, 255, pa));
+            rdpq_mode_blender(RDPQ_BLENDER((IN_RGB, IN_ALPHA, MEMORY_RGB, INV_MUX_ALPHA)));
+        }
+        else rdpq_mode_blender(0);
     }
     else
     {
@@ -705,7 +716,7 @@ static bool upload_region(int page, int clut, int u0, int v0, int w, int h, int 
     if (w <= 0 || h <= 0) return false;
     const int px = (page & 15) * 64, py = ((page >> 4) & 1) * 256;
 #ifdef D2_TEXWIN
-    if (!s_isAdditive && s_texFormat == TF_4_BIT && step == 1 && px >= 512 && w <= 64 && h <= 64)
+    if (!s_curRgbaMode && s_texFormat == TF_4_BIT && step == 1 && px >= 512 && w <= 64 && h <= 64)
     {
 #ifdef D2_DPROF
         const unsigned int h0 = s_cWinHit, tw0 = cnt0(); const bool rr = upload_win(px, py, clut, u0, v0, w, h);
@@ -723,13 +734,13 @@ static bool upload_region(int page, int clut, int u0, int v0, int w, int h, int 
     int sw, sh, wpad;
     bool useShadow = false;
     int ua = 0, e0 = 0, e1 = 0;
-    if (!s_isAdditive && s_texFormat == TF_4_BIT && step == 1 && px >= 512)
+    if (!s_curRgbaMode && s_texFormat == TF_4_BIT && step == 1 && px >= 512)
     {
         ua = u0 & ~15;
         e0 = (u0 - ua) & ~1; e1 = ((u0 - ua) + w + 1) & ~1;
         useShadow = ((((e1 - e0) >> 1) + 7) & ~7) * h <= 2048;
     }
-    TexSlot *slot = useShadow ? &s_shTag : get_region(px, py, s_texFormat, u0, v0, w, h, step, &sw, &sh, &wpad, clut, s_isAdditive, s_isQuarter);
+    TexSlot *slot = useShadow ? &s_shTag : get_region(px, py, s_texFormat, u0, v0, w, h, step, &sw, &sh, &wpad, clut, s_curRgbaMode);
     if (!slot) return false;
     unsigned int shK0 = 0, shK1 = 0, shSig = 0;
     if (useShadow)
@@ -747,7 +758,7 @@ static bool upload_region(int page, int clut, int u0, int v0, int w, int h, int 
 #endif
     }
 
-    if (!s_isAdditive)
+    if (!s_curRgbaMode)
     {
         const bool paletted = s_texFormat != TF_16_BIT;
         const int pkey = clut;
@@ -832,7 +843,7 @@ static bool upload_region(int page, int clut, int u0, int v0, int w, int h, int 
     }
     else if (s_lastUp.slot != slot || s_lastUp.gen != slot->gen)
     {
-        if (s_isAdditive)
+        if (s_curRgbaMode)
         {
             surface_t surf = surface_make(slot->data, FMT_RGBA32, wpad, sh, wpad * 4);
             rdpq_texparms_t parms = {};
@@ -972,7 +983,11 @@ static inline void emit_tri(bool tex, const DV &a, const DV &b, const DV &c, flo
     {
         const DV *v = d[i];
         int16_t x = (int16_t)fl4(v->x * sx), y = (int16_t)fl4(v->y * sy);
-        uint32_t r = v->r * 255.0f, g = v->g * 255.0f, bl = v->b * 255.0f, al = v->a * 255.0f;
+        uint32_t r = (uint32_t)(v->r * 255.0f + 0.5f);
+        uint32_t g = (uint32_t)(v->g * 255.0f + 0.5f);
+        uint32_t bl = (uint32_t)(v->b * 255.0f + 0.5f);
+        uint32_t al = (uint32_t)(v->a * 255.0f + 0.5f);
+        if (r > 255) r = 255; if (g > 255) g = 255; if (bl > 255) bl = 255; if (al > 255) al = 255;
         uint32_t rgba = (r << 24) | (g << 16) | (bl << 8) | al;
         int16_t s = 0, t = 0;
         if (tex) { s = (v->u - ou) * s32; t = (v->v - ov) * s32; }
@@ -1187,7 +1202,7 @@ static inline void begin_batch(bool tex, BlendMode bm)
 {
     set_mode(tex, (int)s_texFormat, bm);
     s_ctxTex = tex;
-    if (tex && (bm == BM_ADD || bm == BM_ADD_QUATER_SOURCE))
+    if (tex && (bm == BM_ADD || bm == BM_ADD_QUATER_SOURCE || bm == BM_SUBTRACT))
     {
         s_ctxTileW = 32; s_ctxTileH = 32;
     }
@@ -1285,7 +1300,7 @@ static void tri_core(const PV *A, const PV *B, const PV *C, int page, int clut)
             pin[i].r = ((rgba[i] >> 24) & 255) / 255.0f;
             pin[i].g = ((rgba[i] >> 16) & 255) / 255.0f;
             pin[i].b = ((rgba[i] >> 8) & 255) / 255.0f;
-            pin[i].a = 1.0f;
+            pin[i].a = (rgba[i] & 255) / 255.0f;
         }
         int np = 3;
         np = clip_poly_screen(pin, np, ptmp1, 0, -64.0f, true);
@@ -1330,7 +1345,8 @@ static void tri_core(const PV *A, const PV *B, const PV *C, int page, int clut)
                 if (sub[k].Y4 < -256) sub[k].Y4 = -256; else if (sub[k].Y4 > 1216) sub[k].Y4 = 1216;
                 sub[k].rgba = ((uint32_t)(d[k]->r * 255.0f) << 24) |
                               ((uint32_t)(d[k]->g * 255.0f) << 16) |
-                              ((uint32_t)(d[k]->b * 255.0f) << 8)  | 255;
+                              ((uint32_t)(d[k]->b * 255.0f) << 8)  |
+                              ((uint32_t)(d[k]->a * 255.0f) & 255);
                 sub[k].s32 = (int)(d[k]->u * 32.0f + 0.5f);
                 sub[k].t32 = (int)(d[k]->v * 32.0f + 0.5f);
             }
@@ -1443,7 +1459,7 @@ static void tri_core(const PV *A, const PV *B, const PV *C, int page, int clut)
     for (int i = 0; i < 3; i++)
     {
         p[i].x = X4[i] * 0.25f; p[i].y = Y4[i] * 0.25f; p[i].u = v[i]->s32 * (1.0f / 32); p[i].v = v[i]->t32 * (1.0f / 32);
-        p[i].r = ((rgba[i] >> 24) + 0.5f) / 255.0f; p[i].g = (((rgba[i] >> 16) & 255) + 0.5f) / 255.0f; p[i].b = (((rgba[i] >> 8) & 255) + 0.5f) / 255.0f; p[i].a = 1.0f;
+        p[i].r = ((rgba[i] >> 24) + 0.5f) / 255.0f; p[i].g = (((rgba[i] >> 16) & 255) + 0.5f) / 255.0f; p[i].b = (((rgba[i] >> 8) & 255) + 0.5f) / 255.0f; p[i].a = ((rgba[i] & 255) + 0.5f) / 255.0f;
     }
     const int bw = tileW * step, bh = tileH * step;
     const int tu0 = (umin / bw) * bw, tv0 = (vmin / bh) * bh;
@@ -1520,6 +1536,28 @@ static inline uint32_t shade_rgba(unsigned r, unsigned g, unsigned b)
            ((uint32_t)s_shadeLut[b & 255] << 8)  | 255;
 }
 
+static inline uint32_t calc_vertex_color(unsigned r, unsigned g, unsigned b, BlendMode blend)
+{
+    const uint32_t sr = s_shadeLut[r & 255];
+    const uint32_t sg = s_shadeLut[g & 255];
+    const uint32_t sb = s_shadeLut[b & 255];
+
+    if (blend == BM_ADD || blend == BM_ADD_QUATER_SOURCE || blend == BM_SUBTRACT)
+    {
+        uint32_t a_s = sr > sg ? (sr > sb ? sr : sb) : (sg > sb ? sg : sb);
+        if (a_s == 0) return 0;
+        uint32_t r_norm = (sr * 255) / a_s;
+        uint32_t g_norm = (sg * 255) / a_s;
+        uint32_t b_norm = (sb * 255) / a_s;
+        if (r_norm > 255) r_norm = 255;
+        if (g_norm > 255) g_norm = 255;
+        if (b_norm > 255) b_norm = 255;
+        uint32_t alpha = (blend == BM_ADD_QUATER_SOURCE) ? (a_s >> 2) : a_s;
+        return (r_norm << 24) | (g_norm << 16) | (b_norm << 8) | alpha;
+    }
+    return (sr << 24) | (sg << 16) | (sb << 8) | 255;
+}
+
 void GR_DrawTriangles(int start, int count)
 {
     if (!s_scene || s_offscreen || !s_verts || count <= 0) return;
@@ -1535,7 +1573,7 @@ void GR_DrawTriangles(int start, int count)
         {
             pv[i].X4 = ((int)g[i].x * sx16) >> 14;
             pv[i].Y4 = ((int)g[i].y * sy16) >> 14;
-            pv[i].rgba = shade_rgba(g[i].r, g[i].g, g[i].b);
+            pv[i].rgba = calc_vertex_color(g[i].r, g[i].g, g[i].b, s_blend);
             pv[i].s32 = g[i].u << 5; pv[i].t32 = g[i].v << 5;
         }
         tri_core(&pv[0], &pv[1], &pv[2], g[0].page, g[0].clut);
@@ -1563,8 +1601,8 @@ static inline int lerp16(int a, int b, int f) { return a + (int)(((long long)(b 
 static inline uint32_t lerp_rgba(uint32_t a, uint32_t b, int f)
 {
     if (a == b) return a;
-    uint32_t r = 255;
-    for (int sh = 8; sh < 32; sh += 8) r |= (uint32_t)lerp16((a >> sh) & 255, (b >> sh) & 255, f) << sh;
+    uint32_t r = 0;
+    for (int sh = 0; sh < 32; sh += 8) r |= (uint32_t)lerp16((a >> sh) & 255, (b >> sh) & 255, f) << sh;
     return r;
 }
 static inline PV bilerp(const PV *q, int fs, int ft)
@@ -1819,7 +1857,7 @@ int d2_native_rect(P_TAG *tag)
     int y[4] = { base->y0, base->y0, base->y0 + h, base->y0 + h };
     int u0 = 0, v0 = 0, clut = 0;
     if (tex) { SPRT *s = (SPRT *)tag; u0 = s->u0; v0 = s->v0; clut = s->clut; }
-    const uint32_t col = (code & 1) ? shade_rgba(128, 128, 128) : shade_rgba(base->r0, base->g0, base->b0);
+    const uint32_t col = (code & 1) ? calc_vertex_color(128, 128, 128, bm) : calc_vertex_color(base->r0, base->g0, base->b0, bm);
     PV q[4];
     for (int i = 0; i < 4; i++)
     {
@@ -1859,10 +1897,10 @@ int d2_native_line(P_TAG *tag)
     const RECT16 &c=activeDrawEnv.clip;
     if(c.x!=s_clipKey[0]||c.y!=s_clipKey[1]||c.w!=s_clipKey[2]||c.h!=s_clipKey[3]||(activeDispEnv.disp.x|(activeDispEnv.disp.w<<16))!=s_clipKey[4]||(activeDispEnv.disp.y|(activeDispEnv.disp.h<<16))!=s_clipKey[5]) GR_SetupClipMode(&c,1);
     const BlendMode bm=(tag->code&2)?(BlendMode)(((activeDrawEnv.tpage>>5)&3)+1):BM_NONE;
-    if(type==0x50){ LINE_G2 *p=(LINE_G2*)tag; d2_line_segment(p->x0,p->y0,p->x1,p->y1,shade_rgba(p->r0,p->g0,p->b0),shade_rgba(p->r1,p->g1,p->b1),bm); }
-    else if(sub==0){ LINE_F2 *p=(LINE_F2*)tag; uint32_t c=shade_rgba(p->r0,p->g0,p->b0); d2_line_segment(p->x0,p->y0,p->x1,p->y1,c,c,bm); }
-    else if(sub==8){ LINE_F3 *p=(LINE_F3*)tag; uint32_t c=shade_rgba(p->r0,p->g0,p->b0); d2_line_segment(p->x0,p->y0,p->x1,p->y1,c,c,bm); d2_line_segment(p->x1,p->y1,p->x2,p->y2,c,c,bm); }
-    else { LINE_F4 *p=(LINE_F4*)tag; uint32_t c=shade_rgba(p->r0,p->g0,p->b0); d2_line_segment(p->x0,p->y0,p->x1,p->y1,c,c,bm); d2_line_segment(p->x1,p->y1,p->x2,p->y2,c,c,bm); d2_line_segment(p->x2,p->y2,p->x3,p->y3,c,c,bm); }
+    if(type==0x50){ LINE_G2 *p=(LINE_G2*)tag; d2_line_segment(p->x0,p->y0,p->x1,p->y1,calc_vertex_color(p->r0,p->g0,p->b0,bm),calc_vertex_color(p->r1,p->g1,p->b1,bm),bm); }
+    else if(sub==0){ LINE_F2 *p=(LINE_F2*)tag; uint32_t c=calc_vertex_color(p->r0,p->g0,p->b0,bm); d2_line_segment(p->x0,p->y0,p->x1,p->y1,c,c,bm); }
+    else if(sub==8){ LINE_F3 *p=(LINE_F3*)tag; uint32_t c=calc_vertex_color(p->r0,p->g0,p->b0,bm); d2_line_segment(p->x0,p->y0,p->x1,p->y1,c,c,bm); d2_line_segment(p->x1,p->y1,p->x2,p->y2,c,c,bm); }
+    else { LINE_F4 *p=(LINE_F4*)tag; uint32_t c=calc_vertex_color(p->r0,p->g0,p->b0,bm); d2_line_segment(p->x0,p->y0,p->x1,p->y1,c,c,bm); d2_line_segment(p->x1,p->y1,p->x2,p->y2,c,c,bm); d2_line_segment(p->x2,p->y2,p->x3,p->y3,c,c,bm); }
     return len;
 }
 int d2_native_drawenv(P_TAG *tag)
@@ -2079,6 +2117,10 @@ int d2_direct_poly_i(P_TAG *tag)
     const bool texOk = tex && s_texFormat != TF_32_BIT_RGBA;
     begin_batch(texOk, bm);
     s_dCnt++;
+#ifdef D2_TRANSDBG
+    d2_transdbg_inspect(tag, code, semi ? 1 : 0, (int)bm, tex ? tpage : activeDrawEnv.tpage, clut,
+                        xs, ys, tex ? us : NULL, tex ? vs : NULL, nv, cr, cg, cb);
+#endif
 
     const int ofx = activeDrawEnv.ofs[0] - activeDispEnv.disp.x, ofy = activeDrawEnv.ofs[1] - activeDispEnv.disp.y;
 #if D2_RSP_GPU
@@ -2207,7 +2249,7 @@ int d2_direct_poly_i(P_TAG *tag)
         {
             pv[i].X4 = (xs[i] + ofx) << 2;
             pv[i].Y4 = (ys[i] + ofy) << 2;
-            pv[i].rgba = shadeOn ? shade_rgba(cr[i], cg[i], cb[i]) : shade_rgba(128, 128, 128);
+            pv[i].rgba = shadeOn ? calc_vertex_color(cr[i], cg[i], cb[i], bm) : calc_vertex_color(128, 128, 128, bm);
             pv[i].s32 = us[i] << 5; pv[i].t32 = vs[i] << 5;
         }
     }
@@ -2217,7 +2259,7 @@ int d2_direct_poly_i(P_TAG *tag)
         {
             pv[i].X4 = ((int)(xs[i] + ofx) * s_ctxSx16) >> 14;
             pv[i].Y4 = ((int)(ys[i] + ofy) * s_ctxSy16) >> 14;
-            pv[i].rgba = shadeOn ? shade_rgba(cr[i], cg[i], cb[i]) : shade_rgba(128, 128, 128);
+            pv[i].rgba = shadeOn ? calc_vertex_color(cr[i], cg[i], cb[i], bm) : calc_vertex_color(128, 128, 128, bm);
             pv[i].s32 = us[i] << 5; pv[i].t32 = vs[i] << 5;
         }
     }

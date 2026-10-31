@@ -40,6 +40,11 @@ ifeq ($(D2_ORIGIN),1)
 D2_OPT += -DD2_ORIGIN
 endif
 
+D2_TRANSDBG ?= 0
+ifeq ($(D2_TRANSDBG),1)
+D2_OPT += -DD2_TRANSDBG -DD2_ORIGIN
+endif
+
 D2_BENCH ?= 0
 ifeq ($(D2_BENCH),1)
 D2_OPT += -DD2_BENCH

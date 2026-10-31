@@ -5,7 +5,7 @@
 
 #ifdef D2_ORIGIN
 
-#define ORIGIN_TABLE_SIZE 8192
+#define ORIGIN_TABLE_SIZE 2048
 #define ORIGIN_TABLE_MASK (ORIGIN_TABLE_SIZE - 1)
 
 static D2OriginRecord s_originTable[ORIGIN_TABLE_SIZE];
@@ -96,6 +96,7 @@ const D2OriginRecord *d2_origin_lookup(const void *prim)
 
 void d2_origin_check_large(const void *prim, int code, int tpage, int clut, const short xs[4], const short ys[4], const unsigned char us[4], const unsigned char vs[4], int nv)
 {
+    return; // silenciado para não desacelerar o Ares durante a investigação de transparência
     short minx = xs[0], maxx = xs[0], miny = ys[0], maxy = ys[0];
     for (int i = 1; i < nv; i++) {
         if (xs[i] < minx) minx = xs[i]; if (xs[i] > maxx) maxx = xs[i];
@@ -148,6 +149,239 @@ void d2_origin_log_hud(const void *prim, int code, int semi, unsigned int col, c
         xs[0], ys[0], xs[1], ys[1], xs[2], ys[2], nv > 3 ? xs[3] : 0, nv > 3 ? ys[3] : 0,
         textured, fmt, blend, rec->func_name);
 }
+
+#ifdef D2_TRANSDBG
+
+extern unsigned short vram[];
+
+enum TransEffectCat {
+    CAT_TAILLIGHT = 0,    // ShowCarlight / ShowLight / ShowFlare / BrakeLight / NightLights
+    CAT_POOL_BACK = 1,    // PlacePoolForCar sub_level 0 (brilho lanterna traseira no chão)
+    CAT_HEADLIGHT = 2,    // sQuad / PlacePoolForCar sub_level 3 (farol / cone dianteiro)
+    CAT_SHADOW = 3,       // PlaceShadowForCar / drawMesh
+    CAT_SMOKE = 4,        // DisplaySmoke / debris.c
+    CAT_SPARK = 5,        // DisplaySpark / debris.c
+    CAT_TRAFFIC = 6,      // ShowGroundLight / AddTrafficLight
+    CAT_HUD = 7,          // DrawPercentageBar / overlay.c
+    CAT_COUNT = 8
+};
+
+static int s_transdbgCounts[CAT_COUNT] = {0};
+
+void d2_transdbg_inspect(const void *prim, int code, int semi, int bm, int tpage, int clut,
+                         const short xs[4], const short ys[4],
+                         const unsigned char us[4], const unsigned char vs[4], int nv,
+                         const unsigned char cr[4], const unsigned char cg[4], const unsigned char cb[4])
+{
+    if (d2_rdp_frames < 30) return; // ignora primeiros quadros de boot/logo
+
+    const D2OriginRecord *rec = d2_origin_lookup(prim);
+    const char *func = rec ? rec->func_name : s_curScope;
+    if (!func) func = "unknown";
+
+    int cat = -1;
+    const char *effect_name = NULL;
+
+    if (strstr(func, "overlay") || strstr(func, "HUD") || strstr(func, "Bar")) {
+        cat = CAT_HUD;
+        effect_name = "HUD Percentage Bar";
+    } else if (strstr(func, "TrafficLight") || strstr(func, "GroundLight")) {
+        cat = CAT_TRAFFIC;
+        effect_name = "Traffic Light Glow";
+    } else if (strstr(func, "PoolBack") ||
+               (bm == 2 && (code == 0x2C || code == 0x2E) && us != NULL && (strstr(func, "Pool") || strstr(func, "debris")))) {
+        cat = CAT_POOL_BACK;
+        effect_name = "Taillight Glow On Road (PoolBack)";
+    } else if (strstr(func, "PoolFront") || strstr(func, "HeadlightCone") || strstr(func, "sQuad") ||
+               (bm == 2 && (code == 0x38 || code == 0x3A) && us == NULL && !strstr(func, "overlay") && !strstr(func, "Bar"))) {
+        cat = CAT_HEADLIGHT;
+        effect_name = "Headlight Cone / Pool (sQuad)";
+    } else if (strstr(func, "Carlight") || strstr(func, "BrakeLight") || strstr(func, "NightLights") ||
+               strstr(func, "ShowLight") || strstr(func, "ShowFlare")) {
+        cat = CAT_TAILLIGHT;
+        effect_name = "Taillight / Brake / Flare";
+    } else if (strstr(func, "shadow") || (bm == 3 && us != NULL && !strstr(func, "Tile") && !strstr(func, "Building"))) {
+        cat = CAT_SHADOW;
+        effect_name = "Car Shadow";
+    } else if (strstr(func, "Smoke")) {
+        cat = CAT_SMOKE;
+        effect_name = "Collision Smoke";
+    } else if (strstr(func, "Spark") || ((code == 0x30 || code == 0x32) && strstr(func, "debris"))) {
+        cat = CAT_SPARK;
+        effect_name = "Collision Spark";
+    }
+
+    if (cat < 0) return;
+    int in_game = (d2_rdp_frames >= 450) ? 1 : 0;
+    static int s_counts[2][CAT_COUNT] = {{0}};
+    if (s_counts[in_game][cat] >= 3) return;
+    s_counts[in_game][cat]++;
+
+    const char *code_str = "UNKNOWN";
+    if (code == 0x2C || code == 0x2E) code_str = (code == 0x2E) ? "POLY_FT4 (semi)" : "POLY_FT4";
+    else if (code == 0x24 || code == 0x26) code_str = (code == 0x26) ? "POLY_FT3 (semi)" : "POLY_FT3";
+    else if (code == 0x38 || code == 0x3A) code_str = (code == 0x3A) ? "POLY_G4 (semi)" : "POLY_G4";
+    else if (code == 0x30 || code == 0x32) code_str = (code == 0x32) ? "POLY_G3 (semi)" : "POLY_G3";
+    else if (code == 0x20 || code == 0x22) code_str = (code == 0x22) ? "POLY_F3 (semi)" : "POLY_F3";
+    else if (code == 0x28 || code == 0x2A) code_str = (code == 0x2A) ? "POLY_F4 (semi)" : "POLY_F4";
+
+    int ps1_mode = (tpage >> 5) & 3;
+    const char *mode_str = (ps1_mode == 0) ? "0: B/2 + F/2 (50% blend)" :
+                           (ps1_mode == 1) ? "1: B + F (additive)" :
+                           (ps1_mode == 2) ? "2: B - F (subtractive)" : "3: B + F/4 (25% additive)";
+
+    debugf("\n[TRANSDBG] ======================================================================\n");
+    debugf("[TRANSDBG-EFFECT] #%d/3 cat=%d [%s] func='%s' stage=%s f=%d prim=%p\n",
+           s_counts[in_game][cat], cat, effect_name, func, in_game ? "INGAME" : "MENU", d2_rdp_frames, prim);
+    debugf("  prim: code=0x%02X (%s) tex=%d semi=%d tpage=0x%04X clut=0x%04X ps1_mode=[%s]\n",
+           code, code_str, us != NULL ? 1 : 0, semi, (unsigned short)tpage, (unsigned short)clut, mode_str);
+
+    if (nv == 4) {
+        debugf("  coords: xy=[(%d,%d),(%d,%d),(%d,%d),(%d,%d)]\n", xs[0], ys[0], xs[1], ys[1], xs[2], ys[2], xs[3], ys[3]);
+        debugf("  colors: rgb=[(%d,%d,%d),(%d,%d,%d),(%d,%d,%d),(%d,%d,%d)]\n", cr[0], cg[0], cb[0], cr[1], cg[1], cb[1], cr[2], cg[2], cb[2], cr[3], cg[3], cb[3]);
+    } else {
+        debugf("  coords: xy=[(%d,%d),(%d,%d),(%d,%d)]\n", xs[0], ys[0], xs[1], ys[1], xs[2], ys[2]);
+        debugf("  colors: rgb=[(%d,%d,%d),(%d,%d,%d),(%d,%d,%d)]\n", cr[0], cg[0], cb[0], cr[1], cg[1], cb[1], cr[2], cg[2], cb[2]);
+    }
+
+    int fmt = (tpage >> 7) & 3;
+    const char *fmt_str = (fmt == 0) ? "TF_4_BIT (CI4)" : (fmt == 1) ? "TF_8_BIT (CI8)" : "TF_16_BIT (RGBA16/Direct)";
+    int px = (tpage & 15) * 64;
+    int py = ((tpage >> 4) & 1) * 256;
+    int cx = (clut & 63) * 16;
+    int cy = clut >> 6;
+
+    int count_total = 0, count_stp1 = 0, count_stp0 = 0, count_zero = 0;
+
+    if (us != NULL && vs != NULL) {
+        int umin = us[0], umax = us[0], vmin = vs[0], vmax = vs[0];
+        for (int i = 1; i < nv; i++) {
+            if (us[i] < umin) umin = us[i]; if (us[i] > umax) umax = us[i];
+            if (vs[i] < vmin) vmin = vs[i]; if (vs[i] > vmax) vmax = vs[i];
+        }
+        int bw = umax - umin + 1, bh = vmax - vmin + 1;
+        debugf("  tex: fmt=%d (%s) tpage_xy=(%d,%d) clut_xy=(%d,%d) uv_bbox=[u:%d..%d, v:%d..%d] (dim: %dx%d)\n",
+               fmt, fmt_str, px, py, cx, cy, umin, umax, vmin, vmax, bw, bh);
+
+        struct { int u, v, idx; unsigned short raw; int stp, r, g, b; } samples[8];
+        int num_samples = 0;
+
+        for (int v = vmin; v <= vmax; v++) {
+            const unsigned short *row = vram + (((py + v) & 511) << 10);
+            for (int u = umin; u <= umax; u++) {
+                count_total++;
+                unsigned short raw = 0;
+                int idx = -1;
+                if (fmt == 0) {
+                    unsigned int word = row[(px + (u >> 2)) & 1023];
+                    idx = (word >> ((u & 3) * 4)) & 15;
+                    raw = vram[((cy & 511) << 10) + ((cx + idx) & 1023)];
+                } else if (fmt == 1) {
+                    unsigned int word = row[(px + (u >> 1)) & 1023];
+                    idx = (word >> ((u & 1) * 8)) & 255;
+                    raw = vram[((cy & 511) << 10) + ((cx + idx) & 1023)];
+                } else {
+                    raw = row[(px + u) & 1023];
+                }
+
+                if (raw == 0x0000) {
+                    count_zero++;
+                } else if (raw & 0x8000) {
+                    count_stp1++;
+                } else {
+                    count_stp0++;
+                }
+
+                if (raw != 0x0000 && num_samples < 8) {
+                    int r5 = raw & 31, g5 = (raw >> 5) & 31, b5 = (raw >> 10) & 31;
+                    samples[num_samples].u = u;
+                    samples[num_samples].v = v;
+                    samples[num_samples].idx = idx;
+                    samples[num_samples].raw = raw;
+                    samples[num_samples].stp = (raw >> 15) & 1;
+                    samples[num_samples].r = (r5 << 3) | (r5 >> 2);
+                    samples[num_samples].g = (g5 << 3) | (g5 >> 2);
+                    samples[num_samples].b = (b5 << 3) | (b5 >> 2);
+                    num_samples++;
+                }
+            }
+        }
+
+        debugf("  stp_counts: total=%d stp1_trans=%d stp0_opaque=%d zero_trans=%d\n",
+               count_total, count_stp1, count_stp0, count_zero);
+
+        if (fmt == 0) {
+            debugf("  clut_palette (16 entries at cx=%d, cy=%d):\n", cx, cy);
+            for (int i = 0; i < 16; i++) {
+                unsigned short pal_v = vram[((cy & 511) << 10) + ((cx + i) & 1023)];
+                int stp = (pal_v >> 15) & 1;
+                int r5 = pal_v & 31, g5 = (pal_v >> 5) & 31, b5 = (pal_v >> 10) & 31;
+                int r8 = (r5 << 3) | (r5 >> 2), g8 = (g5 << 3) | (g5 >> 2), b8 = (b5 << 3) | (b5 >> 2);
+                debugf("    [%02d] raw=0x%04X (stp=%d, r=%2d, g=%2d, b=%2d) -> rgb888=(%3d,%3d,%3d)\n",
+                       i, pal_v, stp, r5, g5, b5, r8, g8, b8);
+            }
+        }
+
+        debugf("  sample_texels (count=%d):\n", num_samples);
+        for (int i = 0; i < num_samples; i++) {
+            debugf("    [#%d] (u=%3d, v=%3d) idx=%2d raw=0x%04X stp=%d rgb888=(%3d,%3d,%3d)\n",
+                   i, samples[i].u, samples[i].v, samples[i].idx, samples[i].raw, samples[i].stp,
+                   samples[i].r, samples[i].g, samples[i].b);
+        }
+
+        if (semi) {
+            if (count_stp0 > 0) {
+                debugf("  STP_RULE_CHECK: VIOLACAO DA REGRA DO PS1! %d texels com STP=0 sao misturados com alpha no N64; no PS1 deveriam ser 100%% OPACOS!\n", count_stp0);
+            } else {
+                debugf("  STP_RULE_CHECK: Todos os texels nao-zero tem STP=1 (respeitado).\n");
+            }
+        }
+    }
+
+    const char *bm_names[] = { "BM_NONE", "BM_AVERAGE", "BM_ADD", "BM_SUBTRACT", "BM_ADD_QUATER_SOURCE" };
+    const char *bm_str = (bm >= 0 && bm <= 4) ? bm_names[bm] : "UNKNOWN";
+    debugf("  n64_backend:\n");
+    debugf("    blend_mode=%d (%s)\n", bm, bm_str);
+
+    if (us != NULL) {
+        if (bm == 2 || bm == 4) { // BM_ADD or BM_ADD_QUATER_SOURCE
+            debugf("    path=RGBA32 aditivo proporcional ao brilho (commit fa14399), sem TLUT na TMEM\n");
+            debugf("    combiner=RDPQ_COMBINER1((TEX0, ZERO, SHADE, ZERO), (ZERO, ZERO, ZERO, TEX0))\n");
+            debugf("    blender=RDPQ_BLENDER((IN_RGB, IN_ALPHA, MEMORY_RGB, INV_MUX_ALPHA))\n");
+            debugf("    alpha_mode=texel_alpha (A = max(R,G,B)%s)\n", (bm == 4) ? " / 4" : "");
+            debugf("    alphacompare=1 (on)\n");
+        } else {
+            int pa = (bm == 1) ? 128 : ((bm == 3) ? 110 : 0);
+            debugf("    path=%s paletizado (TLUT_RGBA16 na TMEM)\n", fmt == 0 ? "CI4" : (fmt == 1 ? "CI8" : "RGBA16"));
+            if (pa) {
+                debugf("    combiner=RDPQ_COMBINER1((TEX0, ZERO, SHADE, ZERO), (TEX0, ZERO, PRIM, ZERO))\n");
+                debugf("    blender=RDPQ_BLENDER((IN_RGB, IN_ALPHA, MEMORY_RGB, INV_MUX_ALPHA))\n");
+                debugf("    alpha_mode=texel_alpha * prim_alpha (TEX0.A * %d)\n", pa);
+            } else {
+                debugf("    combiner=RDPQ_COMBINER_TEX_SHADE\n");
+                debugf("    blender=0 (opaco)\n");
+                debugf("    alpha_mode=nenhum\n");
+            }
+            debugf("    alphacompare=1 (on)\n");
+        }
+    } else {
+        int pa = (bm == 1 || bm == 2) ? 128 : ((bm == 3) ? 110 : ((bm == 4) ? 64 : 0));
+        debugf("    path=Poligono sem textura (Gouraud/Flat)\n");
+        if (pa) {
+            debugf("    combiner=RDPQ_COMBINER1((ZERO, ZERO, ZERO, SHADE), (ZERO, ZERO, ZERO, PRIM))\n");
+            debugf("    blender=RDPQ_BLENDER((IN_RGB, IN_ALPHA, MEMORY_RGB, INV_MUX_ALPHA))\n");
+            debugf("    alpha_mode=prim_alpha (pa=%d)\n", pa);
+        } else {
+            debugf("    combiner=RDPQ_COMBINER_SHADE\n");
+            debugf("    blender=0 (opaco)\n");
+            debugf("    alpha_mode=nenhum\n");
+        }
+        debugf("    alphacompare=0 (off)\n");
+    }
+    debugf("[TRANSDBG] ======================================================================\n\n");
+}
+
+#endif // D2_TRANSDBG
 
 #endif // D2_ORIGIN
 

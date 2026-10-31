@@ -17,7 +17,7 @@ err_path = os.path.join(root, "test_bench_stderr.log")
 with open(out_path, "w", encoding="utf-8") as out, open(err_path, "w", encoding="utf-8") as err:
     proc = subprocess.Popen([ares_exe, rom], stdout=out, stderr=err)
     try:
-        time.sleep(170)
+        time.sleep(100)
     finally:
         proc.kill()
 print("Ares finished. Log written to", out_path)

@@ -28,6 +28,12 @@ const struct D2OriginRecord *d2_origin_lookup(const void *prim);
 
 void d2_origin_check_large(const void *prim, int code, int tpage, int clut, const short xs[4], const short ys[4], const unsigned char us[4], const unsigned char vs[4], int nv);
 void d2_origin_log_hud(const void *prim, int code, int semi, unsigned int col, const short xs[4], const short ys[4], int nv, int textured, int fmt, int blend);
+#ifdef D2_TRANSDBG
+void d2_transdbg_inspect(const void *prim, int code, int semi, int bm, int tpage, int clut,
+                         const short xs[4], const short ys[4],
+                         const unsigned char us[4], const unsigned char vs[4], int nv,
+                         const unsigned char cr[4], const unsigned char cg[4], const unsigned char cb[4]);
+#endif
 
 #define D2_ORIGIN_SET_CELL(m, x, y, z) d2_origin_set_cell(m, x, y, z)
 #define D2_ORIGIN_SET_SCOPE(f)         d2_origin_set_scope(f)

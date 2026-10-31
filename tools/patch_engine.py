@@ -705,6 +705,50 @@ P('Game/C/debris.c',
   "void HandleDebris(void)\n{",
   "void HandleDebris(void)\n{\n\tD2_ORIGIN_SET_SCOPE(\"debris\");")
 
+P('Game/C/cosmetic.c',
+  "void AddBrakeLight(CAR_DATA *cp)\n{",
+  "void AddBrakeLight(CAR_DATA *cp)\n{\n\tD2_ORIGIN_SET_SCOPE(\"lights/BrakeLight\");")
+
+P('Game/C/cosmetic.c',
+  "void AddNightLights(CAR_DATA *cp)\n{",
+  "void AddNightLights(CAR_DATA *cp)\n{\n\tD2_ORIGIN_SET_SCOPE(\"lights/NightLights\");")
+
+P('Game/C/debris.c',
+  "void PlacePoolForCar(CAR_DATA *cp, CVECTOR *col, int front, int in_car)\n{",
+  "void PlacePoolForCar(CAR_DATA *cp, CVECTOR *col, int front, int in_car)\n{\n\tD2_ORIGIN_SET_SCOPE(front ? \"lights/PoolFront\" : \"lights/PoolBack\");")
+
+P('Game/C/debris.c',
+  "void ShowCarlight(SVECTOR *v1, CAR_DATA *cp, CVECTOR *col, short size, short flare_size, TEXTURE_DETAILS *texture,int flag)\n{",
+  "void ShowCarlight(SVECTOR *v1, CAR_DATA *cp, CVECTOR *col, short size, short flare_size, TEXTURE_DETAILS *texture,int flag)\n{\n\tD2_ORIGIN_SET_SCOPE(\"lights/Carlight\");")
+
+P('Game/C/debris.c',
+  "void ShowLight(VECTOR *v1, CVECTOR *col, short size, TEXTURE_DETAILS *texture)\n{",
+  "void ShowLight(VECTOR *v1, CVECTOR *col, short size, TEXTURE_DETAILS *texture)\n{\n\tD2_ORIGIN_SET_SCOPE(\"lights/ShowLight\");")
+
+P('Game/C/debris.c',
+  "void ShowFlare(VECTOR* v1, CVECTOR* col, short size, int rotation)\n{",
+  "void ShowFlare(VECTOR* v1, CVECTOR* col, short size, int rotation)\n{\n\tD2_ORIGIN_SET_SCOPE(\"lights/ShowFlare\");")
+
+P('Game/C/debris.c',
+  "void ShowGroundLight(VECTOR *v1, CVECTOR *col, short size)\n{",
+  "void ShowGroundLight(VECTOR *v1, CVECTOR *col, short size)\n{\n\tD2_ORIGIN_SET_SCOPE(\"lights/GroundLight\");")
+
+P('Game/C/debris.c',
+  "void AddTrafficLight(CELL_OBJECT *cop, int x, int y, int z, int flag, int yang)\n{",
+  "void AddTrafficLight(CELL_OBJECT *cop, int x, int y, int z, int flag, int yang)\n{\n\tD2_ORIGIN_SET_SCOPE(\"lights/TrafficLight\");")
+
+P('Game/C/debris.c',
+  "void DisplaySmoke(SMOKE* smoke)\n{",
+  "void DisplaySmoke(SMOKE* smoke)\n{\n\tD2_ORIGIN_SET_SCOPE(\"debris/Smoke\");")
+
+P('Game/C/debris.c',
+  "void DisplaySpark(SMOKE *spark)\n{",
+  "void DisplaySpark(SMOKE *spark)\n{\n\tD2_ORIGIN_SET_SCOPE(\"debris/Spark\");")
+
+P('Game/C/shadow.c',
+  "void sQuad(SVECTOR *v0, SVECTOR *v1, SVECTOR *v2, SVECTOR *v3, CVECTOR* light_col, int LightSortCorrect)\n{",
+  "void sQuad(SVECTOR *v0, SVECTOR *v1, SVECTOR *v2, SVECTOR *v3, CVECTOR* light_col, int LightSortCorrect)\n{\n\tD2_ORIGIN_SET_SCOPE(\"lights/HeadlightCone\");")
+
 P('Game/C/sky.c',
   "void DrawSkyDome(void)\n{",
   "void DrawSkyDome(void)\n{\n\tD2_ORIGIN_SET_SCOPE(\"sky\");")
@@ -712,6 +756,14 @@ P('Game/C/sky.c',
 P('Game/C/pres.c',
   "int PrintStringHires(char* string, int x, int y)\n{",
   "int PrintStringHires(char* string, int x, int y)\n{\n\tD2_ORIGIN_SET_SCOPE(\"text/pres\");")
+
+P('Game/Frontend/FEmain.c',
+  "wantedTimeOfDay = TIME_DAY;",
+  "#ifdef D2_TRANSDBG\n\t\twantedTimeOfDay = TIME_NIGHT;\n#else\n\t\twantedTimeOfDay = TIME_DAY;\n#endif")
+
+P('Game/C/mission.c',
+  "\tif(wantedTimeOfDay > -1)\n\t\tgTimeOfDay = wantedTimeOfDay;",
+  "#ifdef D2_TRANSDBG\n\tgTimeOfDay = TIME_NIGHT;\n#else\n\tif(wantedTimeOfDay > -1)\n\t\tgTimeOfDay = wantedTimeOfDay;\n#endif")
 
 def main():
     ok = skipped = missing = 0
