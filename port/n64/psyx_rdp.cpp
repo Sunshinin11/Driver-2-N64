@@ -748,6 +748,10 @@ static void upload_pal_bank(int clut)
         b = 1;
         for (int i = 2; i < 16; i++) if (s_bank[i].lru < s_bank[b].lru) b = i;
         rdpq_tex_upload_tlut(e->pal, b * 16, 16); s_cTlut++; s_winBase = -1;
+#ifdef D2_ORIGIN_PROF
+        g_d2_oprof.tlut_up[g_d2_oprof_bk_cat]++;
+        g_d2_oprof.tex_bytes[g_d2_oprof_bk_cat] += 32;
+#endif
         e->use = ++s_useCounter;
         s_bank[b].clut = pkey; s_bank[b].gen = e->gen;
         s_tmemDirty = true;
@@ -856,6 +860,10 @@ static bool upload_win(int px, int py, int clut, int u0, int v0, int w, int h)
     track_ovl_switch(0);
     rdpq_load_tile(TILE6, bx, by, bx + 32, by + 64);
     s_cLdWin++;
+#ifdef D2_ORIGIN_PROF
+    g_d2_oprof.tex_up[g_d2_oprof_bk_cat]++;
+    g_d2_oprof.tex_bytes[g_d2_oprof_bk_cat] += 2048;
+#endif
     s_tmemWin = true;
     s_tmemDirty = true;
     s_upOu = wu0; s_upOv = wv0; s_lastUp.slot = &s_winTag;
@@ -933,6 +941,10 @@ static bool upload_region(int page, int clut, int u0, int v0, int w, int h, int 
             if (s_lastUp.slot == 0 || s_lastUp.fmt != s_texFormat || s_lastUp.palEnt != e || s_lastUp.palGen != e->gen || s_lastUp.clut != pkey)
             {
                 rdpq_tex_upload_tlut(e->pal, 0, 16); s_cTlut++; s_winBase = -1; s_bank[0].clut = -1;
+#ifdef D2_ORIGIN_PROF
+                g_d2_oprof.tlut_up[g_d2_oprof_bk_cat]++;
+                g_d2_oprof.tex_bytes[g_d2_oprof_bk_cat] += 32;
+#endif
                 e->use = ++s_useCounter;
                 s_lastUp.fmt = s_texFormat; s_lastUp.palEnt = e; s_lastUp.palGen = e->gen; s_lastUp.clut = pkey;
             }
@@ -951,6 +963,10 @@ static bool upload_region(int page, int clut, int u0, int v0, int w, int h, int 
             for (int i = 0; i < n; i++) pal[i] = conv_color(src[(cx + i) & 1023]);
             data_cache_hit_writeback(pal, n * 2);
             rdpq_tex_upload_tlut(pal, 0, n); s_cTlut++; s_winBase = -1; if (n > 16) banks_invalidate(); else s_bank[0].clut = -1;
+#ifdef D2_ORIGIN_PROF
+            g_d2_oprof.tlut_up[g_d2_oprof_bk_cat]++;
+            g_d2_oprof.tex_bytes[g_d2_oprof_bk_cat] += (uint32_t)(n * 2);
+#endif
 #ifdef D2_PALBANK
             if (n > 16) banks_invalidate();
 #endif
@@ -961,6 +977,10 @@ static bool upload_region(int page, int clut, int u0, int v0, int w, int h, int 
         {
             // paleta de 256 cores: reenvia a cada bloco (algo sobrescreve a metade alta da TMEM entre triangulos; corrigia o loading)
             rdpq_tex_upload_tlut(s_palRing[s_palIdx], 0, 256); s_cTlut++; banks_invalidate();
+#ifdef D2_ORIGIN_PROF
+            g_d2_oprof.tlut_up[g_d2_oprof_bk_cat]++;
+            g_d2_oprof.tex_bytes[g_d2_oprof_bk_cat] += 512;
+#endif
             s_palUse[s_palIdx] = ++s_useCounter;
         }
     }
@@ -980,6 +1000,10 @@ static bool upload_region(int page, int clut, int u0, int v0, int w, int h, int 
             rdpq_set_tile_size(TILE0, 0, 0, e1 - e0, h);
             s_upOu = ua + e0;
             s_cLdSh++; s_leanTiles = false; s_tmemWin = false;
+#ifdef D2_ORIGIN_PROF
+            g_d2_oprof.tex_up[g_d2_oprof_bk_cat]++;
+            g_d2_oprof.tex_bytes[g_d2_oprof_bk_cat] += (uint32_t)(pitch * h);
+#endif
 #ifdef D2_PALBANK
             s_curBank = -1; s_pbClut = -1;
 #endif
@@ -1005,6 +1029,10 @@ static bool upload_region(int page, int clut, int u0, int v0, int w, int h, int 
             rdpq_texparms_t parms = {};
             rdpq_tex_upload_sub(TILE0, &surf, &parms, 0, 0, sw, sh);
             s_cLdReg++; s_leanTiles = false; s_tmemWin = false;
+#ifdef D2_ORIGIN_PROF
+            g_d2_oprof.tex_up[g_d2_oprof_bk_cat]++;
+            g_d2_oprof.tex_bytes[g_d2_oprof_bk_cat] += (uint32_t)(sw * sh * 4);
+#endif
 #ifdef D2_PALBANK
             s_curBank = -1; s_pbClut = -1;
 #endif
@@ -1030,6 +1058,10 @@ static bool upload_region(int page, int clut, int u0, int v0, int w, int h, int 
             }
             rdpq_set_tile_size(TILE0, 0, 0, sw, sh);
             s_cLdReg++; s_leanTiles = false; s_tmemWin = false; s_winBase = -1;
+#ifdef D2_ORIGIN_PROF
+            g_d2_oprof.tex_up[g_d2_oprof_bk_cat]++;
+            g_d2_oprof.tex_bytes[g_d2_oprof_bk_cat] += (uint32_t)(rowb * sh);
+#endif
 #ifdef D2_PALBANK
             s_curBank = -1; s_pbClut = -1;
 #endif
@@ -1066,6 +1098,10 @@ static bool upload_pal(int clut)
     for (int i = 0; i < n; i++) pal[i] = conv_color(src[(cx + i) & 1023]);
     data_cache_hit_writeback(pal, n * 2);
     rdpq_tex_upload_tlut(pal, 0, n); s_cTlut++; s_winBase = -1; if (n > 16) banks_invalidate(); else s_bank[0].clut = -1;
+#ifdef D2_ORIGIN_PROF
+    g_d2_oprof.tlut_up[g_d2_oprof_bk_cat]++;
+    g_d2_oprof.tex_bytes[g_d2_oprof_bk_cat] += (uint32_t)(n * 2);
+#endif
 #ifdef D2_PALBANK
     if (n > 16) banks_invalidate();
 #endif
@@ -1220,6 +1256,9 @@ void PsyX_EndScene(void)
 #ifdef D2_PERFDBG
     PERF_START(bk_end);
 #endif
+#ifdef D2_ORIGIN_PROF
+    const uint32_t _oprof_end0 = d2_oprof_cnt0();
+#endif
 #ifdef D2_GTEPROF
     if ((d2_rdp_frames % 30) == 0) { debugf("[gte] ops=%u ticks=%u\n", d2_gp[1], d2_gp[0]); for (int i = 0; i < 64; i++) if (d2_gpf[i][0]) debugf("[gtef] %02x n=%u t=%u\n", i, d2_gpf[i][0], d2_gpf[i][1]); }
     memset(d2_gpf, 0, sizeof d2_gpf);
@@ -1259,11 +1298,59 @@ void PsyX_EndScene(void)
 #endif
     track_ovl_switch(0);
     rdpq_detach_show();
-    {   // medicao alinhada ao jogo: ticks medios por quadro em janelas de 32 passos do jogo (CameraCnt), independente da velocidade
+#ifdef D2_ORIGIN_PROF
+    g_d2_oprof.ot_overhead_ticks += d2_oprof_cnt0() - _oprof_end0;
+#endif
+    {   // medicao alinhada ao jogo: janelas de 32 passos de CameraCnt (media, p95, pior quadro, atrasos e posicao)
         extern int CameraCnt;
-        static int lastCC = -1; static unsigned int t0; unsigned int now; __asm__ volatile("mfc0 %0,$9" : "=r"(now));
-        if (CameraCnt < lastCC || lastCC < 0) { lastCC = CameraCnt; t0 = now; }
-        else if ((CameraCnt >> 5) != (lastCC >> 5) && CameraCnt > 0) { debugf("[bench] cc=%d ticks=%u tris=%d tex=%d\n", CameraCnt & ~31, (now - t0) / (unsigned)(CameraCnt - lastCC), s_benchTris, s_benchTex); lastCC = CameraCnt; t0 = now; }
+        extern VECTOR camera_position;
+        extern int LoadedArea;
+        static int lastCC = -1, prevFrameCC = -1, prevVbl = 0, winVbl0 = 0;
+        static unsigned int t0 = 0, prevT = 0, winTrisSum = 0, winTexSum = 0;
+        static unsigned int winDt[64];
+        static int winN = 0, winLate2 = 0, winLate3 = 0;
+        unsigned int now; __asm__ volatile("mfc0 %0,$9" : "=r"(now));
+        const int curVbl = d2_sys_vbl_count();
+        if (CameraCnt < lastCC || lastCC < 0 || CameraCnt == 0) {
+            lastCC = CameraCnt; prevFrameCC = CameraCnt;
+            t0 = prevT = now; winVbl0 = prevVbl = curVbl;
+            winN = winLate2 = winLate3 = 0; winTrisSum = winTexSum = 0;
+#ifdef D2_ORIGIN_PROF
+            d2_oprof_window_report(0, 0);
+#endif
+        } else if (CameraCnt > prevFrameCC) {
+            unsigned int dt = now - prevT;
+            int dvbl = curVbl - prevVbl;
+            prevT = now; prevVbl = curVbl; prevFrameCC = CameraCnt;
+            if (winN < 64) winDt[winN++] = dt;
+            if (dvbl > 2) winLate2++;
+            if (dvbl > 3) winLate3++;
+            winTrisSum += (unsigned)s_benchTris;
+            winTexSum += (unsigned)s_benchTex;
+            if ((CameraCnt >> 5) != (lastCC >> 5)) {
+                unsigned int sorted[64];
+                for (int i = 0; i < winN; i++) {
+                    unsigned int v = winDt[i];
+                    int j = i - 1;
+                    while (j >= 0 && sorted[j] > v) { sorted[j + 1] = sorted[j]; j--; }
+                    sorted[j + 1] = v;
+                }
+                unsigned int p95 = winN > 0 ? sorted[(winN * 95) / 100 < winN ? (winN * 95) / 100 : winN - 1] : 0;
+                unsigned int wmax = winN > 0 ? sorted[winN - 1] : 0;
+                int wvbl = curVbl - winVbl0;
+                unsigned int fps100 = wvbl > 0 ? (unsigned)((CameraCnt - lastCC) * 6000 + (wvbl >> 1)) / (unsigned)wvbl : 0;
+                unsigned int dCC = (unsigned)(CameraCnt - lastCC);
+                debugf("[bench] cc=%d ticks=%u p95=%u max=%u vbl=%d fps100=%u late2=%d late3=%d tris=%d tex=%d avg_tris=%u pos=%d,%d area=%d\n",
+                       CameraCnt & ~31, (now - t0) / dCC, p95, wmax, wvbl, fps100, winLate2, winLate3,
+                       s_benchTris, s_benchTex, winN > 0 ? winTrisSum / (unsigned)winN : 0,
+                       camera_position.vx, camera_position.vz, LoadedArea);
+#ifdef D2_ORIGIN_PROF
+                d2_oprof_window_report(CameraCnt & ~31, winN);
+#endif
+                lastCC = CameraCnt; t0 = now; winVbl0 = curVbl;
+                winN = winLate2 = winLate3 = 0; winTrisSum = winTexSum = 0;
+            }
+        }
     }
     s_endStamp[d2_rdp_frames & 1] = s_useCounter;
     d2_rdp_frames++;
@@ -1461,6 +1548,9 @@ static void tri_core(const PV *A, const PV *B, const PV *C, int page, int clut)
 #ifdef D2_PERFDBG
         PERF_START(sclip);
 #endif
+#ifdef D2_ORIGIN_PROF
+        g_d2_oprof.sclips[g_d2_oprof_bk_cat]++;
+#endif
         DV pin[3], ptmp1[8], ptmp2[8];
         for (int i = 0; i < 3; i++) {
             pin[i].x = X4[i] * 0.25f; pin[i].y = Y4[i] * 0.25f;
@@ -1552,6 +1642,9 @@ static void tri_core(const PV *A, const PV *B, const PV *C, int page, int clut)
     }
 
     s_triCount++;
+#ifdef D2_ORIGIN_PROF
+    g_d2_oprof.tris[g_d2_oprof_bk_cat]++;
+#endif
 #ifdef D2_PERFDBG
     g_perf_cur.cnt_triangles++;
 #endif
@@ -1692,6 +1785,9 @@ static void tri_core(const PV *A, const PV *B, const PV *C, int page, int clut)
     g_perf_cur.cnt_tri_block_clip++;
     int blocks_this_tri = 0;
 #endif
+#ifdef D2_ORIGIN_PROF
+    g_d2_oprof.uvclips[g_d2_oprof_bk_cat]++;
+#endif
     for (int tv = tv0; tv <= vmax && tv < 256; tv += bh)
         for (int tu = tu0; tu <= umax && tu < 256; tu += bw)
         {
@@ -1746,6 +1842,9 @@ static void tri_core(const PV *A, const PV *B, const PV *C, int page, int clut)
             for (int i = 1; i + 1 < n; i++) {
                 emit_tri(true, a[0], a[i], a[i + 1], (float)(step == 1 ? s_upOu : tu), (float)(step == 1 ? s_upOv : tv), 1.0f / step, 1.0f, 1.0f);
                 s_nSub++;
+#ifdef D2_ORIGIN_PROF
+                g_d2_oprof.subtris[g_d2_oprof_bk_cat]++;
+#endif
 #ifdef D2_PERFDBG
                 g_perf_cur.cnt_sub_triangles++;
 #endif
@@ -2309,6 +2408,10 @@ extern "C" void d2_native_draw_ot(u_long *ot)
 #ifdef D2_PERFDBG
     uint32_t t_ot0 = perf_cnt0();
 #endif
+#ifdef D2_ORIGIN_PROF
+    uint32_t _ot_t0 = d2_oprof_cnt0();
+    uint32_t _ot_prim_acc = 0;
+#endif
 #ifdef D2_T3D_WORLD
     bool t3d_drawn = false;
     uintptr_t uot_top = (uintptr_t)ot;
@@ -2324,7 +2427,15 @@ extern "C" void d2_native_draw_ot(u_long *ot)
                 int bucket = (int)((ubase - uot_base) / sizeof(u_long));
                 if (bucket < 0x1070) {
                     t3d_drawn = true;
+#ifdef D2_ORIGIN_PROF
+                    uint32_t _t3d0 = d2_oprof_cnt0();
                     d2_t3d_draw_queued_buildings();
+                    uint32_t _dt3d = d2_oprof_cnt0() - _t3d0;
+                    g_d2_oprof.bk_ticks[OPROF_T3D_BLD] += _dt3d;
+                    _ot_prim_acc += _dt3d;
+#else
+                    d2_t3d_draw_queued_buildings();
+#endif
                 }
             }
         }
@@ -2332,6 +2443,11 @@ extern "C" void d2_native_draw_ot(u_long *ot)
         if (__builtin_expect(++nodes > 65536, 0)) { debugf("[native-ot] ciclo ou OT invalida\n"); break; }
         const unsigned words = getlen(base);
         if (__builtin_expect(words != 0, 1)) {
+#ifdef D2_ORIGIN_PROF
+            uint8_t _cat = base->pgxp_index < OPROF_COUNT ? (uint8_t)base->pgxp_index : (uint8_t)OPROF_OTHER;
+            g_d2_oprof_bk_cat = _cat;
+            uint32_t _tp0 = d2_oprof_cnt0();
+#endif
             uintptr_t cur = (uintptr_t)base, end = cur + (words + P_LEN) * sizeof(u_int);
             while (cur < end) {
                 P_TAG *tag = (P_TAG*)cur;
@@ -2394,6 +2510,12 @@ extern "C" void d2_native_draw_ot(u_long *ot)
                 }
                 cur = next;
             }
+#ifdef D2_ORIGIN_PROF
+            uint32_t _dtp = d2_oprof_cnt0() - _tp0;
+            g_d2_oprof.bk_ticks[_cat] += _dtp;
+            _ot_prim_acc += _dtp;
+            g_d2_oprof_bk_cat = OPROF_OTHER;
+#endif
         }
         if (isendprim(base)) break;
         P_TAG *next = (P_TAG*)nextPrim(base);
@@ -2402,11 +2524,23 @@ extern "C" void d2_native_draw_ot(u_long *ot)
     }
 #ifdef D2_T3D_WORLD
     if (!t3d_drawn) {
+#ifdef D2_ORIGIN_PROF
+        uint32_t _t3d0 = d2_oprof_cnt0();
         d2_t3d_draw_queued_buildings();
+        uint32_t _dt3d = d2_oprof_cnt0() - _t3d0;
+        g_d2_oprof.bk_ticks[OPROF_T3D_BLD] += _dt3d;
+        _ot_prim_acc += _dt3d;
+#else
+        d2_t3d_draw_queued_buildings();
+#endif
     }
 #endif
 #if D2_RSP_GPU
     if (s_d2gpuOvl) rspq_write(s_d2gpuOvl, D2G_CMD_DRAW_END);
+#endif
+#ifdef D2_ORIGIN_PROF
+    uint32_t _ot_tot = d2_oprof_cnt0() - _ot_t0;
+    if (_ot_tot > _ot_prim_acc) g_d2_oprof.ot_overhead_ticks += _ot_tot - _ot_prim_acc;
 #endif
 #ifdef D2_PERFDBG
     g_perf_cur.bk_ot_walk_ticks += perf_cnt0() - t_ot0;

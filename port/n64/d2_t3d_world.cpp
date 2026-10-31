@@ -24,8 +24,10 @@ static int s_t3d_vtx_used = 0;
 
 // Model blocks
 static rspq_block_t* s_t3d_model_blocks[MAX_MODEL_SLOTS];
+#if defined(D2_T3D_STATS) || defined(D2_ORIGIN_PROF)
+static unsigned short s_t3d_model_triangles[MAX_MODEL_SLOTS];
+#endif
 #ifdef D2_T3D_STATS
-static unsigned s_t3d_model_triangles[MAX_MODEL_SLOTS];
 static unsigned s_stat_candidates, s_stat_native, s_stat_queued, s_stat_triangles;
 static unsigned s_stat_ticks, s_stat_frames;
 static uint32_t t3d_stat_clock(void) {
@@ -280,8 +282,8 @@ void d2_t3d_on_models_loaded(void)
         }
 
         s_t3d_model_blocks[mid] = rspq_block_end();
-#ifdef D2_T3D_STATS
-        s_t3d_model_triangles[mid] = num_quads * 2;
+#if defined(D2_T3D_STATS) || defined(D2_ORIGIN_PROF)
+        s_t3d_model_triangles[mid] = (unsigned short)(num_quads * 2);
 #endif
         s_t3d_models_converted++;
     }
@@ -331,6 +333,10 @@ void d2_t3d_queue_building(int model_idx, int yang, int z, int tx, int ty, int t
 #ifdef D2_T3D_STATS
     s_stat_queued++;
     s_stat_triangles += s_t3d_model_triangles[model_idx];
+#endif
+#ifdef D2_ORIGIN_PROF
+    g_d2_oprof.objs[OPROF_T3D_BLD]++;
+    g_d2_oprof.tris[OPROF_T3D_BLD] += s_t3d_model_triangles[model_idx];
 #endif
 }
 

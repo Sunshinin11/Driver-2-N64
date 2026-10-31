@@ -70,32 +70,47 @@ int d2_pad_poll(int port, d2_pad_raw_t *o)
         sx = in.stick_x; sy = in.stick_y;
     }
 #ifdef D2_BENCH
-    // Roteiro automatico deterministico (in_bench.txt) quando nenhum botao fisico e pressionado:
+    // Roteiro automatico deterministico:
+    // - No frontend (CameraCnt == 0), usa vbl_count para entrar no modo desejado.
+    // - Em gameplay (CameraCnt > 0), usa exclusivamente CameraCnt (passos da simulacao)
+    //   para que builds rapidas e lentas percorram exatamente a mesma trajetoria.
     if (port == 0 && b == 0) {
+        extern int CameraCnt;
         int v = vbl_count;
+        int cc = CameraCnt;
 #if defined(D2_PERF_MISSION1)
-        if (v >= 760 && v < 766) b |= D2_A;
-        else if (v >= 830 && v < 836) b |= D2_A;
-        else if (v >= 900 && v < 906) b |= D2_A;
-        else if (v >= 970 && v < 976) b |= D2_A;
-        else if (v >= 1650) b |= D2_DU; // Tanner anda no beco em direcao ao carro com a seta
+        if (cc == 0) {
+            if (v >= 760 && v < 766) b |= D2_A;
+            else if (v >= 830 && v < 836) b |= D2_A;
+            else if (v >= 900 && v < 906) b |= D2_A;
+            else if (v >= 970 && v < 976) b |= D2_A;
+        } else if (cc >= 32) {
+            b |= D2_DU; // Tanner anda no beco em direcao ao carro com a seta
+        }
 #elif defined(D2_PERF_APE)
-        if (v >= 760 && v < 766) b |= D2_DD;
-        else if (v >= 790 && v < 796) b |= D2_A;
-        else if (v >= 860 && v < 866) b |= D2_A;
-        else if (v >= 930 && v < 936) b |= D2_A;
-        else if (v >= 1000 && v < 1006) b |= D2_A;
-        else if (v >= 1700 && v < 1720) b |= (D2_DU | D2_CU); // Tanner sai do carro
-        else if (v >= 1740) b |= D2_DU; // Tanner anda continuamente
+        if (cc == 0) {
+            if (v >= 760 && v < 766) b |= D2_DD;
+            else if (v >= 790 && v < 796) b |= D2_A;
+            else if (v >= 860 && v < 866) b |= D2_A;
+            else if (v >= 930 && v < 936) b |= D2_A;
+            else if (v >= 1000 && v < 1006) b |= D2_A;
+        } else if (cc >= 32 && cc < 40) {
+            b |= (D2_DU | D2_CU); // Tanner sai do carro
+        } else if (cc >= 48) {
+            b |= D2_DU; // Tanner anda continuamente
+        }
 #else
-        if (v >= 760 && v < 766) b |= D2_DD;
-        else if (v >= 790 && v < 796) b |= D2_A;
-        else if (v >= 860 && v < 866) b |= D2_A;
-        else if (v >= 930 && v < 936) b |= D2_A;
-        else if (v >= 1000 && v < 1006) b |= D2_A;
-        else if (v >= 2200) b |= D2_A; // acelera o carro em Chicago apos 10s de cena parada
+        if (cc == 0) {
+            if (v >= 760 && v < 766) b |= D2_DD;
+            else if (v >= 790 && v < 796) b |= D2_A;
+            else if (v >= 860 && v < 866) b |= D2_A;
+            else if (v >= 930 && v < 936) b |= D2_A;
+            else if (v >= 1000 && v < 1006) b |= D2_A;
+        } else if (cc >= 128) {
+            b |= D2_A; // acelera o carro em Chicago exatamente a partir de CameraCnt == 128
+        }
 #endif
-        if (b && (v % 60 == 0 || (v >= 760 && v <= 1010))) debugf("[bench] vbl=%d b=%04x\n", v, b);
+        if (b && ((cc == 0 && v >= 760 && v <= 1010) || cc == 128)) debugf("[bench] vbl=%d cc=%d b=%04x\n", v, cc, b);
     }
 #endif
     o->btn = b; o->sx = sx; o->sy = sy;

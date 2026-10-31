@@ -135,6 +135,9 @@ D2_AI void d2n_cam(D2nCam *c)
 // projeta um vertice; devolve sxy empacotado (como SXY), sz e h; a1..a3 = MAC
 D2_AI unsigned int d2n_proj(const D2nCam *c, int vx, int vy, int vz, unsigned int *psz, unsigned int *ph, int *pa1, int *pa2, int *pa3)
 {
+#ifdef D2_ORIGIN_PROF
+	g_d2_oprof.verts[g_d2_oprof_cat]++;
+#endif
 	const int a1 = (int)((c->tx + (long long)(c->r11 * vx) + (long long)(c->r12 * vy) + (long long)(c->r13 * vz)) >> 12);
 	const int a2 = (int)((c->ty + (long long)(c->r21 * vx) + (long long)(c->r22 * vy) + (long long)(c->r23 * vz)) >> 12);
 	const int a3 = (int)((c->tz + (long long)(c->r31 * vx) + (long long)(c->r32 * vy) + (long long)(c->r33 * vz)) >> 12);

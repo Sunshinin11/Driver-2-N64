@@ -7,6 +7,7 @@
 #define _mkdir(str) ((void)(str)) /* sem diretorios gravaveis no N64 */
 #include "../n64/d2_origin.h"
 #include "../n64/d2_perfdbg.h"
+#include "../n64/d2_origin_prof.h"
 #ifdef __cplusplus
 extern "C" {
 #endif
