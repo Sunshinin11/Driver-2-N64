@@ -1536,11 +1536,11 @@ static inline uint32_t shade_rgba(unsigned r, unsigned g, unsigned b)
            ((uint32_t)s_shadeLut[b & 255] << 8)  | 255;
 }
 
-static inline uint32_t calc_vertex_color(unsigned r, unsigned g, unsigned b, BlendMode blend)
+static inline uint32_t calc_vertex_color(unsigned r, unsigned g, unsigned b, BlendMode blend, bool textured)
 {
-    const uint32_t sr = s_shadeLut[r & 255];
-    const uint32_t sg = s_shadeLut[g & 255];
-    const uint32_t sb = s_shadeLut[b & 255];
+    const uint32_t sr = textured ? s_shadeLut[r & 255] : (r & 255);
+    const uint32_t sg = textured ? s_shadeLut[g & 255] : (g & 255);
+    const uint32_t sb = textured ? s_shadeLut[b & 255] : (b & 255);
 
     if (blend == BM_ADD || blend == BM_ADD_QUATER_SOURCE || blend == BM_SUBTRACT)
     {
@@ -1573,7 +1573,7 @@ void GR_DrawTriangles(int start, int count)
         {
             pv[i].X4 = ((int)g[i].x * sx16) >> 14;
             pv[i].Y4 = ((int)g[i].y * sy16) >> 14;
-            pv[i].rgba = calc_vertex_color(g[i].r, g[i].g, g[i].b, s_blend);
+            pv[i].rgba = calc_vertex_color(g[i].r, g[i].g, g[i].b, s_blend, s_textured);
             pv[i].s32 = g[i].u << 5; pv[i].t32 = g[i].v << 5;
         }
         tri_core(&pv[0], &pv[1], &pv[2], g[0].page, g[0].clut);
@@ -1797,7 +1797,7 @@ int d2_native_ft4(POLY_FT4 *p)
 #endif
     const short *xy[4] = { &p->x0, &p->x1, &p->x2, &p->x3 };
     const unsigned char *uv[4] = { &p->u0, &p->u1, &p->u2, &p->u3 };
-    const uint32_t col = shade_rgba(p->r0, p->g0, p->b0);
+    const uint32_t col = calc_vertex_color(p->r0, p->g0, p->b0, BM_NONE, true);
     PV q[4];
     if (__builtin_expect(s_ctxSx16 == 65536 && s_ctxSy16 == 65536, 1))
     {
@@ -1857,7 +1857,7 @@ int d2_native_rect(P_TAG *tag)
     int y[4] = { base->y0, base->y0, base->y0 + h, base->y0 + h };
     int u0 = 0, v0 = 0, clut = 0;
     if (tex) { SPRT *s = (SPRT *)tag; u0 = s->u0; v0 = s->v0; clut = s->clut; }
-    const uint32_t col = (code & 1) ? calc_vertex_color(128, 128, 128, bm) : calc_vertex_color(base->r0, base->g0, base->b0, bm);
+    const uint32_t col = (code & 1) ? calc_vertex_color(128, 128, 128, bm, tex) : calc_vertex_color(base->r0, base->g0, base->b0, bm, tex);
     PV q[4];
     for (int i = 0; i < 4; i++)
     {
@@ -1897,10 +1897,10 @@ int d2_native_line(P_TAG *tag)
     const RECT16 &c=activeDrawEnv.clip;
     if(c.x!=s_clipKey[0]||c.y!=s_clipKey[1]||c.w!=s_clipKey[2]||c.h!=s_clipKey[3]||(activeDispEnv.disp.x|(activeDispEnv.disp.w<<16))!=s_clipKey[4]||(activeDispEnv.disp.y|(activeDispEnv.disp.h<<16))!=s_clipKey[5]) GR_SetupClipMode(&c,1);
     const BlendMode bm=(tag->code&2)?(BlendMode)(((activeDrawEnv.tpage>>5)&3)+1):BM_NONE;
-    if(type==0x50){ LINE_G2 *p=(LINE_G2*)tag; d2_line_segment(p->x0,p->y0,p->x1,p->y1,calc_vertex_color(p->r0,p->g0,p->b0,bm),calc_vertex_color(p->r1,p->g1,p->b1,bm),bm); }
-    else if(sub==0){ LINE_F2 *p=(LINE_F2*)tag; uint32_t c=calc_vertex_color(p->r0,p->g0,p->b0,bm); d2_line_segment(p->x0,p->y0,p->x1,p->y1,c,c,bm); }
-    else if(sub==8){ LINE_F3 *p=(LINE_F3*)tag; uint32_t c=calc_vertex_color(p->r0,p->g0,p->b0,bm); d2_line_segment(p->x0,p->y0,p->x1,p->y1,c,c,bm); d2_line_segment(p->x1,p->y1,p->x2,p->y2,c,c,bm); }
-    else { LINE_F4 *p=(LINE_F4*)tag; uint32_t c=calc_vertex_color(p->r0,p->g0,p->b0,bm); d2_line_segment(p->x0,p->y0,p->x1,p->y1,c,c,bm); d2_line_segment(p->x1,p->y1,p->x2,p->y2,c,c,bm); d2_line_segment(p->x2,p->y2,p->x3,p->y3,c,c,bm); }
+    if(type==0x50){ LINE_G2 *p=(LINE_G2*)tag; d2_line_segment(p->x0,p->y0,p->x1,p->y1,calc_vertex_color(p->r0,p->g0,p->b0,bm,false),calc_vertex_color(p->r1,p->g1,p->b1,bm,false),bm); }
+    else if(sub==0){ LINE_F2 *p=(LINE_F2*)tag; uint32_t c=calc_vertex_color(p->r0,p->g0,p->b0,bm,false); d2_line_segment(p->x0,p->y0,p->x1,p->y1,c,c,bm); }
+    else if(sub==8){ LINE_F3 *p=(LINE_F3*)tag; uint32_t c=calc_vertex_color(p->r0,p->g0,p->b0,bm,false); d2_line_segment(p->x0,p->y0,p->x1,p->y1,c,c,bm); d2_line_segment(p->x1,p->y1,p->x2,p->y2,c,c,bm); }
+    else { LINE_F4 *p=(LINE_F4*)tag; uint32_t c=calc_vertex_color(p->r0,p->g0,p->b0,bm,false); d2_line_segment(p->x0,p->y0,p->x1,p->y1,c,c,bm); d2_line_segment(p->x1,p->y1,p->x2,p->y2,c,c,bm); d2_line_segment(p->x2,p->y2,p->x3,p->y3,c,c,bm); }
     return len;
 }
 int d2_native_drawenv(P_TAG *tag)
@@ -2249,7 +2249,7 @@ int d2_direct_poly_i(P_TAG *tag)
         {
             pv[i].X4 = (xs[i] + ofx) << 2;
             pv[i].Y4 = (ys[i] + ofy) << 2;
-            pv[i].rgba = shadeOn ? calc_vertex_color(cr[i], cg[i], cb[i], bm) : calc_vertex_color(128, 128, 128, bm);
+            pv[i].rgba = shadeOn ? calc_vertex_color(cr[i], cg[i], cb[i], bm, tex) : calc_vertex_color(128, 128, 128, bm, tex);
             pv[i].s32 = us[i] << 5; pv[i].t32 = vs[i] << 5;
         }
     }
@@ -2259,7 +2259,7 @@ int d2_direct_poly_i(P_TAG *tag)
         {
             pv[i].X4 = ((int)(xs[i] + ofx) * s_ctxSx16) >> 14;
             pv[i].Y4 = ((int)(ys[i] + ofy) * s_ctxSy16) >> 14;
-            pv[i].rgba = shadeOn ? calc_vertex_color(cr[i], cg[i], cb[i], bm) : calc_vertex_color(128, 128, 128, bm);
+            pv[i].rgba = shadeOn ? calc_vertex_color(cr[i], cg[i], cb[i], bm, tex) : calc_vertex_color(128, 128, 128, bm, tex);
             pv[i].s32 = us[i] << 5; pv[i].t32 = vs[i] << 5;
         }
     }
