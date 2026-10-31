@@ -1566,6 +1566,58 @@ static inline uint32_t calc_vertex_color(unsigned r, unsigned g, unsigned b, Ble
     return (sr << 24) | (sg << 16) | (sb << 8) | 255;
 }
 
+static inline void calc_primitive_colors(uint32_t *outRgba, int count, const uint8_t *cr, const uint8_t *cg, const uint8_t *cb, BlendMode bm, bool textured)
+{
+    if (bm == BM_ADD || bm == BM_ADD_QUATER_SOURCE)
+    {
+        uint32_t sr[4], sg[4], sb[4], as[4];
+        uint32_t max_as = 0;
+        int max_i = 0;
+        for (int i = 0; i < count; i++)
+        {
+            const uint32_t r = cr ? cr[i] : 128;
+            const uint32_t g = cg ? cg[i] : 128;
+            const uint32_t b = cb ? cb[i] : 128;
+            sr[i] = textured ? s_shadeLut[r & 255] : (r & 255);
+            sg[i] = textured ? s_shadeLut[g & 255] : (g & 255);
+            sb[i] = textured ? s_shadeLut[b & 255] : (b & 255);
+            uint32_t a_s = sr[i] > sg[i] ? (sr[i] > sb[i] ? sr[i] : sb[i]) : (sg[i] > sb[i] ? sg[i] : sb[i]);
+            as[i] = a_s;
+            if (a_s > max_as)
+            {
+                max_as = a_s;
+                max_i = i;
+            }
+        }
+        uint32_t unif_rgb = 0;
+        if (max_as > 0)
+        {
+            uint32_t r_norm = (sr[max_i] * 255) / max_as;
+            uint32_t g_norm = (sg[max_i] * 255) / max_as;
+            uint32_t b_norm = (sb[max_i] * 255) / max_as;
+            if (r_norm > 255) r_norm = 255;
+            if (g_norm > 255) g_norm = 255;
+            if (b_norm > 255) b_norm = 255;
+            unif_rgb = (r_norm << 24) | (g_norm << 16) | (b_norm << 8);
+        }
+        for (int i = 0; i < count; i++)
+        {
+            uint32_t alpha = (bm == BM_ADD_QUATER_SOURCE) ? (as[i] >> 2) : as[i];
+            outRgba[i] = unif_rgb | alpha;
+        }
+    }
+    else
+    {
+        for (int i = 0; i < count; i++)
+        {
+            const uint32_t r = cr ? cr[i] : 128;
+            const uint32_t g = cg ? cg[i] : 128;
+            const uint32_t b = cb ? cb[i] : 128;
+            outRgba[i] = calc_vertex_color(r, g, b, bm, textured);
+        }
+    }
+}
+
 void GR_DrawTriangles(int start, int count)
 {
     if (!s_scene || s_offscreen || !s_verts || count <= 0) return;
@@ -1577,11 +1629,16 @@ void GR_DrawTriangles(int start, int count)
     {
         const GrVertex *g = &s_verts[start + t * 3];
         PV pv[3];
+        uint32_t rgba[3];
+        uint8_t cr[3] = { g[0].r, g[1].r, g[2].r };
+        uint8_t cg[3] = { g[0].g, g[1].g, g[2].g };
+        uint8_t cb[3] = { g[0].b, g[1].b, g[2].b };
+        calc_primitive_colors(rgba, 3, cr, cg, cb, s_blend, s_textured);
         for (int i = 0; i < 3; i++)
         {
             pv[i].X4 = ((int)g[i].x * sx16) >> 14;
             pv[i].Y4 = ((int)g[i].y * sy16) >> 14;
-            pv[i].rgba = calc_vertex_color(g[i].r, g[i].g, g[i].b, s_blend, s_textured);
+            pv[i].rgba = rgba[i];
             pv[i].s32 = g[i].u << 5; pv[i].t32 = g[i].v << 5;
         }
         tri_core(&pv[0], &pv[1], &pv[2], g[0].page, g[0].clut);
@@ -1905,7 +1962,13 @@ int d2_native_line(P_TAG *tag)
     const RECT16 &c=activeDrawEnv.clip;
     if(c.x!=s_clipKey[0]||c.y!=s_clipKey[1]||c.w!=s_clipKey[2]||c.h!=s_clipKey[3]||(activeDispEnv.disp.x|(activeDispEnv.disp.w<<16))!=s_clipKey[4]||(activeDispEnv.disp.y|(activeDispEnv.disp.h<<16))!=s_clipKey[5]) GR_SetupClipMode(&c,1);
     const BlendMode bm=(tag->code&2)?(BlendMode)(((activeDrawEnv.tpage>>5)&3)+1):BM_NONE;
-    if(type==0x50){ LINE_G2 *p=(LINE_G2*)tag; d2_line_segment(p->x0,p->y0,p->x1,p->y1,calc_vertex_color(p->r0,p->g0,p->b0,bm,false),calc_vertex_color(p->r1,p->g1,p->b1,bm,false),bm); }
+    if(type==0x50){
+        LINE_G2 *p=(LINE_G2*)tag;
+        uint8_t cr[2] = { p->r0, p->r1 }, cg[2] = { p->g0, p->g1 }, cb[2] = { p->b0, p->b1 };
+        uint32_t rgba[2];
+        calc_primitive_colors(rgba, 2, cr, cg, cb, bm, false);
+        d2_line_segment(p->x0,p->y0,p->x1,p->y1,rgba[0],rgba[1],bm);
+    }
     else if(sub==0){ LINE_F2 *p=(LINE_F2*)tag; uint32_t c=calc_vertex_color(p->r0,p->g0,p->b0,bm,false); d2_line_segment(p->x0,p->y0,p->x1,p->y1,c,c,bm); }
     else if(sub==8){ LINE_F3 *p=(LINE_F3*)tag; uint32_t c=calc_vertex_color(p->r0,p->g0,p->b0,bm,false); d2_line_segment(p->x0,p->y0,p->x1,p->y1,c,c,bm); d2_line_segment(p->x1,p->y1,p->x2,p->y2,c,c,bm); }
     else { LINE_F4 *p=(LINE_F4*)tag; uint32_t c=calc_vertex_color(p->r0,p->g0,p->b0,bm,false); d2_line_segment(p->x0,p->y0,p->x1,p->y1,c,c,bm); d2_line_segment(p->x1,p->y1,p->x2,p->y2,c,c,bm); d2_line_segment(p->x2,p->y2,p->x3,p->y3,c,c,bm); }
@@ -2251,13 +2314,15 @@ int d2_direct_poly_i(P_TAG *tag)
 #endif
 #endif
     PV pv[4];
+    uint32_t rgba[4];
+    calc_primitive_colors(rgba, nv, shadeOn ? cr : NULL, shadeOn ? cg : NULL, shadeOn ? cb : NULL, bm, tex);
     if (__builtin_expect(s_ctxSx16 == 65536 && s_ctxSy16 == 65536, 1))
     {
         for (int i = 0; i < nv; i++)
         {
             pv[i].X4 = (xs[i] + ofx) << 2;
             pv[i].Y4 = (ys[i] + ofy) << 2;
-            pv[i].rgba = shadeOn ? calc_vertex_color(cr[i], cg[i], cb[i], bm, tex) : calc_vertex_color(128, 128, 128, bm, tex);
+            pv[i].rgba = rgba[i];
             pv[i].s32 = us[i] << 5; pv[i].t32 = vs[i] << 5;
         }
     }
@@ -2267,7 +2332,7 @@ int d2_direct_poly_i(P_TAG *tag)
         {
             pv[i].X4 = ((int)(xs[i] + ofx) * s_ctxSx16) >> 14;
             pv[i].Y4 = ((int)(ys[i] + ofy) * s_ctxSy16) >> 14;
-            pv[i].rgba = shadeOn ? calc_vertex_color(cr[i], cg[i], cb[i], bm, tex) : calc_vertex_color(128, 128, 128, bm, tex);
+            pv[i].rgba = rgba[i];
             pv[i].s32 = us[i] << 5; pv[i].t32 = vs[i] << 5;
         }
     }
