@@ -47,6 +47,7 @@ static int s_t3d_queue_count = 0;
 
 extern "C" void d2_rdp_invalidate_backend_cache(void);
 extern "C" int d2_rdp_frame_count(void);
+extern "C" surface_t* d2_rdp_get_current_fb(void);
 
 void d2_t3d_init(void)
 {
@@ -315,6 +316,115 @@ void d2_t3d_get_stats(int* vtx_total, int* vtx_used, int* models_converted)
 
 void d2_t3d_draw_queued_buildings(void)
 {
+#ifdef D2_T3D_SMOKE
+    if (!s_t3d_inited) {
+        d2_t3d_init();
+    }
+
+    rdpq_sync_pipe();
+
+    static bool s_smoke_logged = false;
+    if (!s_smoke_logged) {
+        s_smoke_logged = true;
+        surface_t *cur_fb = d2_rdp_get_current_fb();
+        int dw = (int)display_get_width();
+        int dh = (int)display_get_height();
+        bool created_after = (s_t3d_viewport.size[0] > 0 && s_t3d_viewport.size[1] > 0);
+        debugf("[T3D_SMOKE_VP] Viewport size: %ldx%ld offset: (%ld,%ld) | display: %dx%d | t3d_viewport_create DEPOIS de display_init: %s\n",
+               (long)s_t3d_viewport.size[0], (long)s_t3d_viewport.size[1],
+               (long)s_t3d_viewport.offset[0], (long)s_t3d_viewport.offset[1],
+               dw, dh, created_after ? "SIM" : "NAO (recriando)");
+
+        if (!created_after || s_t3d_viewport.size[0] != dw || s_t3d_viewport.size[1] != dh) {
+            s_t3d_viewport = t3d_viewport_create();
+            s_t3d_viewport._bufferCount = 2;
+            s_t3d_viewport._bufferIdx = 0;
+            s_t3d_viewport._matFP = (T3DMat4FP*)UncachedAddr(s_t3d_vp_matFP);
+            debugf("[T3D_SMOKE_VP] Viewport recriado com sucesso: %ldx%ld offset: (%ld,%ld)\n",
+                   (long)s_t3d_viewport.size[0], (long)s_t3d_viewport.size[1],
+                   (long)s_t3d_viewport.offset[0], (long)s_t3d_viewport.offset[1]);
+        }
+
+        debugf("[T3D_SMOKE_FB] rdpq framebuffer: surface=%p buffer=%p (%dx%d) | Tiny3D render target: MESMO (rdpq active target)\n",
+               cur_fb, cur_fb ? cur_fb->buffer : NULL,
+               cur_fb ? cur_fb->width : 0, cur_fb ? cur_fb->height : 0);
+    }
+
+    // Camera look-at (identity with PS1 -> N64 axis flip)
+    T3DVec3 e  = {{ 0.0f,  0.0f,   0.0f }};
+    T3DVec3 tg = {{ 0.0f,  0.0f, 256.0f }};
+    T3DVec3 u  = {{ 0.0f, -1.0f,   0.0f }};
+
+    float nearP = 16.0f, farP = 32768.0f;
+    float h = (float)scr_z;
+    if (h < 1.0f) h = 256.0f;
+    float fov = 2.0f * atanf(120.0f / h);
+
+    s_t3d_viewport._bufferIdx = d2_rdp_frame_count() & 1;
+    t3d_viewport_set_perspective(&s_t3d_viewport, fov, 320.0f / 240.0f, nearP, farP);
+    t3d_viewport_look_at(&s_t3d_viewport, &e, &tg, &u);
+    t3d_viewport_attach(&s_t3d_viewport);
+
+    // Flat shaded render mode without Z-buffer
+    rdpq_mode_begin();
+        rdpq_set_mode_standard();
+        rdpq_mode_combiner(RDPQ_COMBINER_SHADE);
+        rdpq_mode_blender(0);
+        rdpq_mode_zbuf(false, false);
+    rdpq_mode_end();
+
+    t3d_state_set_drawflags((enum T3DDrawFlags)(T3D_FLAG_SHADED | T3D_FLAG_NO_LIGHT));
+
+    // Triângulo vermelho grande e fixo no centro da tela (em espaço de câmera, à frente da câmera)
+    // Z = 256, h = 256 => fator de escala = 1.0: coordenadas (X, Y) mapeiam para (160 + X, 120 + Y)
+    static T3DVertPacked smoke_triangle[2] __attribute__((aligned(16))) = {
+        {
+            .posA = { 0, -60, 256 },   // topo centro (160, 60)
+            .normA = 0,
+            .posB = { 70, 50, 256 },   // inferior direito (230, 170)
+            .normB = 0,
+            .rgbaA = 0xFF0000FF,       // vermelho puro
+            .rgbaB = 0xFF0000FF,
+            .stA = { 0, 0 },
+            .stB = { 0, 0 }
+        },
+        {
+            .posA = { -70, 50, 256 },  // inferior esquerdo (90, 170)
+            .normA = 0,
+            .posB = { 0, 0, 256 },
+            .normB = 0,
+            .rgbaA = 0xFF0000FF,
+            .rgbaB = 0xFF0000FF,
+            .stA = { 0, 0 },
+            .stB = { 0, 0 }
+        }
+    };
+    static bool s_vtx_init = false;
+    if (!s_vtx_init) {
+        s_vtx_init = true;
+        data_cache_hit_writeback(smoke_triangle, sizeof(smoke_triangle));
+    }
+
+    static T3DMat4FP identFP __attribute__((aligned(16)));
+    static bool s_ident_init = false;
+    if (!s_ident_init) {
+        s_ident_init = true;
+        t3d_mat4fp_identity(&identFP);
+        data_cache_hit_writeback(&identFP, sizeof(identFP));
+    }
+
+    t3d_matrix_push(&identFP);
+    t3d_vert_load(smoke_triangle, 0, 4);
+    t3d_matrix_pop(1);
+
+    t3d_tri_draw(0, 1, 2);
+    t3d_tri_draw(0, 2, 1);
+    t3d_tri_sync();
+
+    s_t3d_queue_count = 0;
+    d2_rdp_invalidate_backend_cache();
+    return;
+#else
     if (s_t3d_queue_count <= 0) return;
 
     rdpq_sync_pipe();
@@ -440,6 +550,7 @@ void d2_t3d_draw_queued_buildings(void)
 
     // Invalidate backend cache and synchronize
     d2_rdp_invalidate_backend_cache();
+#endif // D2_T3D_SMOKE
 }
 
 #endif // D2_T3D_WORLD

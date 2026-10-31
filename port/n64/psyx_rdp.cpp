@@ -44,6 +44,7 @@ static bool s_scene;
 int d2_rdp_frames;
 extern "C" int d2_rdp_scene_active(void) { return s_scene; }
 extern "C" int d2_rdp_frame_count(void) { return d2_rdp_frames; }
+extern "C" surface_t* d2_rdp_get_current_fb(void) { return s_fb; }
 
 TextureID g_whiteTexture = 1, g_vramTexture = 2;
 static TexFormat s_texFormat;

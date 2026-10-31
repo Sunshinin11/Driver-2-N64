@@ -1,0 +1,3 @@
+[submodule "submodules/tiny3d"]
+	path = submodules/tiny3d
+	url = https://github.com/HailToDodongo/tiny3d.git
