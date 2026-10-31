@@ -83,112 +83,153 @@ void d2_t3d_on_models_loaded(void)
         if (!model || model == &dummyModel || model->num_polys == 0) continue;
 
         int nverts = model->num_vertices;
-        if (nverts <= 0 || nverts > 64) {
-            // Models with > 64 verts continue in legacy PlotBuildingModel
-            continue;
-        }
+        if (nverts <= 0) continue;
 
-        // Check if model contains any building polygons (ptype 11, 21, 23)
+#define T3D_VERT_WINDOW 64
+
+        // Collect building quads
+        struct BldQuadInfo {
+            int v0, v1, v2, v3;
+            uint32_t col;
+        };
+        BldQuadInfo quads[128];
+        int num_quads = 0;
+
         unsigned char* pblock = (unsigned char*)GET_MODEL_DATA(unsigned char, model, poly_block);
-        int bld_quad_count = 0;
         int poffs = 0;
         for (int p = 0; p < model->num_polys; p++) {
             int ptype = pblock[poffs] & 31;
             int psize = PolySizes[ptype];
             if (psize == 0) break;
             if (ptype == 11 || ptype == 21 || ptype == 23) {
-                bld_quad_count++;
-            }
-            poffs += psize;
-        }
-
-        if (bld_quad_count == 0) continue;
-
-        // Check vertex capacity
-        int vtx_aligned = (nverts + 1) & ~1;
-        if (s_t3d_vtx_used + vtx_aligned > D2_T3D_MAX_VERTS) {
-            debugf("[T3D] AVISO: Vtx pool cheio ao converter model %d (usado=%d/%d)\n",
-                   mid, s_t3d_vtx_used, D2_T3D_MAX_VERTS);
-            break;
-        }
-
-        int start_vtx = s_t3d_vtx_used;
-        SVECTOR* src_verts = GET_MODEL_DATA(SVECTOR, model, vertices);
-
-        // Copy vertices into static pool with default wall color (0xCCCCCCFF)
-        for (int v = 0; v < nverts; v++) {
-            int packed_idx = (start_vtx + v) / 2;
-            int is_b = (start_vtx + v) & 1;
-            if (!is_b) {
-                s_t3d_vtx_pool[packed_idx].posA[0] = src_verts[v].vx;
-                s_t3d_vtx_pool[packed_idx].posA[1] = src_verts[v].vy;
-                s_t3d_vtx_pool[packed_idx].posA[2] = src_verts[v].vz;
-                s_t3d_vtx_pool[packed_idx].rgbaA = 0xCCCCCCFF;
-                s_t3d_vtx_pool[packed_idx].normA = 0;
-            } else {
-                s_t3d_vtx_pool[packed_idx].posB[0] = src_verts[v].vx;
-                s_t3d_vtx_pool[packed_idx].posB[1] = src_verts[v].vy;
-                s_t3d_vtx_pool[packed_idx].posB[2] = src_verts[v].vz;
-                s_t3d_vtx_pool[packed_idx].rgbaB = 0xCCCCCCFF;
-                s_t3d_vtx_pool[packed_idx].normB = 0;
-            }
-        }
-        if (nverts & 1) {
-            int packed_idx = (start_vtx + nverts) / 2;
-            s_t3d_vtx_pool[packed_idx].posB[0] = 0;
-            s_t3d_vtx_pool[packed_idx].posB[1] = 0;
-            s_t3d_vtx_pool[packed_idx].posB[2] = 0;
-            s_t3d_vtx_pool[packed_idx].rgbaB = 0;
-            s_t3d_vtx_pool[packed_idx].normB = 0;
-        }
-
-        // Apply colors per quad type (ptype 21 = detail/cornice, ptype 23 = window/roof)
-        poffs = 0;
-        for (int p = 0; p < model->num_polys; p++) {
-            int ptype = pblock[poffs] & 31;
-            int psize = PolySizes[ptype];
-            if (psize == 0) break;
-            if (ptype == 21 || ptype == 23) {
-                uint32_t col = (ptype == 21) ? 0xD0A878FF : 0x8090A0FF;
-                PL_POLYFT4* poly = (PL_POLYFT4*)&pblock[poffs];
-                int v[4] = { poly->v0, poly->v1, poly->v2, poly->v3 };
-                for (int k = 0; k < 4; k++) {
-                    if (v[k] < nverts) {
-                        int vidx = start_vtx + v[k];
-                        if (vidx & 1)
-                            s_t3d_vtx_pool[vidx / 2].rgbaB = col;
-                        else
-                            s_t3d_vtx_pool[vidx / 2].rgbaA = col;
-                    }
+                if (num_quads < 128) {
+                    PL_POLYFT4* poly = (PL_POLYFT4*)&pblock[poffs];
+                    uint32_t col = (ptype == 21) ? 0xD0A878FF : ((ptype == 23) ? 0x8090A0FF : 0xCCCCCCFF);
+                    quads[num_quads++] = { poly->v0, poly->v1, poly->v2, poly->v3, col };
                 }
             }
             poffs += psize;
         }
 
-        s_t3d_vtx_used += vtx_aligned;
+        if (num_quads == 0) continue;
 
-        // Flush L1 D-Cache for the uploaded vertices
-        data_cache_hit_writeback(&s_t3d_vtx_pool[start_vtx / 2], (vtx_aligned / 2) * sizeof(T3DVertPacked));
-
-        // Record RSPQ block
-        rspq_block_begin();
-        t3d_vert_load(&s_t3d_vtx_pool[start_vtx / 2], 0, vtx_aligned);
-
-        poffs = 0;
-        for (int p = 0; p < model->num_polys; p++) {
-            int ptype = pblock[poffs] & 31;
-            int psize = PolySizes[ptype];
-            if (psize == 0) break;
-            if (ptype == 11 || ptype == 21 || ptype == 23) {
-                PL_POLYFT4* poly = (PL_POLYFT4*)&pblock[poffs];
-                // Quad: A=v0, B=v1, C=v3, D=v2
-                // Triangles: (v0, v1, v3) and (v1, v2, v3)
-                t3d_tri_draw(poly->v0, poly->v1, poly->v3);
-                t3d_tri_draw(poly->v1, poly->v2, poly->v3);
+        // Determine vertex colors (priority: 21/23 over default wall)
+        uint32_t vtx_col[256];
+        for (int v = 0; v < nverts && v < 256; v++) vtx_col[v] = 0xCCCCCCFF;
+        for (int q = 0; q < num_quads; q++) {
+            if (quads[q].col != 0xCCCCCCFF) {
+                if (quads[q].v0 < 256) vtx_col[quads[q].v0] = quads[q].col;
+                if (quads[q].v1 < 256) vtx_col[quads[q].v1] = quads[q].col;
+                if (quads[q].v2 < 256) vtx_col[quads[q].v2] = quads[q].col;
+                if (quads[q].v3 < 256) vtx_col[quads[q].v3] = quads[q].col;
             }
-            poffs += psize;
         }
-        t3d_tri_sync();
+
+        SVECTOR* src_verts = GET_MODEL_DATA(SVECTOR, model, vertices);
+
+        // Record RSPQ block with vertex windowing (max 64 verts per t3d_vert_load)
+        rspq_block_begin();
+
+        int local_map[256];
+        memset(local_map, -1, sizeof(local_map));
+        int local_vtx_orig[T3D_VERT_WINDOW];
+        int local_vtx_count = 0;
+
+        struct LocalQuad {
+            int lv0, lv1, lv2, lv3;
+        };
+        LocalQuad batch_quads[128];
+        int batch_quad_count = 0;
+        bool model_overflow = false;
+
+        auto flush_window = [&]() {
+            if (local_vtx_count == 0) return;
+            int aligned_batch = (local_vtx_count + 1) & ~1;
+            if (s_t3d_vtx_used + aligned_batch > D2_T3D_MAX_VERTS) {
+                model_overflow = true;
+                return;
+            }
+            int batch_start = s_t3d_vtx_used;
+            for (int k = 0; k < local_vtx_count; k++) {
+                int orig = local_vtx_orig[k];
+                uint32_t col = (orig < 256) ? vtx_col[orig] : 0xCCCCCCFF;
+                int vidx = batch_start + k;
+                int packed_idx = vidx / 2;
+                if (!(vidx & 1)) {
+                    s_t3d_vtx_pool[packed_idx].posA[0] = src_verts[orig].vx;
+                    s_t3d_vtx_pool[packed_idx].posA[1] = src_verts[orig].vy;
+                    s_t3d_vtx_pool[packed_idx].posA[2] = src_verts[orig].vz;
+                    s_t3d_vtx_pool[packed_idx].rgbaA = col;
+                    s_t3d_vtx_pool[packed_idx].normA = 0;
+                } else {
+                    s_t3d_vtx_pool[packed_idx].posB[0] = src_verts[orig].vx;
+                    s_t3d_vtx_pool[packed_idx].posB[1] = src_verts[orig].vy;
+                    s_t3d_vtx_pool[packed_idx].posB[2] = src_verts[orig].vz;
+                    s_t3d_vtx_pool[packed_idx].rgbaB = col;
+                    s_t3d_vtx_pool[packed_idx].normB = 0;
+                }
+            }
+            if (local_vtx_count & 1) {
+                int vidx = batch_start + local_vtx_count;
+                int packed_idx = vidx / 2;
+                s_t3d_vtx_pool[packed_idx].posB[0] = 0;
+                s_t3d_vtx_pool[packed_idx].posB[1] = 0;
+                s_t3d_vtx_pool[packed_idx].posB[2] = 0;
+                s_t3d_vtx_pool[packed_idx].rgbaB = 0;
+                s_t3d_vtx_pool[packed_idx].normB = 0;
+            }
+            data_cache_hit_writeback(&s_t3d_vtx_pool[batch_start / 2], (aligned_batch / 2) * sizeof(T3DVertPacked));
+
+            t3d_vert_load(&s_t3d_vtx_pool[batch_start / 2], 0, aligned_batch);
+            for (int q = 0; q < batch_quad_count; q++) {
+                t3d_tri_draw(batch_quads[q].lv0, batch_quads[q].lv1, batch_quads[q].lv3);
+                t3d_tri_draw(batch_quads[q].lv1, batch_quads[q].lv2, batch_quads[q].lv3);
+            }
+            t3d_tri_sync();
+            s_t3d_vtx_used += aligned_batch;
+
+            memset(local_map, -1, sizeof(local_map));
+            local_vtx_count = 0;
+            batch_quad_count = 0;
+        };
+
+        for (int q = 0; q < num_quads; q++) {
+            int v[4] = { quads[q].v0, quads[q].v1, quads[q].v2, quads[q].v3 };
+            int new_needed = 0;
+            for (int k = 0; k < 4; k++) {
+                if (v[k] >= 256 || local_map[v[k]] == -1) new_needed++;
+            }
+            if (local_vtx_count + new_needed > T3D_VERT_WINDOW) {
+                flush_window();
+                if (model_overflow) break;
+            }
+            int lv[4];
+            for (int k = 0; k < 4; k++) {
+                int orig = v[k];
+                if (orig < 256 && local_map[orig] != -1) {
+                    lv[k] = local_map[orig];
+                } else {
+                    int lidx = local_vtx_count++;
+                    local_vtx_orig[lidx] = orig;
+                    if (orig < 256) local_map[orig] = lidx;
+                    lv[k] = lidx;
+                }
+            }
+            batch_quads[batch_quad_count++] = { lv[0], lv[1], lv[2], lv[3] };
+        }
+
+        if (!model_overflow) {
+            flush_window();
+        }
+
+        if (model_overflow) {
+            rspq_block_t* partial = rspq_block_end();
+            if (partial) rspq_block_free(partial);
+            debugf("[T3D] AVISO: Vtx pool cheio ao converter model %d (usado=%d/%d)\n",
+                   mid, s_t3d_vtx_used, D2_T3D_MAX_VERTS);
+            break;
+        }
+
         s_t3d_model_blocks[mid] = rspq_block_end();
         s_t3d_models_converted++;
     }
