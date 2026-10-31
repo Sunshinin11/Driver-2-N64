@@ -19,6 +19,7 @@
 #include "PsyX/PsyX_globals.h"
 #include "PsyX/PsyX_render.h"
 #include "d2_origin.h"
+#include "d2_t3d_world.h"
 
 extern "C" {
 extern unsigned short vram[];      // psyx_backend.cpp (valores nativos de 16 bits, ja no formato do PS1)
@@ -109,6 +110,9 @@ static void rdp_init_once(void)
     if (s_rdpInit) return;
     s_rdpInit = true;
     rdpq_init();
+#ifdef D2_T3D_WORLD
+    d2_t3d_init();
+#endif
 #if D2_RSP_GPU
     s_d2gpuOvl = rspq_overlay_register(&rsp_d2gpu);
     debugf("[rsp_ovl] registered rsp_d2gpu ucode ovl_id=0x%08lx\n", (unsigned long)s_d2gpuOvl);
@@ -604,7 +608,6 @@ static void set_mode(bool textured, int fmt, BlendMode blend)
     s_pbClut = -1;
 #endif
 #endif
-
     rdpq_set_mode_standard();
     rdpq_mode_antialias(AA_NONE);
     rdpq_mode_dithering(DITHER_NONE_NONE);
@@ -665,6 +668,28 @@ static void set_mode(bool textured, int fmt, BlendMode blend)
             rdpq_mode_blender(0);
         }
     }
+}
+
+extern "C" void d2_rdp_invalidate_backend_cache(void)
+{
+    rdpq_sync_pipe();
+    rdpq_sync_load();
+    rdpq_sync_tile();
+    s_modeKey = -1;
+    s_lastUp.slot = 0;
+    s_lastUp.clut = -1;
+    s_lastUp.palEnt = 0;
+    s_curRgbaMode = -1;
+    s_curBlend = (BlendMode)-1;
+#ifdef D2_TEXWIN
+    s_leanTiles = false;
+    s_tmemWin = false;
+    s_winBase = -1;
+#ifdef D2_PALBANK
+    s_curBank = -1;
+    s_pbClut = -1;
+#endif
+#endif
 }
 
 
@@ -2269,6 +2294,9 @@ extern "C" int d2_native_draw_prim(P_TAG *tag)
 extern "C" void d2_native_draw_ot(u_long *ot)
 {
     if (!ot) return;
+#ifdef D2_T3D_WORLD
+    d2_t3d_draw_queued_buildings();
+#endif
 #ifdef D2_PERFDBG
     uint32_t t_ot0 = perf_cnt0();
 #endif

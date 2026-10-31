@@ -87,6 +87,15 @@ D2_OPT += -DD2_RSP_GPU=1
 PLAT_OBJS += $(BUILD_DIR)/port/n64/rsp_d2gpu.o
 OBJS += $(BUILD_DIR)/port/n64/rsp_d2gpu.o
 endif
+
+D2_T3D_WORLD ?= 0
+ifeq ($(D2_T3D_WORLD),1)
+include port/tiny3d/t3d.mk
+D2_OPT += -DD2_T3D_WORLD=1
+D2_INC += -Iport/tiny3d/src
+PLAT_OBJS += $(OBJ_DIR)/port/n64/d2_t3d_world.o
+OBJS += $(OBJ_DIR)/port/n64/d2_t3d_world.o
+endif
 FLAGS_FILE = $(BUILD_DIR)/.d2_flags
 .PHONY: FORCE
 $(FLAGS_FILE): FORCE

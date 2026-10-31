@@ -242,6 +242,12 @@ P('Game/C/models.c',
   "\tmodelAmts = *(int *)lump_file;\n",
   "\tmodelAmts = (int)d2_rd32(lump_file);\n")
 P('Game/C/models.c',
+  '#include "cars.h"\n',
+  '#include "cars.h"\n#include "d2_t3d_world.h"\n')
+P('Game/C/models.c',
+  "\t\tif (model->instance_number == -1) \n\t\t{\n\t\t\tmodel->vertices += (int)model;\n\t\t\tmodel->normals += (int)model;\n\t\t\tmodel->point_normals += (int)model;\n\n\t\t\tif (model->collision_block != 0)\n\t\t\t\tmodel->collision_block += (int)model;\n\t\t}\n\t}\n#endif\n}",
+  "\t\tif (model->instance_number == -1) \n\t\t{\n\t\t\tmodel->vertices += (int)model;\n\t\t\tmodel->normals += (int)model;\n\t\t\tmodel->point_normals += (int)model;\n\n\t\t\tif (model->collision_block != 0)\n\t\t\t\tmodel->collision_block += (int)model;\n\t\t}\n\t}\n#endif\n#ifdef D2_T3D_WORLD\n\td2_t3d_on_models_loaded();\n#endif\n}")
+P('Game/C/models.c',
   "\t\tsize = *(int*)mdsfile;\n\t\tmdsfile += sizeof(int);\n\n\t\tif (size)\n\t\t{\n\t\t\t// add the usage bit\n\t\t\tpermanentModelSlotBitfield[i >> 5] |= 1 << (i & 31);\n\t\t\t\n\t\t\tmodel = (MODEL*)mdsfile;\n",
   "\t\tsize = (int)d2_rd32(mdsfile);\n\t\tmdsfile += sizeof(int);\n\n\t\tif (size)\n\t\t{\n\t\t\t// add the usage bit\n\t\t\tpermanentModelSlotBitfield[i >> 5] |= 1 << (i & 31);\n\t\t\t\n\t\t\tmodel = (MODEL*)mdsfile;\n\t\t\td2_swap_model(model, size);\n")
 P('Game/C/main.c',
@@ -642,8 +648,12 @@ P('PsyCross/include/psx/libgpu.h',
   "#else\n#ifdef D2_ORIGIN\n#define addPrim(ot, p)\t\t(D2_ORIGIN_TAG_AUTO(p), setaddr(p, getaddr(ot)), setaddr(ot, p))\n#define addPrims(ot, p0, p1)\t(D2_ORIGIN_TAG_CHAIN(p0, p1), setaddr(p1, getaddr(ot)), setaddr(ot, p0))\n#else\n#define addPrim(ot, p)\t\tsetaddr(p, getaddr(ot)), setaddr(ot, p)\n#define addPrims(ot, p0, p1)\tsetaddr(p1, getaddr(ot)),setaddr(ot, p0)\n#endif\n#endif")
 
 P('Game/C/draw.c',
+  '#include "draw.h"\n',
+  '#include "draw.h"\n#include "d2_t3d_world.h"\n')
+
+P('Game/C/draw.c',
   "model = Z > DRAW_LOD_DIST_LOW ? pLodModels[cop->type] : modelpointers[cop->type];",
-  "D2_ORIGIN_SET_SCOPE(\"PlotBuildingModel\");\n\t\tD2_ORIGIN_SET_CELL(cop->type, cop->pos.vx, cop->pos.vy, cop->pos.vz);\n\t\tmodel = Z > DRAW_LOD_DIST_LOW ? pLodModels[cop->type] : modelpointers[cop->type];")
+  "D2_ORIGIN_SET_SCOPE(\"PlotBuildingModel\");\n\t\tD2_ORIGIN_SET_CELL(cop->type, cop->pos.vx, cop->pos.vy, cop->pos.vz);\n\t\tmodel = Z > DRAW_LOD_DIST_LOW ? pLodModels[cop->type] : modelpointers[cop->type];\n#ifdef D2_T3D_WORLD\n\t\tif (d2_t3d_has_model(cop->type))\n\t\t{\n\t\t\td2_t3d_queue_building(cop->type, cop->yang, Z, C2_TRX, C2_TRY, C2_TRZ);\n\t\t\tdrawlimit = (int)(current->primptr - current->primtab);\n\t\t\tif (PRIMTAB_SIZE - drawlimit < 60000)\n\t\t\t\tbreak;\n\t\t\tobjects++;\n\t\t\tcontinue;\n\t\t}\n#endif")
 
 P('Game/C/draw.c',
   "numShadows = 0;\n\n\twhile (numFound--)",
