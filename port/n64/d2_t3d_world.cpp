@@ -421,8 +421,8 @@ void d2_t3d_draw_queued_buildings(void)
 
                 T3DVec3 screenPos;
                 t3d_viewport_calc_viewspace_pos(&s_t3d_viewport, &screenPos, &worldPos);
-                float t3d_sx = 160.0f + screenPos.v[0] * 160.0f;
-                float t3d_sy = 120.0f - screenPos.v[1] * 120.0f;
+                float t3d_sx = screenPos.v[0];
+                float t3d_sy = screenPos.v[1];
 
                 debugf("[T3D_VAL] model=%d v0=(%.0f,%.0f,%.0f) GTE=(%.2f, %.2f) T3D=(%.2f, %.2f) diff=(%.2f, %.2f)\n",
                        mid, vx, vy, vz, gte_sx, gte_sy, t3d_sx, t3d_sy,
