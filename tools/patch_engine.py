@@ -211,7 +211,7 @@ void d2_swap_model(void *mp, int size)
 		d2_swap32_array(b + o, 1);
 		k = *(int*)(b + o);
 		if (k > 0 && k < 1000)
-			d2_swap16_array(b + o + 4, k * 11);
+			d2_swap16_array(b + o + 4, k * 10);   // COLLISION_PACKET = 10 shorts (20 bytes)
 	}
 }
 
