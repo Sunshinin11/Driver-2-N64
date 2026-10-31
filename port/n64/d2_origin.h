@@ -15,6 +15,8 @@ struct D2OriginRecord {
     int cell_pos[3];
     short sxy[4][2];
     short sz[4];
+    int opz;
+    int otz;
 };
 
 void d2_origin_init(void);
@@ -23,6 +25,7 @@ void d2_origin_set_cell(int model_type, int cx, int cy, int cz);
 void d2_origin_set_scope(const char *func_name);
 const char *d2_origin_get_scope(void);
 void d2_origin_tag(const void *prim, const char *func, int model_type, const int cell_pos[3], int ptype, const short sxy[4][2], const short sz[4]);
+void d2_origin_tag_cull(const void *prim, const char *func, int model_type, const int cell_pos[3], int ptype, const short sxy[4][2], const short sz[4], int opz, int otz);
 void d2_origin_tag_auto(const void *prim);
 const struct D2OriginRecord *d2_origin_lookup(const void *prim);
 
@@ -38,6 +41,7 @@ void d2_transdbg_inspect(const void *prim, int code, int semi, int bm, int tpage
 #define D2_ORIGIN_SET_CELL(m, x, y, z) d2_origin_set_cell(m, x, y, z)
 #define D2_ORIGIN_SET_SCOPE(f)         d2_origin_set_scope(f)
 #define D2_ORIGIN_TAG(p, f, m, c, pt, xy, z) d2_origin_tag(p, f, m, c, pt, xy, z)
+#define D2_ORIGIN_TAG_CULL(p, f, m, c, pt, xy, z, opz, otz) d2_origin_tag_cull(p, f, m, c, pt, xy, z, opz, otz)
 #define D2_ORIGIN_TAG_AUTO(p)          d2_origin_tag_auto(p)
 
 #else // !D2_ORIGIN
@@ -45,6 +49,7 @@ void d2_transdbg_inspect(const void *prim, int code, int semi, int bm, int tpage
 #define D2_ORIGIN_SET_CELL(m, x, y, z) ((void)0)
 #define D2_ORIGIN_SET_SCOPE(f)         ((void)0)
 #define D2_ORIGIN_TAG(p, f, m, c, pt, xy, z) ((void)0)
+#define D2_ORIGIN_TAG_CULL(p, f, m, c, pt, xy, z, opz, otz) ((void)0)
 #define D2_ORIGIN_TAG_AUTO(p)          ((void)0)
 
 #endif // D2_ORIGIN

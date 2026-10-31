@@ -48,6 +48,11 @@ const char *d2_origin_get_scope(void)
 
 void d2_origin_tag(const void *prim, const char *func, int model_type, const int cell_pos[3], int ptype, const short sxy[4][2], const short sz[4])
 {
+    d2_origin_tag_cull(prim, func, model_type, cell_pos, ptype, sxy, sz, 0, 0);
+}
+
+void d2_origin_tag_cull(const void *prim, const char *func, int model_type, const int cell_pos[3], int ptype, const short sxy[4][2], const short sz[4], int opz, int otz)
+{
     if (!prim) return;
     unsigned int h = (((uintptr_t)prim >> 2) ^ ((uintptr_t)prim >> 8)) & ORIGIN_TABLE_MASK;
     for (int i = 0; i < 32; i++) {
@@ -70,6 +75,8 @@ void d2_origin_tag(const void *prim, const char *func, int model_type, const int
             else memset(s_originTable[idx].sxy, 0, sizeof(s_originTable[idx].sxy));
             if (sz) memcpy(s_originTable[idx].sz, sz, sizeof(s_originTable[idx].sz));
             else memset(s_originTable[idx].sz, 0, sizeof(s_originTable[idx].sz));
+            s_originTable[idx].opz = opz;
+            s_originTable[idx].otz = otz;
             return;
         }
     }
@@ -79,7 +86,7 @@ void d2_origin_tag_auto(const void *prim)
 {
     if (!prim) return;
     if (d2_origin_lookup(prim)) return; // already tagged
-    d2_origin_tag(prim, s_curScope, s_curModelType, s_curCellPos, -1, NULL, NULL);
+    d2_origin_tag_cull(prim, s_curScope, s_curModelType, s_curCellPos, -1, NULL, NULL, 0, 0);
 }
 
 const D2OriginRecord *d2_origin_lookup(const void *prim)
@@ -96,14 +103,13 @@ const D2OriginRecord *d2_origin_lookup(const void *prim)
 
 void d2_origin_check_large(const void *prim, int code, int tpage, int clut, const short xs[4], const short ys[4], const unsigned char us[4], const unsigned char vs[4], int nv)
 {
-    return; // silenciado para não desacelerar o Ares durante a investigação de transparência
     short minx = xs[0], maxx = xs[0], miny = ys[0], maxy = ys[0];
     for (int i = 1; i < nv; i++) {
         if (xs[i] < minx) minx = xs[i]; if (xs[i] > maxx) maxx = xs[i];
         if (ys[i] < miny) miny = ys[i]; if (ys[i] > maxy) maxy = ys[i];
     }
     int w = maxx - minx, h = maxy - miny;
-    if (w > 200 || h > 200) {
+    if (w > 150 || h > 150) {
         const D2OriginRecord *rec = d2_origin_lookup(prim);
         const char *func = rec ? rec->func_name : (s_curScope ? s_curScope : "UNKNOWN_ORIGIN");
         int model = rec ? rec->model_type : s_curModelType;
@@ -111,15 +117,15 @@ void d2_origin_check_large(const void *prim, int code, int tpage, int clut, cons
         int cx = rec ? rec->cell_pos[0] : s_curCellPos[0];
         int cy = rec ? rec->cell_pos[1] : s_curCellPos[1];
         int cz = rec ? rec->cell_pos[2] : s_curCellPos[2];
-        debugf("[ORIGIN-LARGE] f=%d prim=%p func=%s model=%d cell=(%d,%d,%d) ptype=%d w=%d h=%d code=0x%02X tpage=0x%04X clut=0x%04X xy=[(%d,%d),(%d,%d),(%d,%d),(%d,%d)] uv=[(%d,%d),(%d,%d),(%d,%d),(%d,%d)]\n",
+        debugf("[ORIGIN-LARGE] f=%d prim=%p func=%s model=%d cell=(%d,%d,%d) ptype=0x%02X w=%d h=%d code=0x%02X tpage=0x%04X clut=0x%04X sxy=[(%d,%d),(%d,%d),(%d,%d),(%d,%d)]\n",
             d2_rdp_frames, prim, func, model, cx, cy, cz, ptype, w, h, code, (unsigned short)tpage, (unsigned short)clut,
-            xs[0], ys[0], xs[1], ys[1], xs[2], ys[2], nv > 3 ? xs[3] : 0, nv > 3 ? ys[3] : 0,
-            us ? us[0] : 0, vs ? vs[0] : 0, us ? us[1] : 0, vs ? vs[1] : 0, us ? us[2] : 0, vs ? vs[2] : 0, (us && nv > 3) ? us[3] : 0, (vs && nv > 3) ? vs[3] : 0);
-        if (rec && (rec->sz[0] || rec->sz[1] || rec->sz[2] || rec->sz[3])) {
-            debugf("    orig_sxy=[(%d,%d),(%d,%d),(%d,%d),(%d,%d)] orig_sz=[%d,%d,%d,%d]\n",
+            xs[0], ys[0], xs[1], ys[1], xs[2], ys[2], nv > 3 ? xs[3] : 0, nv > 3 ? ys[3] : 0);
+        if (rec) {
+            debugf("    orig_sxy=[(%d,%d),(%d,%d),(%d,%d),(%d,%d)] orig_sz=[%d,%d,%d,%d] opz=%d otz=%d\n",
                 rec->sxy[0][0], rec->sxy[0][1], rec->sxy[1][0], rec->sxy[1][1],
                 rec->sxy[2][0], rec->sxy[2][1], rec->sxy[3][0], rec->sxy[3][1],
-                rec->sz[0], rec->sz[1], rec->sz[2], rec->sz[3]);
+                rec->sz[0], rec->sz[1], rec->sz[2], rec->sz[3],
+                rec->opz, rec->otz);
         }
     }
 }

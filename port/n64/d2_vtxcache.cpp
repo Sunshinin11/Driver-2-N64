@@ -114,7 +114,8 @@ void Tile1x1(MODEL *model)
 	{
 		ptype = polys->id & 0x1f;
 		const VCEnt *A = vc_get(polys->v0), *B = vc_get(polys->v1), *C = vc_get(polys->v3);
-		if (vc_nclip(A->xy, B->xy, C->xy) > 0)
+		const int opz = vc_nclip(A->xy, B->xy, C->xy);
+		if (opz > 0)
 		{
 			const VCEnt *D = vc_get(polys->v2);
 			prims = (POLY_FT4 *)plotContext.primptr;
@@ -139,7 +140,7 @@ void Tile1x1(MODEL *model)
 #ifdef D2_ORIGIN
 			short _sxy[4][2] = { {vc_sx(A->xy), vc_sy(A->xy)}, {vc_sx(B->xy), vc_sy(B->xy)}, {vc_sx(C->xy), vc_sy(C->xy)}, {vc_sx(D->xy), vc_sy(D->xy)} };
 			short _sz[4] = { (short)A->z, (short)B->z, (short)C->z, (short)D->z };
-			d2_origin_tag(prims, "Tile1x1", -1, NULL, ptype, _sxy, _sz);
+			d2_origin_tag_cull(prims, "Tile1x1", -1, NULL, ptype, _sxy, _sz, opz, Z);
 #endif
 			addPrim(plotContext.ot + (Z >> 1) + ofse, prims);
 			plotContext.primptr += sizeof(POLY_FT4);
@@ -171,7 +172,8 @@ void Tile1x1Lit(MODEL *model)
 	{
 		ptype = polys->id & 0x1f;
 		const VCEnt *A = vc_get_lit(polys->v0), *B = vc_get_lit(polys->v1), *C = vc_get_lit(polys->v3);
-		if (vc_nclip(A->xy, B->xy, C->xy) > 0)
+		const int opz = vc_nclip(A->xy, B->xy, C->xy);
+		if (opz > 0)
 		{
 			const VCEnt *D = vc_get_lit(polys->v2);
 			prims = (POLY_GT4 *)plotContext.primptr;
@@ -205,7 +207,7 @@ void Tile1x1Lit(MODEL *model)
 #ifdef D2_ORIGIN
 			short _sxy[4][2] = { {vc_sx(A->xy), vc_sy(A->xy)}, {vc_sx(B->xy), vc_sy(B->xy)}, {vc_sx(C->xy), vc_sy(C->xy)}, {vc_sx(D->xy), vc_sy(D->xy)} };
 			short _sz[4] = { (short)A->z, (short)B->z, (short)C->z, (short)D->z };
-			d2_origin_tag(prims, "Tile1x1Lit", -1, NULL, ptype, _sxy, _sz);
+			d2_origin_tag_cull(prims, "Tile1x1Lit", -1, NULL, ptype, _sxy, _sz, opz, Z);
 #endif
 			addPrim(plotContext.ot + (Z >> 1) + ofse, prims);
 			plotContext.primptr += sizeof(POLY_GT4);
@@ -268,7 +270,7 @@ void drawMesh(MVERTEX (*VSP)[5][5], int m, int n, _pct *pc)
 #ifdef D2_ORIGIN
 			short _sxy[4][2] = { {vc_sx(xy[mp[0]]), vc_sy(xy[mp[0]])}, {vc_sx(xy[mp[1]]), vc_sy(xy[mp[1]])}, {vc_sx(xy[mp[2]]), vc_sy(xy[mp[2]])}, {vc_sx(xy[mp[3]]), vc_sy(xy[mp[3]])} };
 			short _sz[4] = { (short)z[mp[0]], (short)z[mp[1]], (short)z[mp[2]], (short)z[mp[3]] };
-			d2_origin_tag(prim, "drawMesh", -1, NULL, 0, _sxy, _sz);
+			d2_origin_tag_cull(prim, "drawMesh", -1, NULL, 0, _sxy, _sz, opz, zz);
 #endif
 			addPrim(pc->ot + (zz >> 1), prim);
 			prim++;
@@ -328,7 +330,7 @@ void drawMeshLit(MVERTEX (*VSP)[5][5], int m, int n, _pct *pc)
 #ifdef D2_ORIGIN
 			short _sxy[4][2] = { {vc_sx(xy[mp[0]]), vc_sy(xy[mp[0]])}, {vc_sx(xy[mp[1]]), vc_sy(xy[mp[1]])}, {vc_sx(xy[mp[2]]), vc_sy(xy[mp[2]])}, {vc_sx(xy[mp[3]]), vc_sy(xy[mp[3]])} };
 			short _sz[4] = { (short)z[mp[0]], (short)z[mp[1]], (short)z[mp[2]], (short)z[mp[3]] };
-			d2_origin_tag(prim, "drawMeshLit", -1, NULL, 0, _sxy, _sz);
+			d2_origin_tag_cull(prim, "drawMeshLit", -1, NULL, 0, _sxy, _sz, opz, zz);
 #endif
 			addPrim(pc->ot + (zz >> 1), prim);
 			prim++;
@@ -408,7 +410,7 @@ void PlotBuildingModel(MODEL *model, int rot, _pct *pc)
 #ifdef D2_ORIGIN
 			short _sxy[4][2] = { {vc_sx(A->xy), vc_sy(A->xy)}, {vc_sx(B->xy), vc_sy(B->xy)}, {vc_sx(C->xy), vc_sy(C->xy)}, {vc_sx(D->xy), vc_sy(D->xy)} };
 			short _sz[4] = { (short)A->z, (short)B->z, (short)C->z, (short)D->z };
-			d2_origin_tag(prims, "PlotBuildingModel", -1, NULL, ptype, _sxy, _sz);
+			d2_origin_tag_cull(prims, "PlotBuildingModel", -1, NULL, ptype, _sxy, _sz, opz, Z);
 #endif
 			addPrim(pc->ot + (Z >> 1), prims);
 			pc->primptr += sizeof(POLY_FT4);
@@ -504,7 +506,7 @@ void PlotBuildingModelSubdivNxN(MODEL *model, int rot, _pct *pc, int n)
 #ifdef D2_ORIGIN
 				short _sxy[4][2] = { {vc_sx(A->xy), vc_sy(A->xy)}, {vc_sx(B->xy), vc_sy(B->xy)}, {vc_sx(C->xy), vc_sy(C->xy)}, {vc_sx(D->xy), vc_sy(D->xy)} };
 				short _sz[4] = { (short)A->z, (short)B->z, (short)C->z, (short)D->z };
-				d2_origin_tag(prims, "PlotBuildingModelSubdivNxN", -1, NULL, ptype, _sxy, _sz);
+				d2_origin_tag_cull(prims, "PlotBuildingModelSubdivNxN", -1, NULL, ptype, _sxy, _sz, opz, Z);
 #endif
 				addPrim(pc->ot + (Z >> 1), prims);
 				pc->primptr += sizeof(POLY_FT4);

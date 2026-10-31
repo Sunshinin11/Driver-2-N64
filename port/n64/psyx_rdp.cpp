@@ -1268,7 +1268,7 @@ static void tri_core(const PV *A, const PV *B, const PV *C, int page, int clut)
 #ifdef D2_ORIGIN
     {
         int tw = (mxx - mnx) >> 2, th = (mxy - mny) >> 2;
-        if (tw > 200 || th > 200) {
+        if (tw > 150 || th > 150) {
             short xs[4] = { (short)(X4[0] >> 2), (short)(X4[1] >> 2), (short)(X4[2] >> 2), 0 };
             short ys[4] = { (short)(Y4[0] >> 2), (short)(Y4[1] >> 2), (short)(Y4[2] >> 2), 0 };
             unsigned char us[4] = { (unsigned char)(v[0]->s32 >> 5), (unsigned char)(v[1]->s32 >> 5), (unsigned char)(v[2]->s32 >> 5), 0 };
