@@ -579,9 +579,14 @@ static void set_mode(bool textured, int fmt, BlendMode blend)
 
     if (rgba_mode != s_curRgbaMode)
     {
+        s_lastUp.slot = 0;
         s_lastUp.clut = -1;
         s_lastUp.palEnt = 0;
+        s_lastUp.palGen = 0;
 #ifdef D2_TEXWIN
+        s_leanTiles = false;
+        s_tmemWin = false;
+        s_winBase = -1;
 #ifdef D2_PALBANK
         banks_invalidate();
 #endif
@@ -592,18 +597,6 @@ static void set_mode(bool textured, int fmt, BlendMode blend)
     int key = textured ? (1 + fmt) * 8 + (int)blend : (int)blend;
     if (key == s_modeKey) return;
     s_modeKey = key;
-    s_lastUp.slot = 0;     // o estado de textura se perde ao trocar de modo (palette/tlut)
-    s_lastUp.clut = -1;
-    s_lastUp.palEnt = 0;
-#ifdef D2_TEXWIN
-    s_leanTiles = false;
-    s_tmemWin = false;
-    s_winBase = -1;
-#ifdef D2_PALBANK
-    s_curBank = -1;
-    s_pbClut = -1;
-#endif
-#endif
 
     rdpq_set_mode_standard();
     rdpq_mode_antialias(AA_NONE);
@@ -893,7 +886,7 @@ static bool upload_region(int page, int clut, int u0, int v0, int w, int h, int 
                 data_cache_hit_writeback(e->pal, 32);
                 e->clut = pkey; e->sig = sig; e->valid = 1; e->gen = ++s_genCounter;
             }
-            if (s_lastUp.slot == 0 || s_lastUp.fmt != s_texFormat || s_lastUp.palEnt != e || s_lastUp.palGen != e->gen || s_lastUp.clut != pkey)
+            if (s_lastUp.fmt != s_texFormat || s_lastUp.palEnt != e || s_lastUp.palGen != e->gen || s_lastUp.clut != pkey)
             {
                 rdpq_tex_upload_tlut(e->pal, 0, 16); s_cTlut++; s_winBase = -1; s_bank[0].clut = -1;
                 e->use = ++s_useCounter;
@@ -903,7 +896,7 @@ static bool upload_region(int page, int clut, int u0, int v0, int w, int h, int 
 #else
         if (false) {}
 #endif
-        else if (paletted && (s_lastUp.clut != pkey || s_lastUp.fmt != s_texFormat || s_lastUp.palVer != s_vramWrites || s_lastUp.slot == 0))
+        else if (paletted && (s_lastUp.clut != pkey || s_lastUp.fmt != s_texFormat || s_lastUp.palVer != s_vramWrites))
         {
             const int cx = (clut & 63) * 16, cy = (clut & 0xFFFF) >> 6;
             const unsigned short *src = vram + ((cy & 511) << 10);
@@ -919,12 +912,6 @@ static bool upload_region(int page, int clut, int u0, int v0, int w, int h, int 
 #endif
             s_palUse[s_palIdx] = ++s_useCounter;
             s_lastUp.clut = pkey; s_lastUp.fmt = s_texFormat; s_lastUp.palVer = s_vramWrites; s_lastUp.palEnt = 0;
-        }
-        else if (s_texFormat == TF_8_BIT)
-        {
-            // paleta de 256 cores: reenvia a cada bloco (algo sobrescreve a metade alta da TMEM entre triangulos; corrigia o loading)
-            rdpq_tex_upload_tlut(s_palRing[s_palIdx], 0, 256); s_cTlut++; banks_invalidate();
-            s_palUse[s_palIdx] = ++s_useCounter;
         }
     }
     if (useShadow)
@@ -1019,7 +1006,7 @@ static bool upload_region(int page, int clut, int u0, int v0, int w, int h, int 
 static bool upload_pal(int clut)
 {
     const int pkey = clut;
-    if (s_lastUp.clut == pkey && s_lastUp.fmt == s_texFormat && s_lastUp.palVer == s_vramWrites && s_lastUp.slot != 0) return false;
+    if (s_lastUp.clut == pkey && s_lastUp.fmt == s_texFormat && s_lastUp.palVer == s_vramWrites) return false;
     const int cx = (clut & 63) * 16, cy = (clut & 0xFFFF) >> 6;
     const unsigned short *src = vram + ((cy & 511) << 10);
     const int n = s_texFormat == TF_4_BIT ? 16 : 256;
