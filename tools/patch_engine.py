@@ -762,6 +762,10 @@ P('Game/C/targets.c',
   "void DrawTargetArrowModel(TARGET_ARROW_MODEL *pTargetArrowModel, VECTOR *pPosition, int shadow, int invert)\n{\n\tD2_ORIGIN_SET_SCOPE(\"DrawTargetArrow\");\n\tD2_ORIGIN_SET_CELL(999, pPosition ? pPosition->vx : 0, pPosition ? pPosition->vy : 0, pPosition ? pPosition->vz : 0);")
 
 P('Game/C/targets.c',
+  "\t\ttri_indices += 3;\n\t\tgte_rtpt();\n\n\t\tsetPolyF3(poly);",
+  "\t\ttri_indices += 3;\n\t\tgte_rtpt();\n\t\tconst unsigned int _h = (unsigned short)C2_H;\n\t\tif (2 * (unsigned int)C2_SZ1 <= _h || 2 * (unsigned int)C2_SZ2 <= _h || 2 * (unsigned int)C2_SZ3 <= _h)\n\t\t\tcontinue;\n\n\t\tsetPolyF3(poly);")
+
+P('Game/C/targets.c',
   "\t\taddPrim(current->ot + z, poly);\n\n\t\tcurrent->primptr += sizeof(POLY_F3);",
   "\t\t#ifdef D2_ORIGIN\n\t\tshort _sxy[4][2] = { {poly->x0, poly->y0}, {poly->x1, poly->y1}, {poly->x2, poly->y2}, {0, 0} };\n\t\tshort _sz[4] = { (short)MFC2(17), (short)MFC2(18), (short)MFC2(19), 0 };\n\t\td2_origin_tag_cull(poly, \"DrawTargetArrow\", 999, NULL, 0x20, _sxy, _sz, 0, z);\n\t\t#endif\n\t\taddPrim(current->ot + z, poly);\n\n\t\tcurrent->primptr += sizeof(POLY_F3);")
 
