@@ -109,6 +109,10 @@ D2_T3D_SMOKE ?= 0
 ifeq ($(D2_T3D_SMOKE),1)
 D2_OPT += -DD2_T3D_SMOKE=1
 endif
+D2_T3D_DIAG ?= 0
+ifeq ($(D2_T3D_DIAG),1)
+D2_OPT += -DD2_T3D_DIAG=1
+endif
 D2_T3D_STATS ?= 0
 ifeq ($(D2_T3D_STATS),1)
 D2_OPT += -DD2_T3D_STATS=1
