@@ -14,3 +14,4 @@ with open('filesystem_d2/DRIVER2/LEVELS/CHICAGO.LEV', 'rb') as f:
         # RLE segue as paletas!
         rle_sample = f.read(32)
         print(f"First 16 bytes of RLE: {list(rle_sample[:16])}")
+

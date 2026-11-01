@@ -3,6 +3,7 @@
 #include <t3d/t3dmath.h>
 #include <t3d/t3dmodel.h>
 #include <stdlib.h>
+#include <math.h>
 
 #include "d2_t3d_world.h"
 
@@ -27,6 +28,7 @@ extern XYPAIR *permlist;
 #define D2_T3D_MAX_QUEUED_TILES 192
 #define D2_T3D_MAX_QUEUED_BLDS  96
 #define D2_T3D_MAX_MATS         (D2_T3D_MAX_QUEUED_TILES + D2_T3D_MAX_QUEUED_BLDS)
+#define T3D_VERT_WINDOW         32
 
 // Vertices for all converted world models (9216 verts = 4608 packed structs = 144 KB)
 static T3DVertPacked s_t3d_vtx_pool[D2_T3D_MAX_VERTS / 2] __attribute__((aligned(16)));
@@ -71,45 +73,97 @@ static int s_t3d_models_converted = 0;
 static int s_t3d_tiles_converted = 0;
 static int s_t3d_blds_converted = 0;
 
-static sprite_t* s_tex_bld1 = NULL;
-static sprite_t* s_tex_tile4 = NULL;
+// --------------------------------------------------------------------------
+// ESTRUTURA DE MATERIAIS CI8 NATIVOS DO DRIVER 2
+// --------------------------------------------------------------------------
+struct D2Material {
+    int tset;
+    int tid;
+    int u_min;
+    int v_min;
+    int width;
+    int height;
+    sprite_t* sp_top; // Bloco superior V in [0..31]
+    sprite_t* sp_bot; // Bloco inferior V in [32..63] (NULL se altura <= 32)
+};
+
+#define D2_MAX_MATERIALS 8
+static D2Material s_materials[D2_MAX_MATERIALS];
+static int s_material_count = 0;
+
+#ifdef D2_T3D_DIAG
 static sprite_t* s_tex_bld234_orig = NULL;
-static sprite_t* s_tex_bld234_top = NULL;
+static sprite_t* s_tex_bld234_top  = NULL;
+static sprite_t* s_tex_bld234_bot  = NULL;
+#endif
+
+static sprite_t* load_opt_sprite(const char* path)
+{
+    int fd = dfs_open(path + 5); // skip "rom:/"
+    if (fd < 0) return NULL;
+    dfs_close(fd);
+    sprite_t* sp = sprite_load(path);
+    if (sp) {
+        debugf("[T3D_TEX] Carregado %s (w=%d, h=%d)\n", path, sp->width, sp->height);
+    }
+    return sp;
+}
+
+static void register_material(int tset, int tid, int u_min, int v_min, int w, int h,
+                              const char* top_path, const char* bot_path)
+{
+    if (s_material_count >= D2_MAX_MATERIALS) return;
+    D2Material& mat = s_materials[s_material_count++];
+    mat.tset = tset;
+    mat.tid = tid;
+    mat.u_min = u_min;
+    mat.v_min = v_min;
+    mat.width = w;
+    mat.height = h;
+    mat.sp_top = top_path ? load_opt_sprite(top_path) : NULL;
+    mat.sp_bot = bot_path ? load_opt_sprite(bot_path) : NULL;
+}
+
+static const D2Material* d2_get_material(int tset, int tid)
+{
+    for (int i = 0; i < s_material_count; i++) {
+        if (s_materials[i].tset == tset && s_materials[i].tid == tid && s_materials[i].sp_top != NULL) {
+            return &s_materials[i];
+        }
+    }
+    return NULL;
+}
 
 static void d2_t3d_load_proof_textures(void)
 {
-    if (!s_tex_bld234_orig) {
-        s_tex_bld234_orig = sprite_load("rom:/TEX/bld234_64x64_orig.sprite");
-        if (s_tex_bld234_orig) {
-            debugf("[T3D_TEX] Carregado bld234_64x64_orig.sprite (w=%d, h=%d)\n", s_tex_bld234_orig->width, s_tex_bld234_orig->height);
-        } else {
-            debugf("[T3D_TEX] AVISO: Falha ao carregar bld234_64x64_orig.sprite\n");
-        }
-    }
-    if (!s_tex_bld234_top) {
-        s_tex_bld234_top = sprite_load("rom:/TEX/bld234_top32.sprite");
-        if (s_tex_bld234_top) {
-            debugf("[T3D_TEX] Carregado bld234_top32.sprite (w=%d, h=%d)\n", s_tex_bld234_top->width, s_tex_bld234_top->height);
-        } else {
-            debugf("[T3D_TEX] AVISO: Falha ao carregar bld234_top32.sprite\n");
-        }
-    }
-    if (!s_tex_bld1) {
-        s_tex_bld1 = sprite_load("rom:/TEX/bld1.sprite");
-        if (s_tex_bld1) {
-            debugf("[T3D_TEX] Carregado bld1.sprite (w=%d, h=%d)\n", s_tex_bld1->width, s_tex_bld1->height);
-        } else {
-            debugf("[T3D_TEX] AVISO: Falha ao carregar bld1.sprite\n");
-        }
-    }
-    if (!s_tex_tile4) {
-        s_tex_tile4 = sprite_load("rom:/TEX/tile4.sprite");
-        if (s_tex_tile4) {
-            debugf("[T3D_TEX] Carregado tile4.sprite (w=%d, h=%d)\n", s_tex_tile4->width, s_tex_tile4->height);
-        } else {
-            debugf("[T3D_TEX] AVISO: Falha ao carregar tile4.sprite\n");
-        }
-    }
+    if (s_material_count > 0) return;
+
+#ifdef D2_T3D_DIAG
+    if (!s_tex_bld234_orig) s_tex_bld234_orig = load_opt_sprite("rom:/TEX/bld234_64x64_orig.sprite");
+    if (!s_tex_bld234_top)  s_tex_bld234_top  = load_opt_sprite("rom:/TEX/bld234_top32.sprite");
+    if (!s_tex_bld234_bot)  s_tex_bld234_bot  = load_opt_sprite("rom:/TEX/bld234_bot32.sprite");
+#endif
+
+    // Registro de materiais CI8 (resolução por polígono tset/tid nos modelos migrados)
+    // 1. Fachada Principal Model 234 (Chicago)
+    register_material(5, 6, 64, 0, 64, 64,
+                      "rom:/TEX/bld234_top32.sprite", "rom:/TEX/bld234_bot32.sprite");
+
+    // 2. Fachada Principal Model 235 (Chicago)
+    register_material(5, 0, 0, 0, 64, 64,
+                      "rom:/TEX/bld235_top32.sprite", "rom:/TEX/bld235_bot32.sprite");
+
+    // 3. Rua / Asfalto Mission 1 (Model 83, Model 108)
+    register_material(0, 10, 64, 128, 64, 64,
+                      "rom:/TEX/road_m1_top32.sprite", "rom:/TEX/road_m1_bot32.sprite");
+
+    // 4. Edifício Model 1
+    register_material(0, 4, 0, 88, 64, 64,
+                      "rom:/TEX/bld1_top32.sprite", "rom:/TEX/bld1_bot32.sprite");
+
+    // 5. Bloco Model 4
+    register_material(0, 11, 0, 24, 64, 64,
+                      "rom:/TEX/tile4_top32.sprite", "rom:/TEX/tile4_bot32.sprite");
 }
 
 typedef struct {
@@ -301,6 +355,50 @@ void d2_t3d_init(void)
            (int)sizeof(s_t3d_mat_pool), (int)sizeof(s_t3d_mat_pool) / 1024);
 }
 
+// --------------------------------------------------------------------------
+// ESTRUTURAS AUXILIARES PARA PARTIÇÃO E EMISSÃO DE POLÍGONOS
+// --------------------------------------------------------------------------
+struct PolyVert {
+    SVECTOR pos;
+    float u, v;       // UVs locais no espaço de textura (u in [0..63], v in [0..63])
+    uint32_t col;     // RGBA32
+};
+
+static PolyVert interpolate_poly_vert(const PolyVert& a, const PolyVert& b, float target_v)
+{
+    PolyVert out;
+    float denom = b.v - a.v;
+    float t = (fabsf(denom) > 1e-4f) ? ((target_v - a.v) / denom) : 0.0f;
+    if (t < 0.0f) t = 0.0f;
+    else if (t > 1.0f) t = 1.0f;
+
+    out.pos.vx = (short)((float)a.pos.vx + t * ((float)b.pos.vx - (float)a.pos.vx) + 0.5f);
+    out.pos.vy = (short)((float)a.pos.vy + t * ((float)b.pos.vy - (float)a.pos.vy) + 0.5f);
+    out.pos.vz = (short)((float)a.pos.vz + t * ((float)b.pos.vz - (float)a.pos.vz) + 0.5f);
+    out.pos.pad = 0;
+
+    out.u = a.u + t * (b.u - a.u);
+    out.v = target_v;
+
+    uint32_t ra = (a.col >> 24) & 0xFF, ga = (a.col >> 16) & 0xFF, ba = (a.col >> 8) & 0xFF, aa = a.col & 0xFF;
+    uint32_t rb = (b.col >> 24) & 0xFF, gb = (b.col >> 16) & 0xFF, bb = (b.col >> 8) & 0xFF, ab = b.col & 0xFF;
+    uint32_t r = (uint32_t)((float)ra + t * ((float)rb - (float)ra) + 0.5f);
+    uint32_t g = (uint32_t)((float)ga + t * ((float)gb - (float)ga) + 0.5f);
+    uint32_t bl = (uint32_t)((float)ba + t * ((float)bb - (float)ba) + 0.5f);
+    uint32_t al = (uint32_t)((float)aa + t * ((float)ab - (float)aa) + 0.5f);
+    out.col = (r << 24) | (g << 16) | (bl << 8) | al;
+    return out;
+}
+
+struct ConvertedPoly {
+    SVECTOR pos[4];
+    int16_t st[4][2];
+    uint32_t col[4];
+    bool is_tri;
+    const D2Material* mat;
+    int pass_type; // 0 = untextured/shaded, 1 = textured top, 2 = textured bot
+};
+
 void d2_t3d_on_models_loaded(void)
 {
     if (!s_t3d_inited) {
@@ -331,6 +429,8 @@ void d2_t3d_on_models_loaded(void)
 
     heap_stats_t hs_before, hs_after;
     sys_get_heap_stats(&hs_before);
+    debugf("[T3D_MEM] === INICIO CONVERSAO MODELOS === Heap livre: %d bytes (usado: %d)\n",
+           hs_before.free, hs_before.used);
 
     int count = num_models_in_pack;
     if (count > MAX_MODEL_SLOTS) count = MAX_MODEL_SLOTS;
@@ -352,15 +452,18 @@ void d2_t3d_on_models_loaded(void)
         }
     }
 
-#define T3D_VERT_WINDOW 64
-
     struct FaceInfo {
         int v[4];
         bool is_tri;
         int sort_ofs;
+        int tset;
+        int tid;
         uint32_t col;
         UV_INFO uv[4];
     };
+
+    static FaceInfo faces[160];
+    static ConvertedPoly s_poly_buffer[160];
 
     // Pass 0: Convert ground tile models FIRST (small vertex footprint, #1 frame cost)
     // Pass 1: Convert static building & road-furniture models SECOND
@@ -395,7 +498,6 @@ void d2_t3d_on_models_loaded(void)
             SVECTOR* src_verts = GET_MODEL_DATA(SVECTOR, model, vertices);
             unsigned char* pblock = (unsigned char*)GET_MODEL_DATA(unsigned char, model, poly_block);
 
-            FaceInfo faces[160];
             int num_faces = 0;
 
             const bool is_water_or_grass = ((model->shape_flags & SHAPE_FLAG_WATER) || (model->flags2 & MODEL_FLAG_GRASS)) != 0;
@@ -440,6 +542,8 @@ void d2_t3d_on_models_loaded(void)
                         fi.v[0] = v0; fi.v[1] = v1; fi.v[2] = v2; fi.v[3] = v3;
                         fi.is_tri = is_tri;
                         fi.sort_ofs = is_tile ? ofse_lut[cur_ttype & 7] : 0;
+                        fi.tset = tset;
+                        fi.tid = tid;
                         fi.col = col;
                         fi.uv[0] = uv0; fi.uv[1] = uv1; fi.uv[2] = uv2; fi.uv[3] = uv3;
                     }
@@ -450,7 +554,6 @@ void d2_t3d_on_models_loaded(void)
             if (num_faces == 0) continue;
 
             // Stable insertion sort on tile faces by sort_ofs descending (229 -> 133 -> 75 -> 0)
-            // so base grass/asphalt quads always draw before coplanar curb/lane-marking strips.
             if (is_tile && num_faces > 1) {
                 for (int i = 1; i < num_faces; i++) {
                     FaceInfo key = faces[i];
@@ -463,12 +566,12 @@ void d2_t3d_on_models_loaded(void)
                 }
             }
 
-            const bool is_textured_proof = (mid == 234 || mid == 1 || mid == 4);
+            // Escopo estrito dos modelos com texturas nativas CI8 nesta etapa (Missão 1 + Take a Ride Chicago)
+            const bool is_target_tex_model = (mid == 234 || mid == 235 || mid == 83 || mid == 108 || mid == 1 || mid == 4);
 
-            // For static buildings (!is_tile), compute smooth per-vertex color from incident faces
-            // so shared vertices are never duplicated (3x memory & RSP transform savings).
+            // Compute smooth per-vertex color for untextured buildings to share vertices (3x savings)
             uint32_t bld_vcol[512];
-            const bool use_bld_vcol = (!is_tile && nverts <= 512 && !is_textured_proof);
+            const bool use_bld_vcol = (!is_tile && nverts <= 512 && !is_target_tex_model);
             if (use_bld_vcol) {
                 uint16_t vr[512] = {}, vg[512] = {}, vb[512] = {}, vc[512] = {};
                 for (int f = 0; f < num_faces; f++) {
@@ -493,20 +596,141 @@ void d2_t3d_on_models_loaded(void)
                 }
             }
 
-            rspq_block_begin();
+            int poly_count = 0;
+            if (is_target_tex_model) {
+                // Resolução de polígonos por material e Sutherland-Hodgman no plano V=32
+                for (int f = 0; f < num_faces; f++) {
+                    if (poly_count >= 150) break;
+                    const D2Material* mat = d2_get_material(faces[f].tset, faces[f].tid);
 
-            if (is_textured_proof) {
-                sprite_t* sp = (mid == 234) ? s_tex_bld234_top : ((mid == 1) ? s_tex_bld1 : s_tex_tile4);
-                if (sp) {
-                    rdpq_sprite_upload(TILE0, sp, NULL);
-                    rdpq_mode_combiner(RDPQ_COMBINER1((TEX0, ZERO, PRIM, ZERO), (ZERO, ZERO, ZERO, ONE)));
-                    t3d_state_set_drawflags((enum T3DDrawFlags)(T3D_FLAG_SHADED | T3D_FLAG_TEXTURED | T3D_FLAG_NO_LIGHT));
+                    if (!mat) {
+                        ConvertedPoly& cp = s_poly_buffer[poly_count++];
+                        cp.mat = NULL;
+                        cp.pass_type = 0;
+                        cp.is_tri = faces[f].is_tri;
+                        const int nc = faces[f].is_tri ? 3 : 4;
+                        for (int k = 0; k < nc; k++) {
+                            int vi = faces[f].v[k];
+                            cp.pos[k] = src_verts[vi];
+                            cp.st[k][0] = 0;
+                            cp.st[k][1] = 0;
+                            cp.col[k] = faces[f].col;
+                        }
+                        continue;
+                    }
+
+                    const int nc = faces[f].is_tri ? 3 : 4;
+                    PolyVert in_verts[4];
+                    uint32_t face_contrast_col = faces[f].col;
+                    if (!is_tile) {
+                        face_contrast_col = apply_wall_contrast(0xFFFFFFFFu,
+                                                                src_verts[faces[f].v[0]],
+                                                                src_verts[faces[f].v[1]],
+                                                                src_verts[faces[f].is_tri ? faces[f].v[2] : faces[f].v[3]]);
+                    } else {
+                        face_contrast_col = 0xFFFFFFFFu;
+                    }
+
+                    for (int k = 0; k < nc; k++) {
+                        in_verts[k].pos = src_verts[faces[f].v[k]];
+                        float ur = (float)((int)faces[f].uv[k].u - mat->u_min);
+                        float vr = (float)((int)faces[f].uv[k].v - mat->v_min);
+                        if (ur < 0.0f) ur = 0.0f; else if (ur > 63.0f) ur = 63.0f;
+                        if (vr < 0.0f) vr = 0.0f; else if (vr > 63.0f) vr = 63.0f;
+                        in_verts[k].u = ur;
+                        in_verts[k].v = vr;
+                        in_verts[k].col = face_contrast_col;
+                    }
+
+                    if (!mat->sp_bot) {
+                        ConvertedPoly& cp = s_poly_buffer[poly_count++];
+                        cp.mat = mat;
+                        cp.pass_type = 1;
+                        cp.is_tri = faces[f].is_tri;
+                        for (int k = 0; k < nc; k++) {
+                            cp.pos[k] = in_verts[k].pos;
+                            int su = (int)(in_verts[k].u + 0.5f);
+                            int sv = (int)(in_verts[k].v + 0.5f);
+                            if (su < 0) su = 0; else if (su > 63) su = 63;
+                            if (sv < 0) sv = 0; else if (sv > 31) sv = 31;
+                            cp.st[k][0] = (int16_t)(su << 5);
+                            cp.st[k][1] = (int16_t)(sv << 5);
+                            cp.col[k] = in_verts[k].col;
+                        }
+                        continue;
+                    }
+
+                    // Particionamento Sutherland-Hodgman V=32
+                    PolyVert top_verts[8];
+                    int top_count = 0;
+                    PolyVert bot_verts[8];
+                    int bot_count = 0;
+
+                    for (int i = 0; i < nc; i++) {
+                        const PolyVert& curr = in_verts[i];
+                        const PolyVert& prev = in_verts[(i + nc - 1) % nc];
+
+                        bool curr_in_top = (curr.v <= 32.0f);
+                        bool prev_in_top = (prev.v <= 32.0f);
+                        if (curr_in_top) {
+                            if (!prev_in_top) top_verts[top_count++] = interpolate_poly_vert(prev, curr, 32.0f);
+                            top_verts[top_count++] = curr;
+                        } else if (prev_in_top) {
+                            top_verts[top_count++] = interpolate_poly_vert(prev, curr, 32.0f);
+                        }
+
+                        bool curr_in_bot = (curr.v >= 32.0f);
+                        bool prev_in_bot = (prev.v >= 32.0f);
+                        if (curr_in_bot) {
+                            if (!prev_in_bot) bot_verts[bot_count++] = interpolate_poly_vert(prev, curr, 32.0f);
+                            bot_verts[bot_count++] = curr;
+                        } else if (prev_in_bot) {
+                            bot_verts[bot_count++] = interpolate_poly_vert(prev, curr, 32.0f);
+                        }
+                    }
+
+                    if (top_count >= 3 && poly_count < 150) {
+                        ConvertedPoly& cp = s_poly_buffer[poly_count++];
+                        cp.mat = mat;
+                        cp.pass_type = 1;
+                        cp.is_tri = (top_count == 3);
+                        for (int k = 0; k < (top_count <= 4 ? top_count : 4); k++) {
+                            cp.pos[k] = top_verts[k].pos;
+                            int su = (int)(top_verts[k].u + 0.5f);
+                            int sv = (int)(top_verts[k].v + 0.5f);
+                            if (su < 0) su = 0; else if (su > 63) su = 63;
+                            if (sv < 0) sv = 0; else if (sv > 31) sv = 31;
+                            cp.st[k][0] = (int16_t)(su << 5);
+                            cp.st[k][1] = (int16_t)(sv << 5);
+                            cp.col[k] = top_verts[k].col;
+                        }
+                    }
+
+                    if (bot_count >= 3 && poly_count < 150) {
+                        ConvertedPoly& cp = s_poly_buffer[poly_count++];
+                        cp.mat = mat;
+                        cp.pass_type = 2;
+                        cp.is_tri = (bot_count == 3);
+                        for (int k = 0; k < (bot_count <= 4 ? bot_count : 4); k++) {
+                            cp.pos[k] = bot_verts[k].pos;
+                            int su = (int)(bot_verts[k].u + 0.5f);
+                            int sv = (int)(bot_verts[k].v - 32.0f + 0.5f);
+                            if (su < 0) su = 0; else if (su > 63) su = 63;
+                            if (sv < 0) sv = 0; else if (sv > 31) sv = 31;
+                            cp.st[k][0] = (int16_t)(su << 5);
+                            cp.st[k][1] = (int16_t)(sv << 5);
+                            cp.col[k] = bot_verts[k].col;
+                        }
+                    }
                 }
             }
 
-            int local_vtx_orig[T3D_VERT_WINDOW];
+            rspq_block_begin();
+
+            SVECTOR local_vtx_pos[T3D_VERT_WINDOW];
             uint32_t local_vtx_col[T3D_VERT_WINDOW];
             int16_t local_vtx_st[T3D_VERT_WINDOW][2];
+            int local_vtx_orig[T3D_VERT_WINDOW];
             int local_vtx_count = 0;
 
             struct LocalFace {
@@ -527,22 +751,22 @@ void d2_t3d_on_models_loaded(void)
                 }
                 int batch_start = s_t3d_vtx_used;
                 for (int k = 0; k < local_vtx_count; k++) {
-                    int orig = local_vtx_orig[k];
+                    const SVECTOR& p = local_vtx_pos[k];
                     uint32_t col = local_vtx_col[k];
                     int vidx = batch_start + k;
                     int packed_idx = vidx / 2;
                     if (!(vidx & 1)) {
-                        s_t3d_vtx_pool[packed_idx].posA[0] = src_verts[orig].vx;
-                        s_t3d_vtx_pool[packed_idx].posA[1] = src_verts[orig].vy;
-                        s_t3d_vtx_pool[packed_idx].posA[2] = src_verts[orig].vz;
+                        s_t3d_vtx_pool[packed_idx].posA[0] = p.vx;
+                        s_t3d_vtx_pool[packed_idx].posA[1] = p.vy;
+                        s_t3d_vtx_pool[packed_idx].posA[2] = p.vz;
                         s_t3d_vtx_pool[packed_idx].rgbaA = col;
                         s_t3d_vtx_pool[packed_idx].normA = 0;
                         s_t3d_vtx_pool[packed_idx].stA[0] = local_vtx_st[k][0];
                         s_t3d_vtx_pool[packed_idx].stA[1] = local_vtx_st[k][1];
                     } else {
-                        s_t3d_vtx_pool[packed_idx].posB[0] = src_verts[orig].vx;
-                        s_t3d_vtx_pool[packed_idx].posB[1] = src_verts[orig].vy;
-                        s_t3d_vtx_pool[packed_idx].posB[2] = src_verts[orig].vz;
+                        s_t3d_vtx_pool[packed_idx].posB[0] = p.vx;
+                        s_t3d_vtx_pool[packed_idx].posB[1] = p.vy;
+                        s_t3d_vtx_pool[packed_idx].posB[2] = p.vz;
                         s_t3d_vtx_pool[packed_idx].rgbaB = col;
                         s_t3d_vtx_pool[packed_idx].normB = 0;
                         s_t3d_vtx_pool[packed_idx].stB[0] = local_vtx_st[k][0];
@@ -578,67 +802,156 @@ void d2_t3d_on_models_loaded(void)
                 batch_face_count = 0;
             };
 
-            auto find_local_vtx = [&](int orig, uint32_t col, int16_t s, int16_t t) -> int {
+            auto find_local_vtx_shared = [&](int orig, uint32_t col) -> int {
                 for (int i = 0; i < local_vtx_count; i++) {
-                    if (local_vtx_orig[i] == orig && local_vtx_col[i] == col &&
-                        local_vtx_st[i][0] == s && local_vtx_st[i][1] == t) return i;
+                    if (local_vtx_orig[i] == orig && local_vtx_col[i] == col) return i;
                 }
                 return -1;
             };
 
-            for (int f = 0; f < num_faces; f++) {
-                const int ncorner = faces[f].is_tri ? 3 : 4;
-                int16_t st_corners[4][2] = {};
-                if (is_textured_proof) {
-                    int u_min = (mid == 234) ? 64 : 0;
-                    int v_min = (mid == 234) ? 0 : ((mid == 1) ? 88 : 24);
-                    for (int k = 0; k < ncorner; k++) {
-                        int u_rel = (int)faces[f].uv[k].u - u_min;
-                        int v_rel = (int)faces[f].uv[k].v - v_min;
-                        if (u_rel < 0) u_rel = 0; else if (u_rel > 63) u_rel = 63;
-                        if (v_rel < 0) v_rel = 0; else if (v_rel > 63) v_rel = 63;
-                        st_corners[k][0] = (int16_t)(u_rel << 5);
-                        st_corners[k][1] = (int16_t)((v_rel >> 1) << 5); // 64x32
-                    }
+            auto find_local_vtx_pos = [&](const SVECTOR& pos, uint32_t col, int16_t s, int16_t t) -> int {
+                for (int i = 0; i < local_vtx_count; i++) {
+                    if (local_vtx_pos[i].vx == pos.vx &&
+                        local_vtx_pos[i].vy == pos.vy &&
+                        local_vtx_pos[i].vz == pos.vz &&
+                        local_vtx_col[i] == col &&
+                        local_vtx_st[i][0] == s &&
+                        local_vtx_st[i][1] == t) return i;
                 }
+                return -1;
+            };
 
+            auto emit_poly = [&](const SVECTOR pos[4], const int16_t st[4][2], const uint32_t cols[4], bool is_tri) {
+                const int ncorner = is_tri ? 3 : 4;
                 int new_needed = 0;
                 for (int k = 0; k < ncorner; k++) {
-                    int orig = faces[f].v[k];
-                    uint32_t vcol = is_textured_proof ? 0xFFFFFFFFu : (use_bld_vcol ? bld_vcol[orig] : faces[f].col);
-                    if (find_local_vtx(orig, vcol, st_corners[k][0], st_corners[k][1]) == -1) new_needed++;
+                    if (find_local_vtx_pos(pos[k], cols[k], st[k][0], st[k][1]) == -1) new_needed++;
                 }
                 if (local_vtx_count + new_needed > T3D_VERT_WINDOW) {
                     flush_window();
-                    if (model_overflow) break;
+                    if (model_overflow) return;
                 }
                 int lv[4] = { 0, 0, 0, 0 };
                 for (int k = 0; k < ncorner; k++) {
-                    int orig = faces[f].v[k];
-                    uint32_t vcol = is_textured_proof ? 0xFFFFFFFFu : (use_bld_vcol ? bld_vcol[orig] : faces[f].col);
-                    int found = find_local_vtx(orig, vcol, st_corners[k][0], st_corners[k][1]);
+                    int found = find_local_vtx_pos(pos[k], cols[k], st[k][0], st[k][1]);
                     if (found != -1) {
                         lv[k] = found;
                     } else {
                         int lidx = local_vtx_count++;
-                        local_vtx_orig[lidx] = orig;
-                        local_vtx_col[lidx] = vcol;
-                        local_vtx_st[lidx][0] = st_corners[k][0];
-                        local_vtx_st[lidx][1] = st_corners[k][1];
+                        local_vtx_pos[lidx] = pos[k];
+                        local_vtx_col[lidx] = cols[k];
+                        local_vtx_st[lidx][0] = st[k][0];
+                        local_vtx_st[lidx][1] = st[k][1];
+                        local_vtx_orig[lidx] = -1;
                         lv[k] = lidx;
                     }
                 }
-                batch_faces[batch_face_count++] = { lv[0], lv[1], lv[2], lv[3], faces[f].is_tri };
-                total_tris += faces[f].is_tri ? 1 : 2;
-            }
+                batch_faces[batch_face_count++] = { lv[0], lv[1], lv[2], lv[3], is_tri };
+                total_tris += is_tri ? 1 : 2;
+            };
 
-            if (!model_overflow) {
-                flush_window();
-            }
+            if (!is_target_tex_model) {
+                // CAMINHO ULTRALEVE E COMPACTO (419 modelos normais: 1 único flush_window, ~350 bytes/bloco)
+                for (int f = 0; f < num_faces; f++) {
+                    const int ncorner = faces[f].is_tri ? 3 : 4;
+                    int new_needed = 0;
+                    for (int k = 0; k < ncorner; k++) {
+                        int orig = faces[f].v[k];
+                        uint32_t vcol = use_bld_vcol ? bld_vcol[orig] : faces[f].col;
+                        if (find_local_vtx_shared(orig, vcol) == -1) new_needed++;
+                    }
+                    if (local_vtx_count + new_needed > T3D_VERT_WINDOW) {
+                        flush_window();
+                        if (model_overflow) break;
+                    }
+                    int lv[4] = { 0, 0, 0, 0 };
+                    for (int k = 0; k < ncorner; k++) {
+                        int orig = faces[f].v[k];
+                        uint32_t vcol = use_bld_vcol ? bld_vcol[orig] : faces[f].col;
+                        int found = find_local_vtx_shared(orig, vcol);
+                        if (found != -1) {
+                            lv[k] = found;
+                        } else {
+                            int lidx = local_vtx_count++;
+                            local_vtx_pos[lidx] = src_verts[orig];
+                            local_vtx_col[lidx] = vcol;
+                            local_vtx_st[lidx][0] = 0;
+                            local_vtx_st[lidx][1] = 0;
+                            local_vtx_orig[lidx] = orig;
+                            lv[k] = lidx;
+                        }
+                    }
+                    batch_faces[batch_face_count++] = { lv[0], lv[1], lv[2], lv[3], faces[f].is_tri };
+                    total_tris += faces[f].is_tri ? 1 : 2;
+                }
+                if (!model_overflow) flush_window();
+            } else {
+                // CAMINHO TEXTURIZADO CI8 (Apenas os modelos alvo da Missão 1 / Take a Ride)
+                bool textured_state_active = false;
 
-            if (is_textured_proof) {
-                rdpq_mode_combiner(RDPQ_COMBINER1((PRIM, ZERO, SHADE, ZERO), (ZERO, ZERO, ZERO, ONE)));
-                t3d_state_set_drawflags((enum T3DDrawFlags)(T3D_FLAG_SHADED | T3D_FLAG_NO_LIGHT));
+                for (int m = 0; m < s_material_count && !model_overflow; m++) {
+                    const D2Material* cur_mat = &s_materials[m];
+
+                    // Subpass TOP
+                    bool started_top = false;
+                    for (int i = 0; i < poly_count; i++) {
+                        if (s_poly_buffer[i].pass_type != 1 || s_poly_buffer[i].mat != cur_mat) continue;
+                        if (!started_top) {
+                            started_top = true;
+                            rdpq_sprite_upload(TILE0, cur_mat->sp_top, NULL);
+                            if (!textured_state_active) {
+                                rdpq_mode_combiner(RDPQ_COMBINER1((TEX0, ZERO, SHADE, ZERO), (ZERO, ZERO, ZERO, ONE)));
+                                t3d_state_set_drawflags((enum T3DDrawFlags)(T3D_FLAG_SHADED | T3D_FLAG_TEXTURED | T3D_FLAG_NO_LIGHT));
+                                textured_state_active = true;
+                            }
+                        }
+                        emit_poly(s_poly_buffer[i].pos, s_poly_buffer[i].st, s_poly_buffer[i].col, s_poly_buffer[i].is_tri);
+                        if (model_overflow) break;
+                    }
+                    if (started_top && !model_overflow) flush_window();
+
+                    // Subpass BOT
+                    if (cur_mat->sp_bot && !model_overflow) {
+                        bool started_bot = false;
+                        for (int i = 0; i < poly_count; i++) {
+                            if (s_poly_buffer[i].pass_type != 2 || s_poly_buffer[i].mat != cur_mat) continue;
+                            if (!started_bot) {
+                                started_bot = true;
+                                rdpq_sprite_upload(TILE0, cur_mat->sp_bot, NULL);
+                                if (!textured_state_active) {
+                                    rdpq_mode_combiner(RDPQ_COMBINER1((TEX0, ZERO, SHADE, ZERO), (ZERO, ZERO, ZERO, ONE)));
+                                    t3d_state_set_drawflags((enum T3DDrawFlags)(T3D_FLAG_SHADED | T3D_FLAG_TEXTURED | T3D_FLAG_NO_LIGHT));
+                                    textured_state_active = true;
+                                }
+                            }
+                            emit_poly(s_poly_buffer[i].pos, s_poly_buffer[i].st, s_poly_buffer[i].col, s_poly_buffer[i].is_tri);
+                            if (model_overflow) break;
+                        }
+                        if (started_bot && !model_overflow) flush_window();
+                    }
+                }
+
+                // Faces untextured do modelo alvo (ex: telhados ou pisos)
+                if (!model_overflow) {
+                    bool started_untextured = false;
+                    for (int i = 0; i < poly_count; i++) {
+                        if (s_poly_buffer[i].pass_type != 0) continue;
+                        if (!started_untextured) {
+                            started_untextured = true;
+                            rdpq_mode_combiner(RDPQ_COMBINER1((PRIM, ZERO, SHADE, ZERO), (ZERO, ZERO, ZERO, ONE)));
+                            t3d_state_set_drawflags((enum T3DDrawFlags)(T3D_FLAG_SHADED | T3D_FLAG_NO_LIGHT));
+                            textured_state_active = false;
+                        }
+                        emit_poly(s_poly_buffer[i].pos, s_poly_buffer[i].st, s_poly_buffer[i].col, s_poly_buffer[i].is_tri);
+                        if (model_overflow) break;
+                    }
+                    if (started_untextured && !model_overflow) flush_window();
+                }
+
+                if (textured_state_active) {
+                    rdpq_mode_combiner(RDPQ_COMBINER1((PRIM, ZERO, SHADE, ZERO), (ZERO, ZERO, ZERO, ONE)));
+                    t3d_state_set_drawflags((enum T3DDrawFlags)(T3D_FLAG_SHADED | T3D_FLAG_NO_LIGHT));
+                }
             }
 
             if (model_overflow) {
@@ -649,7 +962,20 @@ void d2_t3d_on_models_loaded(void)
                 break;
             }
 
+            heap_stats_t hs_pre_blk;
+            sys_get_heap_stats(&hs_pre_blk);
+
             s_t3d_model_blocks[mid] = rspq_block_end();
+
+            heap_stats_t hs_post_blk;
+            sys_get_heap_stats(&hs_post_blk);
+            int blk_bytes = hs_pre_blk.free - hs_post_blk.free;
+
+            if (is_target_tex_model || hs_post_blk.free < 65536) {
+                debugf("[T3D_MID] mid=%3d tile=%d faces_in=%2d polys_out=%2d tris=%2d vtx_used=%4d blk_alloc=%4d heap_free=%d\n",
+                       mid, is_tile, num_faces, poly_count, total_tris, s_t3d_vtx_used, blk_bytes, hs_post_blk.free);
+            }
+
             s_t3d_tile_ofs[mid] = is_tile ? (unsigned char)base_ofse : 0;
 #if defined(D2_T3D_STATS) || defined(D2_ORIGIN_PROF)
             s_t3d_model_triangles[mid] = (unsigned short)total_tris;
@@ -831,83 +1157,46 @@ void d2_t3d_draw_queued_buildings(void)
     float h = (float)scr_z;
     if (h < 1.0f) h = 256.0f;
     float fov = 2.0f * atanf(120.0f / h);
-    s_t3d_viewport._bufferIdx = d2_rdp_frame_count() & 1;
-    t3d_viewport_set_perspective(&s_t3d_viewport, fov, 320.0f / 240.0f, nearP, farP);
+
+    t3d_viewport_set_projection(&s_t3d_viewport, fov, nearP, farP);
     t3d_viewport_look_at(&s_t3d_viewport, &e, &tg, &u);
-    t3d_viewport_attach(&s_t3d_viewport);
-    rdpq_mode_begin();
-        rdpq_set_mode_standard();
-        rdpq_mode_combiner(RDPQ_COMBINER_SHADE);
-        rdpq_mode_blender(0);
-        rdpq_mode_zbuf(false, false);
-    rdpq_mode_end();
-    t3d_state_set_drawflags((enum T3DDrawFlags)(T3D_FLAG_SHADED | T3D_FLAG_NO_LIGHT));
-    static T3DVertPacked smoke_triangle[2] __attribute__((aligned(16))) = {
-        { .posA = { 0, -60, 256 }, .normA = 0, .posB = { 70, 50, 256 }, .normB = 0,
-          .rgbaA = 0xFF0000FF, .rgbaB = 0xFF0000FF, .stA = { 0, 0 }, .stB = { 0, 0 } },
-        { .posA = { -70, 50, 256 }, .normA = 0, .posB = { 0, 0, 256 }, .normB = 0,
-          .rgbaA = 0xFF0000FF, .rgbaB = 0xFF0000FF, .stA = { 0, 0 }, .stB = { 0, 0 } }
-    };
-    static bool s_vtx_init = false;
-    if (!s_vtx_init) { s_vtx_init = true; data_cache_hit_writeback(smoke_triangle, sizeof(smoke_triangle)); }
-    static T3DMat4FP identFP __attribute__((aligned(16)));
-    static bool s_ident_init = false;
-    if (!s_ident_init) { s_ident_init = true; t3d_mat4fp_identity(&identFP); data_cache_hit_writeback(&identFP, sizeof(identFP)); }
-    t3d_matrix_push(&identFP);
-    t3d_vert_load(smoke_triangle, 0, 4);
-    t3d_matrix_pop(1);
-    t3d_tri_draw(0, 1, 2);
-    t3d_tri_draw(0, 2, 1);
-    t3d_tri_sync();
-    s_t3d_tile_queue_count = 0;
-    s_t3d_bld_queue_count = 0;
-    d2_rdp_invalidate_backend_cache();
-    return;
-#else
-    if (s_t3d_tile_queue_count <= 0 && s_t3d_bld_queue_count <= 0) {
-#ifdef D2_T3D_STATS
-        t3d_stat_frame(0);
-#endif
-        return;
-    }
-#ifdef D2_T3D_STATS
-    uint32_t stat_start = t3d_stat_clock();
-#endif
-#ifdef D2_ORIGIN_PROF
-    uint32_t prof_t0 = d2_oprof_cnt0();
-#endif
 
-    rdpq_sync_pipe();
-
-    // Camera look-at (identity with PS1 -> N64 axis flip)
-    T3DVec3 e  = {{ 0.0f,  0.0f,   0.0f }};
-    T3DVec3 tg = {{ 0.0f,  0.0f, 256.0f }};
-    T3DVec3 u  = {{ 0.0f, -1.0f,   0.0f }};
-
-    float nearP = 16.0f, farP = 32768.0f;
-    float h = (float)scr_z;
-    if (h < 1.0f) h = 256.0f;
-
-    float fov = 2.0f * atanf(120.0f / h);
-    int frame_idx = d2_rdp_frame_count() & 1;
-    s_t3d_viewport._bufferIdx = frame_idx;
-
-    t3d_viewport_set_perspective(&s_t3d_viewport, fov, 320.0f / 240.0f, nearP, farP);
-    t3d_viewport_look_at(&s_t3d_viewport, &e, &tg, &u);
+    // Apply viewport matrices for this frame
     t3d_viewport_attach(&s_t3d_viewport);
 
-    // Shaded mode modulated by PRIM color (time-of-day & weather tint), without Z-buffer (Etapa 4)
+    rdpq_set_prim_color(s_tile_tint);
     rdpq_mode_begin();
         rdpq_set_mode_standard();
         rdpq_mode_combiner(RDPQ_COMBINER1((PRIM, ZERO, SHADE, ZERO), (ZERO, ZERO, ZERO, ONE)));
-        rdpq_mode_blender(0);
-        rdpq_mode_zbuf(false, false);
     rdpq_mode_end();
 
     t3d_state_set_drawflags((enum T3DDrawFlags)(T3D_FLAG_SHADED | T3D_FLAG_NO_LIGHT));
 
+    int mat_cursor = 0;
+    t3d_matrix_push_pos(1);
+
+    if (s_t3d_tile_queue_count > 0) {
+        sort_instances_back_to_front(s_t3d_tile_queue, s_t3d_tile_queue_count);
+        for (int i = 0; i < s_t3d_tile_queue_count; i++) {
+            if (mat_cursor >= D2_T3D_MAX_MATS) break;
+            T3DMat4FP* cur_fp = &s_t3d_mat_pool[s_t3d_viewport._bufferIdx][mat_cursor++];
+            build_and_run_instance(s_t3d_tile_queue[i], cur_fp);
+        }
+    }
+
+    if (s_t3d_bld_queue_count > 0) {
+        sort_instances_back_to_front(s_t3d_bld_queue, s_t3d_bld_queue_count);
+        for (int i = 0; i < s_t3d_bld_queue_count; i++) {
+            if (mat_cursor >= D2_T3D_MAX_MATS) break;
+            T3DMat4FP* cur_fp = &s_t3d_mat_pool[s_t3d_viewport._bufferIdx][mat_cursor++];
+            build_and_run_instance(s_t3d_bld_queue[i], cur_fp);
+        }
+    }
+
+    t3d_matrix_pop(1);
+
 #ifdef D2_T3D_DIAG
-    // Teste de diagnóstico isolado: textura CI8 num quadrilátero simples antes do mundo
+    // 3. Teste de diagnóstico isolado APÓS o mundo (para não ser sobrescrito pelos tiles/prédios sem Z-buffer)
     if (s_tex_bld234_top) {
         static T3DMat4FP identFP __attribute__((aligned(16)));
         static bool s_diag_ident_init = false;
@@ -916,28 +1205,46 @@ void d2_t3d_draw_queued_buildings(void)
             t3d_mat4fp_identity(&identFP);
             data_cache_hit_writeback(&identFP, sizeof(identFP));
         }
-        static T3DVertPacked diag_quad[2] __attribute__((aligned(16))) = {
-            { .posA = { -50, -35, 220 }, .normA = 0, .posB = {  50, -35, 220 }, .normB = 0,
+        static T3DVertPacked diag_quad_top[2] __attribute__((aligned(16))) = {
+            { .posA = { -36, -36, 220 }, .normA = 0, .posB = {  36, -36, 220 }, .normB = 0,
               .rgbaA = 0xFFFFFFFF, .rgbaB = 0xFFFFFFFF, .stA = { 0, 0 }, .stB = { 63 << 5, 0 } },
-            { .posA = {  50,  35, 220 }, .normA = 0, .posB = { -50,  35, 220 }, .normB = 0,
+            { .posA = {  36,   0, 220 }, .normA = 0, .posB = { -36,   0, 220 }, .normB = 0,
+              .rgbaA = 0xFFFFFFFF, .rgbaB = 0xFFFFFFFF, .stA = { 63 << 5, 31 << 5 }, .stB = { 0, 31 << 5 } }
+        };
+        static T3DVertPacked diag_quad_bot[2] __attribute__((aligned(16))) = {
+            { .posA = { -36,   0, 220 }, .normA = 0, .posB = {  36,   0, 220 }, .normB = 0,
+              .rgbaA = 0xFFFFFFFF, .rgbaB = 0xFFFFFFFF, .stA = { 0, 0 }, .stB = { 63 << 5, 0 } },
+            { .posA = {  36,  36, 220 }, .normA = 0, .posB = { -36,  36, 220 }, .normB = 0,
               .rgbaA = 0xFFFFFFFF, .rgbaB = 0xFFFFFFFF, .stA = { 63 << 5, 31 << 5 }, .stB = { 0, 31 << 5 } }
         };
         static bool s_diag_vtx_init = false;
         if (!s_diag_vtx_init) {
             s_diag_vtx_init = true;
-            data_cache_hit_writeback(diag_quad, sizeof(diag_quad));
+            data_cache_hit_writeback(diag_quad_top, sizeof(diag_quad_top));
+            data_cache_hit_writeback(diag_quad_bot, sizeof(diag_quad_bot));
         }
 
-        rdpq_sprite_upload(TILE0, s_tex_bld234_top, NULL);
+        rdpq_set_prim_color(RGBA32(255, 255, 255, 255));
         rdpq_mode_combiner(RDPQ_COMBINER1((TEX0, ZERO, PRIM, ZERO), (ZERO, ZERO, ZERO, ONE)));
         t3d_state_set_drawflags((enum T3DDrawFlags)(T3D_FLAG_SHADED | T3D_FLAG_TEXTURED | T3D_FLAG_NO_LIGHT));
 
         t3d_matrix_push(&identFP);
-        t3d_vert_load(diag_quad, 0, 4);
-        t3d_matrix_pop(1);
+
+        rdpq_sprite_upload(TILE0, s_tex_bld234_top, NULL);
+        t3d_vert_load(diag_quad_top, 0, 4);
         t3d_tri_draw(0, 1, 2);
         t3d_tri_draw(0, 2, 3);
         t3d_tri_sync();
+
+        if (s_tex_bld234_bot) {
+            rdpq_sprite_upload(TILE0, s_tex_bld234_bot, NULL);
+            t3d_vert_load(diag_quad_bot, 0, 4);
+            t3d_tri_draw(0, 1, 2);
+            t3d_tri_draw(0, 2, 3);
+            t3d_tri_sync();
+        }
+
+        t3d_matrix_pop(1);
 
         rdpq_mode_combiner(RDPQ_COMBINER1((PRIM, ZERO, SHADE, ZERO), (ZERO, ZERO, ZERO, ONE)));
         t3d_state_set_drawflags((enum T3DDrawFlags)(T3D_FLAG_SHADED | T3D_FLAG_NO_LIGHT));
@@ -947,7 +1254,8 @@ void d2_t3d_draw_queued_buildings(void)
             rdpq_set_mode_standard();
             rdpq_mode_combiner(RDPQ_COMBINER_TEX);
         rdpq_mode_end();
-        rdpq_sprite_blit(s_tex_bld234_orig, 16.0f, 16.0f, NULL);
+        // Canto superior direito (X=240, Y=16), livre das barras Damage/Felony do HUD
+        rdpq_sprite_blit(s_tex_bld234_orig, 240.0f, 16.0f, NULL);
         rdpq_mode_begin();
             rdpq_set_mode_standard();
             rdpq_mode_combiner(RDPQ_COMBINER1((PRIM, ZERO, SHADE, ZERO), (ZERO, ZERO, ZERO, ONE)));
@@ -955,65 +1263,19 @@ void d2_t3d_draw_queued_buildings(void)
     }
 #endif
 
-    int mat_cursor = 0;
-    t3d_matrix_push_pos(1);
-
-    // 1. Ground tiles FIRST (sorted back-to-front, with grass/water offset behind roads/sidewalks)
-    if (s_t3d_tile_queue_count > 0) {
-        rdpq_set_prim_color(s_tile_tint);
-        sort_instances_back_to_front(s_t3d_tile_queue, s_t3d_tile_queue_count);
-        for (int i = 0; i < s_t3d_tile_queue_count && mat_cursor < D2_T3D_MAX_MATS; i++) {
-            int mid = s_t3d_tile_queue[i].model_idx;
-            if (!s_t3d_model_blocks[mid]) continue;
-            build_and_run_instance(s_t3d_tile_queue[i], &s_t3d_mat_pool[frame_idx][mat_cursor++]);
-        }
-    }
-#ifdef D2_ORIGIN_PROF
-    uint32_t prof_t1 = d2_oprof_cnt0();
-    if (s_t3d_tile_queue_count > 0) {
-        g_d2_oprof.bk_ticks[OPROF_T3D_GRD] += prof_t1 - prof_t0;
-    }
-#endif
-
-    // 2. Buildings & static road furniture SECOND (drawn on top of ground, behind legacy cars/peds/HUD)
-    if (s_t3d_bld_queue_count > 0) {
-        unsigned int cb_r = ((unsigned int)(combointensity & 0xFF)) * 2u;
-        unsigned int cb_g = ((unsigned int)((combointensity >> 8) & 0xFF)) * 2u;
-        unsigned int cb_b = ((unsigned int)((combointensity >> 16) & 0xFF)) * 2u;
-        if (cb_r == 0 && cb_g == 0 && cb_b == 0) { cb_r = cb_g = cb_b = 255u; }
-        if (cb_r > 255u) cb_r = 255u;
-        if (cb_g > 255u) cb_g = 255u;
-        if (cb_b > 255u) cb_b = 255u;
-        rdpq_set_prim_color(RGBA32((uint8_t)cb_r, (uint8_t)cb_g, (uint8_t)cb_b, 255));
-
-        sort_instances_back_to_front(s_t3d_bld_queue, s_t3d_bld_queue_count);
-        for (int i = 0; i < s_t3d_bld_queue_count && mat_cursor < D2_T3D_MAX_MATS; i++) {
-            int mid = s_t3d_bld_queue[i].model_idx;
-            if (!s_t3d_model_blocks[mid]) continue;
-            build_and_run_instance(s_t3d_bld_queue[i], &s_t3d_mat_pool[frame_idx][mat_cursor++]);
-        }
-    }
-
-    t3d_matrix_pop(1);
-
     const bool had_tiles = (s_t3d_tile_queue_count > 0);
     const bool had_blds  = (s_t3d_bld_queue_count > 0);
     s_t3d_tile_queue_count = 0;
     s_t3d_bld_queue_count = 0;
 
-    // Invalidate backend cache and synchronize before legacy rdpq primitives resume
-    d2_rdp_invalidate_backend_cache();
-
-#ifdef D2_ORIGIN_PROF
-    uint32_t prof_t2 = d2_oprof_cnt0();
-    if (had_blds) {
-        g_d2_oprof.bk_ticks[OPROF_T3D_BLD] += prof_t2 - (had_tiles ? prof_t1 : prof_t0);
-    } else if (had_tiles) {
-        g_d2_oprof.bk_ticks[OPROF_T3D_GRD] += prof_t2 - prof_t1;
+    // Invalidate RDP backend cache if any native T3D draw calls took place this frame
+    if (had_tiles || had_blds) {
+        d2_rdp_invalidate_backend_cache();
     }
-#endif
+
 #ifdef D2_T3D_STATS
-    t3d_stat_frame(t3d_stat_clock() - stat_start);
+    uint32_t t_end = t3d_stat_clock();
+    t3d_stat_frame(t_end - t_start);
 #endif
 #endif // D2_T3D_SMOKE
 }

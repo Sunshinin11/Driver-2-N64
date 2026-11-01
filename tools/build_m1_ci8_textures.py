@@ -101,26 +101,42 @@ def run():
     save_png('docs/diag_textures/bld234_top32.png', 64, 32, bld234_rgba[0 : 64*32*4])
     save_png('docs/diag_textures/bld234_bot32.png', 64, 32, bld234_rgba[64*32*4 : 64*64*4])
 
-    # 2. Road M1 (Model 83/108: tset=0, tid=10, pal=10, UV: 64,128 a 128,192)
+    # 2. Building 235 (tset=5, tid=0, pal=0, UV: 0,0 a 64,64)
+    pal5_0 = struct.unpack_from('<16H', pal5_bytes, 0 * 32)
+    bld235_rgba = extract_subtex(decomp5, pal5_0, 0, 0, 64, 64)
+    save_png('docs/diag_textures/bld235_64x64_orig.png', 64, 64, bld235_rgba)
+    save_png('docs/diag_textures/bld235_top32.png', 64, 32, bld235_rgba[0 : 64*32*4])
+    save_png('docs/diag_textures/bld235_bot32.png', 64, 32, bld235_rgba[64*32*4 : 64*64*4])
+
+    # 3. Road M1 (Model 83/108: tset=0, tid=10, pal=10, UV: 64,128 a 128,192)
     pal0_10 = struct.unpack_from('<16H', pal0_bytes, 10 * 32)
     road_rgba = extract_subtex(decomp0, pal0_10, 64, 128, 64, 64)
     save_png('docs/diag_textures/road_m1_64x64_orig.png', 64, 64, road_rgba)
     save_png('docs/diag_textures/road_m1_top32.png', 64, 32, road_rgba[0 : 64*32*4])
     save_png('docs/diag_textures/road_m1_bot32.png', 64, 32, road_rgba[64*32*4 : 64*64*4])
 
-    # 3. Model 1 e Model 4 para compatibilidade
+    # 4. Model 1 (tset=0, tid=4, pal=4, UV: 0,88 a 64,152)
     pal0_4 = struct.unpack_from('<16H', pal0_bytes, 4 * 32)
     bld1_rgba = extract_subtex(decomp0, pal0_4, 0, 88, 64, 64)
     save_png('docs/diag_textures/bld1_64x64_orig.png', 64, 64, bld1_rgba)
     save_png('docs/diag_textures/bld1_top32.png', 64, 32, bld1_rgba[0 : 64*32*4])
     save_png('docs/diag_textures/bld1_bot32.png', 64, 32, bld1_rgba[64*32*4 : 64*64*4])
 
+    # 5. Model 4 (tset=0, tid=11, pal=11, UV: 0,24 a 64,88)
+    pal0_11 = struct.unpack_from('<16H', pal0_bytes, 11 * 32)
+    tile4_rgba = extract_subtex(decomp0, pal0_11, 0, 24, 64, 64)
+    save_png('docs/diag_textures/tile4_64x64_orig.png', 64, 64, tile4_rgba)
+    save_png('docs/diag_textures/tile4_top32.png', 64, 32, tile4_rgba[0 : 64*32*4])
+    save_png('docs/diag_textures/tile4_bot32.png', 64, 32, tile4_rgba[64*32*4 : 64*64*4])
+
     # Converter para sprites CI8
     mksprite = '/opt/libdragon/bin/mksprite'
     png_list = [
         'bld234_64x64_orig.png', 'bld234_top32.png', 'bld234_bot32.png',
+        'bld235_64x64_orig.png', 'bld235_top32.png', 'bld235_bot32.png',
         'road_m1_64x64_orig.png', 'road_m1_top32.png', 'road_m1_bot32.png',
-        'bld1_top32.png', 'bld1_bot32.png'
+        'bld1_64x64_orig.png', 'bld1_top32.png', 'bld1_bot32.png',
+        'tile4_64x64_orig.png', 'tile4_top32.png', 'tile4_bot32.png'
     ]
     for p in png_list:
         src = f'docs/diag_textures/{p}'
@@ -132,3 +148,4 @@ def run():
 
 if __name__ == '__main__':
     run()
+

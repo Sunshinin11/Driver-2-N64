@@ -48,3 +48,4 @@ bot = px[64 * 32 * 4 : 64 * 64 * 4]
 save_png('docs/diag_textures/bld234_bot32.png', 64, 32, bot)
 
 print("Saved bld234_top32.png and bld234_bot32.png")
+

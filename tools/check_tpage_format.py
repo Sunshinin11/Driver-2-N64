@@ -13,3 +13,4 @@ with open('filesystem_d2/DRIVER2/LEVELS/CHICAGO.LEV', 'rb') as f:
     # O restante é RLE dos pixels
     rem = tpage_sz - 4 - npal * 32
     print(f'Remaining RLE data: {rem} bytes')
+

@@ -17,3 +17,4 @@ print("Lumps:", lumps)
 # Lump 3 é SPOOL: lumps[3]
 spool_off, spool_sz = lumps[3]
 print(f"Spool lump: offset={spool_off}, size={spool_sz}")
+

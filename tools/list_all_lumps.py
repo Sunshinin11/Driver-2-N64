@@ -15,3 +15,4 @@ with open('filesystem_d2/DRIVER2/LEVELS/CHICAGO.LEV', 'rb') as f:
             lt, lsz = struct.unpack('<II', hdr)
             print(f"  sub-lump: type={lt}, sz={lsz} at off={f.tell()-8}")
             f.seek(lsz + ((4 - (lsz % 4)) % 4), 1)
+

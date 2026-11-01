@@ -1,0 +1,305 @@
+
+OpenGL Version: 3.2.0 NVIDIA 616.64, GLSL: 1.50 NVIDIA via Cg compiler
+Loaded d2_n64
+Vulkan Enabled: using paraLLEl-RDP
+VI WARNING: __vblank_interrupt outside of vblank period: 18
+VI WARNING: __vblank_interrupt outside of vblank period: 22
+[T3D] Initialized Tiny3D world renderer. Static vtx pool: 147456 bytes (144 KB), mat pool: 36864 bytes (36 KB)
+[cyc] 1116680 ticks/frame
+[fps] f=0 vbl=21 sub=0 calls=0 tris=12 tex=12 hit=34 miss=48 texels=98304 stepped=98304 pm=0,48,0 pt=0,98304,0
+[tex] ld_sombra=0 ld_regiao=82 ld_janela=0 janela_hit=0/0 tlut=82 banco_hit=0 diretos=0 dticks=0 tcore=0
+[tri] tris=0 clip=0 clipticks=0 upticks=0 sub=150
+[up] palT=0 winHitT=0 winMissT=0 regT=0 vramWrites=4
+[cyc] 842768 ticks/frame
+[fps] f=30 vbl=53 sub=0 calls=0 tris=12 tex=12 hit=79 miss=3 texels=6144 stepped=6144 pm=0,3,0 pt=0,6144,0
+[tex] ld_sombra=0 ld_regiao=82 ld_janela=0 janela_hit=0/0 tlut=82 banco_hit=0 diretos=0 dticks=0 tcore=0
+[tri] tris=0 clip=0 clipticks=0 upticks=0 sub=150
+[up] palT=0 winHitT=0 winMissT=0 regT=0 vramWrites=0
+[cyc] 8592571 ticks/frame
+[fps] f=60 vbl=382 sub=0 calls=0 tris=12 tex=12 hit=79 miss=3 texels=6144 stepped=6144 pm=0,3,0 pt=0,6144,0
+[tex] ld_sombra=0 ld_regiao=82 ld_janela=0 janela_hit=0/0 tlut=82 banco_hit=0 diretos=0 dticks=0 tcore=0
+[tri] tris=0 clip=0 clipticks=0 upticks=0 sub=150
+[up] palT=0 winHitT=0 winMissT=0 regT=0 vramWrites=0
+[I] *---LSBD(): successful init---*
+[cyc] 4247377 ticks/frame
+[fps] f=90 vbl=545 sub=0 calls=0 tris=10 tex=10 hit=85 miss=87 texels=178176 stepped=0 pm=0,87,0 pt=0,178176,0
+[tex] ld_sombra=0 ld_regiao=172 ld_janela=0 janela_hit=0/0 tlut=172 banco_hit=0 diretos=0 dticks=0 tcore=0
+[tri] tris=0 clip=0 clipticks=0 upticks=0 sub=330
+[up] palT=0 winHitT=0 winMissT=0 regT=0 vramWrites=0
+[cyc] 3134203 ticks/frame
+[fps] f=120 vbl=665 sub=0 calls=0 tris=10 tex=10 hit=85 miss=87 texels=178176 stepped=0 pm=0,87,0 pt=0,178176,0
+[tex] ld_sombra=0 ld_regiao=172 ld_janela=0 janela_hit=0/0 tlut=172 banco_hit=0 diretos=0 dticks=0 tcore=0
+[tri] tris=0 clip=0 clipticks=0 upticks=0 sub=330
+[up] palT=0 winHitT=0 winMissT=0 regT=0 vramWrites=0
+[VADPCM] lump=0 bank=1 loaded=4/4
+[cyc] 2155080 ticks/frame
+[fps] f=150 vbl=748 sub=0 calls=0 tris=116 tex=116 hit=46 miss=0 texels=0 stepped=0 pm=0,0,0 pt=0,0,0
+[tex] ld_sombra=0 ld_regiao=46 ld_janela=50 janela_hit=52/102 tlut=3 banco_hit=1 diretos=0 dticks=0 tcore=0
+[tri] tris=0 clip=0 clipticks=0 upticks=0 sub=76
+[up] palT=0 winHitT=0 winMissT=0 regT=0 vramWrites=0
+[cyc] 1567027 ticks/frame
+[fps] f=180 vbl=808 sub=0 calls=0 tris=116 tex=116 hit=46 miss=0 texels=0 stepped=0 pm=0,0,0 pt=0,0,0
+[tex] ld_sombra=0 ld_regiao=46 ld_janela=50 janela_hit=52/102 tlut=3 banco_hit=1 diretos=0 dticks=0 tcore=0
+[tri] tris=0 clip=0 clipticks=0 upticks=0 sub=76
+[up] palT=0 winHitT=0 winMissT=0 regT=0 vramWrites=0
+[bench] vbl=850 cc=0 b=0020
+[bench] vbl=852 cc=0 b=0020
+[bench] vbl=854 cc=0 b=0020
+[cyc] 1567065 ticks/frame
+[fps] f=210 vbl=868 sub=0 calls=0 tris=116 tex=116 hit=46 miss=0 texels=0 stepped=0 pm=0,0,0 pt=0,0,0
+[tex] ld_sombra=0 ld_regiao=46 ld_janela=50 janela_hit=52/102 tlut=3 banco_hit=1 diretos=0 dticks=0 tcore=0
+[tri] tris=0 clip=0 clipticks=0 upticks=0 sub=76
+[up] palT=0 winHitT=0 winMissT=0 regT=0 vramWrites=0
+[bench] vbl=880 cc=0 b=0001
+[cyc] 1932657 ticks/frame
+[fps] f=240 vbl=942 sub=0 calls=0 tris=80 tex=80 hit=53 miss=0 texels=0 stepped=0 pm=0,0,0 pt=0,0,0
+[tex] ld_sombra=0 ld_regiao=53 ld_janela=31 janela_hit=33/64 tlut=4 banco_hit=1 diretos=0 dticks=0 tcore=0
+[tri] tris=0 clip=0 clipticks=0 upticks=0 sub=88
+[up] palT=0 winHitT=0 winMissT=0 regT=0 vramWrites=0
+[bench] vbl=950 cc=0 b=0001
+[bench] vbl=952 cc=0 b=0001
+[bench] vbl=954 cc=0 b=0001
+[cyc] 1567074 ticks/frame
+[fps] f=270 vbl=1002 sub=0 calls=0 tris=64 tex=64 hit=53 miss=0 texels=0 stepped=0 pm=0,0,0 pt=0,0,0
+[tex] ld_sombra=0 ld_regiao=53 ld_janela=23 janela_hit=25/48 tlut=4 banco_hit=1 diretos=0 dticks=0 tcore=0
+[tri] tris=0 clip=0 clipticks=0 upticks=0 sub=88
+[up] palT=0 winHitT=0 winMissT=0 regT=0 vramWrites=0
+[bench] vbl=1020 cc=0 b=0001
+[cyc] 2011009 ticks/frame
+[fps] f=300 vbl=1079 sub=0 calls=0 tris=76 tex=76 hit=53 miss=0 texels=0 stepped=0 pm=0,0,0 pt=0,0,0
+[tex] ld_sombra=0 ld_regiao=53 ld_janela=30 janela_hit=30/60 tlut=4 banco_hit=1 diretos=0 dticks=0 tcore=0
+[tri] tris=0 clip=0 clipticks=0 upticks=0 sub=88
+[up] palT=0 winHitT=0 winMissT=0 regT=0 vramWrites=0
+[bench] vbl=1091 cc=0 b=0001
+[cyc] 2964376 ticks/frame
+[fps] f=330 vbl=1192 sub=0 calls=0 tris=10 tex=10 hit=85 miss=87 texels=178176 stepped=0 pm=0,87,0 pt=0,178176,0
+[tex] ld_sombra=0 ld_regiao=172 ld_janela=0 janela_hit=0/0 tlut=172 banco_hit=0 diretos=0 dticks=0 tcore=0
+[tri] tris=0 clip=0 clipticks=0 upticks=0 sub=330
+[up] palT=0 winHitT=0 winMissT=0 regT=0 vramWrites=0
+[cyc] 3133930 ticks/frame
+[fps] f=360 vbl=1312 sub=0 calls=0 tris=10 tex=10 hit=85 miss=87 texels=178176 stepped=0 pm=0,87,0 pt=0,178176,0
+[tex] ld_sombra=0 ld_regiao=172 ld_janela=0 janela_hit=0/0 tlut=172 banco_hit=0 diretos=0 dticks=0 tcore=0
+[tri] tris=0 clip=0 clipticks=0 upticks=0 sub=330
+[up] palT=0 winHitT=0 winMissT=0 regT=0 vramWrites=0
+[I] *---LSBD(): successful init---*
+[VADPCM] lump=12 bank=3 loaded=3/3
+[VADPCM] lump=4 bank=3 loaded=3/3
+[VADPCM] lump=13 bank=3 loaded=3/3
+[VADPCM] lump=1 bank=1 loaded=12/12
+[VADPCM] lump=66 bank=6 loaded=6/6
+[VADPCM] lump=69 bank=2 loaded=1/1
+[VADPCM] lump=29 bank=2 loaded=6/6
+[VADPCM] lump=32 bank=2 loaded=11/11
+[VADPCM] lump=21 bank=4 loaded=6/6
+[VADPCM] lump=67 bank=1 loaded=1/1
+[I] *---LSBD(): saved memtop---*
+[I] *---LSBD(): saved banktop 9---*
+[VADPCM] lump=2 bank=3 loaded=3/3
+[VADPCM] lump=18 bank=3 loaded=3/3
+[VADPCM] lump=10 bank=3 loaded=3/3
+[I] NewLevel in InitMusic()
+[I] LUMP_TEXTURENAMES: size: 7112
+[I] LUMP_TEXTUREINFO: size: 8360
+[I] LUMP_MODELNAMES: size: 2762
+[I] LUMP_PALLET: size: 15576
+[I] LUMP_MOTIONCAPTURE: size: 2450
+[I] LUMP_MOTIONCAPTURE: size: 2594
+[I] LUMP_MOTIONCAPTURE: size: 2450
+[I] LUMP_MOTIONCAPTURE: size: 2450
+[I] LUMP_MOTIONCAPTURE: size: 2450
+[I] LUMP_MOTIONCAPTURE: size: 2450
+[I] LUMP_MOTIONCAPTURE: size: 2882
+[I] LUMP_MOTIONCAPTURE: size: 2594
+[I] LUMP_MOTIONCAPTURE: size: 3840
+[I] LUMP_MOTIONCAPTURE: size: 3840
+[I] LUMP_MOTIONCAPTURE: size: 3840
+[I] LUMP_MOTIONCAPTURE: size: 240
+[I] LUMP_MOTIONCAPTURE: size: 240
+[I] LUMP_MOTIONCAPTURE: size: 240
+[I] LUMP_CAR_MODELS: size: 123324
+[I] LUMP_MODELS: size: 172716
+[I] LUMP_SPOOLINFO: size: 3084
+[I] LUMP_STRAIGHTS2: size: 21816
+[I] LUMP_CURVES2: size: 4232
+[I] LUMP_JUNCTIONS2_NEW: size: 3028
+[I] LUMP_SUBDIVISION: size: 19392
+[I] LUMP_OVERLAYMAP: size: 21880
+[I] LUMP_CHAIR: size: 4092
+[I] LUMP_LOWDETAILTABLE: size: 4820
+[T3D_TEX] Carregado rom:/TEX/bld234_64x64_orig.sprite (w=64, h=64)
+[T3D_TEX] Carregado rom:/TEX/bld234_top32.sprite (w=64, h=32)
+[T3D_TEX] Carregado rom:/TEX/bld234_bot32.sprite (w=64, h=32)
+[T3D_TEX] Carregado rom:/TEX/bld234_top32.sprite (w=64, h=32)
+[T3D_TEX] Carregado rom:/TEX/bld234_bot32.sprite (w=64, h=32)
+[T3D_TEX] Carregado rom:/TEX/bld235_top32.sprite (w=64, h=32)
+[T3D_TEX] Carregado rom:/TEX/bld235_bot32.sprite (w=64, h=32)
+[T3D_TEX] Carregado rom:/TEX/road_m1_top32.sprite (w=64, h=32)
+[T3D_TEX] Carregado rom:/TEX/road_m1_bot32.sprite (w=64, h=32)
+[T3D_TEX] Carregado rom:/TEX/bld1_top32.sprite (w=64, h=32)
+[T3D_TEX] Carregado rom:/TEX/bld1_bot32.sprite (w=64, h=32)
+[T3D_TEX] Carregado rom:/TEX/tile4_top32.sprite (w=64, h=32)
+[T3D_TEX] Carregado rom:/TEX/tile4_bot32.sprite (w=64, h=32)
+[T3D_MEM] === INICIO CONVERSAO MODELOS === Heap livre: 308064 bytes (usado: 1173784)
+[T3D_MID] mid=  4 tile=1 faces_in= 1 polys_out= 2 tris= 4 vtx_used=   8 blk_alloc=   0 heap_free=304912
+[T3D_MID] mid= 83 tile=1 faces_in= 1 polys_out= 2 tris= 4 vtx_used= 754 blk_alloc=   0 heap_free=280760
+[T3D_MID] mid=108 tile=1 faces_in= 4 polys_out= 8 tris=16 vtx_used= 972 blk_alloc=   0 heap_free=272288
+[T3D_MID] mid=  1 tile=0 faces_in=20 polys_out=40 tris=80 vtx_used=1560 blk_alloc=   0 heap_free=257504
+[T3D_MID] mid=234 tile=0 faces_in= 8 polys_out=14 tris=28 vtx_used=2532 blk_alloc=   0 heap_free=236216
+[T3D_MID] mid=235 tile=0 faces_in= 8 polys_out=14 tris=28 vtx_used=2584 blk_alloc=   0 heap_free=233064
+[T3D] Convertidos 425 modelos no T3D (tiles=132, predios=293), 72 no caminho antigo (497 total). Vertices: 9088/9216 (142 KB de 144 KB)
+[T3D_MEM] Heap alocado para blocos RSPQ: 229680 bytes (heap livre: 308064 -> 78384)
+[cyc] 4714642 ticks/frame
+[fps] f=390 vbl=1493 sub=0 calls=0 tris=4 tex=0 hit=0 miss=0 texels=0 stepped=0 pm=0,0,0 pt=0,0,0
+[tex] ld_sombra=0 ld_regiao=0 ld_janela=0 janela_hit=0/0 tlut=0 banco_hit=0 diretos=0 dticks=0 tcore=0
+[tri] tris=0 clip=0 clipticks=0 upticks=0 sub=0
+[up] palT=0 winHitT=0 winMissT=0 regT=0 vramWrites=0
+[cyc] 783442 ticks/frame
+[fps] f=420 vbl=1523 sub=0 calls=0 tris=4 tex=0 hit=0 miss=0 texels=0 stepped=0 pm=0,0,0 pt=0,0,0
+[tex] ld_sombra=0 ld_regiao=0 ld_janela=0 janela_hit=0/0 tlut=0 banco_hit=0 diretos=0 dticks=0 tcore=0
+[tri] tris=0 clip=0 clipticks=0 upticks=0 sub=0
+[up] palT=0 winHitT=0 winMissT=0 regT=0 vramWrites=0
+[cyc] 783533 ticks/frame
+[fps] f=450 vbl=1553 sub=0 calls=0 tris=4 tex=0 hit=0 miss=0 texels=0 stepped=0 pm=0,0,0 pt=0,0,0
+[tex] ld_sombra=0 ld_regiao=0 ld_janela=0 janela_hit=0/0 tlut=0 banco_hit=0 diretos=0 dticks=0 tcore=0
+[tri] tris=0 clip=0 clipticks=0 upticks=0 sub=0
+[up] palT=0 winHitT=0 winMissT=0 regT=0 vramWrites=0
+[cyc] 783599 ticks/frame
+[fps] f=480 vbl=1583 sub=0 calls=0 tris=4 tex=0 hit=0 miss=0 texels=0 stepped=0 pm=0,0,0 pt=0,0,0
+[tex] ld_sombra=0 ld_regiao=0 ld_janela=0 janela_hit=0/0 tlut=0 banco_hit=0 diretos=0 dticks=0 tcore=0
+[tri] tris=0 clip=0 clipticks=0 upticks=0 sub=0
+[up] palT=0 winHitT=0 winMissT=0 regT=0 vramWrites=0
+[DIAG_M1] cc=6 tiles=192 blds=35
+  bld[0]: mid=273 tx=-5321 ty=-82 tz=9465
+  bld[1]: mid=761 tx=5432 ty=-63 tz=8954
+  bld[2]: mid=761 tx=2616 ty=-171 tz=11768
+  bld[3]: mid=763 tx=3128 ty=-82 tz=9465
+  bld[4]: mid=221 tx=-6344 ty=-181 tz=12023
+  bld[5]: mid=761 tx=2616 ty=-288 tz=14837
+  bld[6]: mid=246 tx=-5704 ty=-259 tz=14070
+  bld[7]: mid=273 tx=-5321 ty=-83 tz=9475
+  bld[8]: mid=761 tx=5432 ty=-63 tz=8964
+  bld[9]: mid=761 tx=2616 ty=-171 tz=11778
+  bld[10]: mid=763 tx=3128 ty=-83 tz=9475
+  bld[11]: mid=221 tx=-6344 ty=-181 tz=12033
+  bld[12]: mid=761 tx=2616 ty=-289 tz=14847
+  bld[13]: mid=246 tx=-5704 ty=-259 tz=14080
+  bld[14]: mid=273 tx=-5321 ty=-83 tz=9485
+  bld[15]: mid=761 tx=5432 ty=-64 tz=8974
+  bld[16]: mid=761 tx=2616 ty=-171 tz=11788
+  bld[17]: mid=763 tx=3128 ty=-83 tz=9485
+  bld[18]: mid=221 tx=-6344 ty=-181 tz=12043
+  bld[19]: mid=761 tx=2616 ty=-289 tz=14857
+  tile[0]: mid=46 tx=-72 ty=310 tz=-767
+  tile[1]: mid=139 tx=2744 ty=244 tz=511
+  tile[2]: mid=139 tx=2744 ty=166 tz=2558
+  tile[3]: mid=139 tx=2744 ty=205 tz=1535
+  tile[4]: mid=55 tx=-72 ty=271 tz=256
+  tile[5]: mid=55 tx=-72 ty=232 tz=1279
+  tile[6]: mid=150 tx=952 ty=232 tz=1279
+  tile[7]: mid=150 tx=952 ty=271 tz=256
+  tile[8]: mid=55 tx=-1096 ty=271 tz=256
+  tile[9]: mid=55 tx=-1096 ty=232 tz=1279
+  tile[10]: mid=76 tx=2232 ty=126 tz=3581
+  tile[11]: mid=76 tx=2121 ty=105 tz=4149
+  tile[12]: mid=76 tx=2995 ty=111 tz=3978
+  tile[13]: mid=55 tx=-72 ty=192 tz=2303
+  tile[14]: mid=55 tx=-72 ty=153 tz=3326
+  tile[15]: mid=149 tx=952 ty=153 tz=3326
+  tile[16]: mid=150 tx=952 ty=192 tz=2303
+  tile[17]: mid=76 tx=1097 ty=105 tz=4149
+  tile[18]: mid=76 tx=1208 ty=126 tz=3581
+  tile[19]: mid=49 tx=-2120 ty=192 tz=2303
+[DIAG_M1] cc=7 tiles=192 blds=42
+  bld[0]: mid=273 tx=-5321 ty=-82 tz=9465
+  bld[1]: mid=761 tx=5432 ty=-63 tz=8954
+  bld[2]: mid=761 tx=2616 ty=-171 tz=11768
+  bld[3]: mid=763 tx=3128 ty=-82 tz=9465
+  bld[4]: mid=221 tx=-6344 ty=-181 tz=12023
+  bld[5]: mid=761 tx=2616 ty=-288 tz=14837
+  bld[6]: mid=246 tx=-5704 ty=-259 tz=14070
+  bld[7]: mid=273 tx=-5321 ty=-83 tz=9475
+  bld[8]: mid=761 tx=5432 ty=-63 tz=8964
+  bld[9]: mid=761 tx=2616 ty=-171 tz=11778
+  bld[10]: mid=763 tx=3128 ty=-83 tz=9475
+  bld[11]: mid=221 tx=-6344 ty=-181 tz=12033
+  bld[12]: mid=761 tx=2616 ty=-289 tz=14847
+  bld[13]: mid=246 tx=-5704 ty=-259 tz=14080
+  bld[14]: mid=273 tx=-5321 ty=-83 tz=9485
+  bld[15]: mid=761 tx=5432 ty=-64 tz=8974
+  bld[16]: mid=761 tx=2616 ty=-171 tz=11788
+  bld[17]: mid=763 tx=3128 ty=-83 tz=9485
+  bld[18]: mid=221 tx=-6344 ty=-181 tz=12043
+  bld[19]: mid=761 tx=2616 ty=-289 tz=14857
+  tile[0]: mid=46 tx=-72 ty=310 tz=-767
+  tile[1]: mid=139 tx=2744 ty=244 tz=511
+  tile[2]: mid=139 tx=2744 ty=166 tz=2558
+  tile[3]: mid=139 tx=2744 ty=205 tz=1535
+  tile[4]: mid=55 tx=-72 ty=271 tz=256
+  tile[5]: mid=55 tx=-72 ty=232 tz=1279
+  tile[6]: mid=150 tx=952 ty=232 tz=1279
+  tile[7]: mid=150 tx=952 ty=271 tz=256
+  tile[8]: mid=55 tx=-1096 ty=271 tz=256
+  tile[9]: mid=55 tx=-1096 ty=232 tz=1279
+  tile[10]: mid=76 tx=2232 ty=126 tz=3581
+  tile[11]: mid=76 tx=2121 ty=105 tz=4149
+  tile[12]: mid=76 tx=2995 ty=111 tz=3978
+  tile[13]: mid=55 tx=-72 ty=192 tz=2303
+  tile[14]: mid=55 tx=-72 ty=153 tz=3326
+  tile[15]: mid=149 tx=952 ty=153 tz=3326
+  tile[16]: mid=150 tx=952 ty=192 tz=2303
+  tile[17]: mid=76 tx=1097 ty=105 tz=4149
+  tile[18]: mid=76 tx=1208 ty=126 tz=3581
+  tile[19]: mid=49 tx=-2120 ty=192 tz=2303
+[cyc] 1940286 ticks/frame
+[fps] f=510 vbl=1657 sub=0 calls=0 tris=438 tex=390 hit=99 miss=8 texels=19997 stepped=0 pm=8,0,0 pt=19997,0,0
+[tex] ld_sombra=2 ld_regiao=59 ld_janela=149 janela_hit=158/307 tlut=51 banco_hit=56 diretos=0 dticks=0 tcore=0
+[tri] tris=0 clip=0 clipticks=0 upticks=0 sub=82
+[up] palT=0 winHitT=0 winMissT=0 regT=0 vramWrites=0
+[bench] cc=32 ticks=2949594 p95=3441497 max=20780121 vbl=120 fps100=1600 late2=27 late3=17 tris=438 tex=390 avg_tris=437 pos=6216,-223550 area=7
+[cyc] 2817958 ticks/frame
+[fps] f=540 vbl=1765 sub=0 calls=0 tris=438 tex=390 hit=99 miss=8 texels=19997 stepped=0 pm=8,0,0 pt=19997,0,0
+[tex] ld_sombra=2 ld_regiao=59 ld_janela=149 janela_hit=158/307 tlut=51 banco_hit=56 diretos=0 dticks=0 tcore=0
+[tri] tris=0 clip=0 clipticks=0 upticks=0 sub=82
+[up] palT=0 winHitT=0 winMissT=0 regT=0 vramWrites=0
+[bench] cc=64 ticks=2823235 p95=3059488 max=3066750 vbl=115 fps100=1670 late2=32 late3=19 tris=418 tex=370 avg_tris=435 pos=6216,-223550 area=7
+[cyc] 2811216 ticks/frame
+[fps] f=570 vbl=1872 sub=0 calls=0 tris=418 tex=370 hit=99 miss=8 texels=19997 stepped=0 pm=8,0,0 pt=19997,0,0
+[tex] ld_sombra=2 ld_regiao=59 ld_janela=143 janela_hit=144/287 tlut=51 banco_hit=54 diretos=0 dticks=0 tcore=0
+[tri] tris=0 clip=0 clipticks=0 upticks=0 sub=82
+[up] palT=0 winHitT=0 winMissT=0 regT=0 vramWrites=0
+[bench] cc=96 ticks=2837500 p95=3111826 max=3127168 vbl=116 fps100=1655 late2=32 late3=20 tris=418 tex=370 avg_tris=418 pos=6216,-223550 area=7
+[cyc] 2856156 ticks/frame
+[fps] f=600 vbl=1982 sub=0 calls=0 tris=418 tex=370 hit=99 miss=8 texels=19997 stepped=0 pm=8,0,0 pt=19997,0,0
+[tex] ld_sombra=2 ld_regiao=59 ld_janela=143 janela_hit=144/287 tlut=51 banco_hit=54 diretos=0 dticks=0 tcore=0
+[tri] tris=0 clip=0 clipticks=0 upticks=0 sub=82
+[up] palT=0 winHitT=0 winMissT=0 regT=0 vramWrites=0
+[bench] cc=128 ticks=3031022 p95=3392711 max=3488111 vbl=124 fps100=1548 late2=32 late3=26 tris=450 tex=402 avg_tris=435 pos=6216,-223550 area=7
+[bench] vbl=2080 cc=128 b=0001
+[cyc] 3072227 ticks/frame
+[fps] f=630 vbl=2099 sub=0 calls=0 tris=441 tex=393 hit=99 miss=8 texels=19997 stepped=0 pm=8,0,0 pt=19997,0,0
+[tex] ld_sombra=7 ld_regiao=59 ld_janela=153 janela_hit=149/302 tlut=59 banco_hit=62 diretos=0 dticks=0 tcore=0
+[tri] tris=0 clip=0 clipticks=0 upticks=0 sub=82
+[up] palT=0 winHitT=0 winMissT=0 regT=0 vramWrites=0
+[bench] cc=160 ticks=3306699 p95=3665522 max=3684395 vbl=135 fps100=1422 late2=32 late3=32 tris=447 tex=399 avg_tris=455 pos=6210,-222320 area=7
+[cyc] 3348613 ticks/frame
+[fps] f=660 vbl=2228 sub=0 calls=0 tris=452 tex=404 hit=102 miss=8 texels=19997 stepped=0 pm=8,0,0 pt=19997,0,0
+[tex] ld_sombra=7 ld_regiao=61 ld_janela=164 janela_hit=148/312 tlut=60 banco_hit=59 diretos=0 dticks=0 tcore=0
+[tri] tris=0 clip=0 clipticks=0 upticks=0 sub=90
+[up] palT=0 winHitT=0 winMissT=0 regT=0 vramWrites=0
+[bench] cc=192 ticks=3624093 p95=4146719 max=4314080 vbl=148 fps100=1297 late2=32 late3=32 tris=488 tex=438 avg_tris=496 pos=6204,-219558 area=7
+[cyc] 3644115 ticks/frame
+[fps] f=690 vbl=2367 sub=0 calls=0 tris=501 tex=451 hit=111 miss=5 texels=13846 stepped=0 pm=5,0,0 pt=13846,0,0
+[tex] ld_sombra=7 ld_regiao=61 ld_janela=159 janela_hit=192/351 tlut=59 banco_hit=65 diretos=0 dticks=0 tcore=0
+[tri] tris=0 clip=0 clipticks=0 upticks=0 sub=88
+[up] palT=0 winHitT=0 winMissT=0 regT=0 vramWrites=0
+[cyc] 3825489 ticks/frame
+[fps] f=720 vbl=2514 sub=0 calls=0 tris=479 tex=425 hit=115 miss=3 texels=8342 stepped=0 pm=3,0,0 pt=8342,0,0
+[tex] ld_sombra=5 ld_regiao=61 ld_janela=213 janela_hit=148/361 tlut=53 banco_hit=49 diretos=0 dticks=0 tcore=0
+[tri] tris=0 clip=0 clipticks=0 upticks=0 sub=192
+[up] palT=0 winHitT=0 winMissT=0 regT=0 vramWrites=0
+[bench] cc=224 ticks=3816733 p95=4274843 max=4277221 vbl=156 fps100=1231 late2=32 late3=32 tris=476 tex=420 avg_tris=468 pos=6196,-215692 area=7
+[cyc] 3713619 ticks/frame
+[fps] f=750 vbl=2656 sub=0 calls=0 tris=436 tex=378 hit=115 miss=3 texels=8342 stepped=0 pm=3,0,0 pt=8342,0,0
+[tex] ld_sombra=5 ld_regiao=63 ld_janela=162 janela_hit=126/288 tlut=51 banco_hit=48 diretos=0 dticks=0 tcore=0
+[tri] tris=0 clip=0 clipticks=0 upticks=0 sub=114
+[up] palT=0 winHitT=0 winMissT=0 regT=0 vramWrites=0

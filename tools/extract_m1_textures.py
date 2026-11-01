@@ -107,3 +107,4 @@ pal5_0 = struct.unpack_from('<16H', pal5_bytes, 0 * 32)
 bld235_rgba = extract_subtex(decomp5, pal5_0, 0, 0, 64, 64)
 save_png('docs/diag_textures/bld235_64x64_orig.png', 64, 64, bld235_rgba)
 print("Saved docs/diag_textures/bld235_64x64_orig.png")
+
