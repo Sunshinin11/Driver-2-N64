@@ -1083,6 +1083,21 @@ static bool upload_region(int page, int clut, int u0, int v0, int w, int h, int 
     return true;
 }
 
+#ifdef D2_T3D_WORLD
+// Share the original game's live VRAM pages with native 3D. No frozen sprite
+// association: region streaming and CLUT changes use the same invalidation path.
+extern "C" int d2_rdp_t3d_texture(int page, int clut, int u, int v, int w, int h, int* ou, int* ov)
+{
+    s_texFormat = TF_4_BIT;
+    s_curRgbaMode = 0;
+    rdpq_mode_tlut(TLUT_RGBA16);
+    if (!upload_region(page, clut, u, v, w, h, 1)) return 0;
+    *ou = s_upOu;
+    *ov = s_upOv;
+    return 1;
+}
+#endif
+
 #ifdef D2_TEXWIN
 // paleta de 16 ou 256 cores (recarrega se mudou CLUT, formato, VRAM ou modo)
 static bool upload_pal(int clut)
@@ -2427,17 +2442,25 @@ extern "C" void d2_native_draw_ot(u_long *ot)
 #endif
 #ifdef D2_T3D_WORLD
     bool t3d_drawn = false;
+    bool t3d_ordered = d2_t3d_begin_ordered_world() != 0;
     uintptr_t uot_top = (uintptr_t)ot;
-    uintptr_t uot_base = uot_top - (0x1080 - 1) * sizeof(u_long);
+    // Extended PsyCross OT entries contain both pointer and length (8 bytes
+    // on N64). u_long is only 4 bytes and misidentifies every depth bucket.
+    static_assert(sizeof(OT_TAG) == P_LEN * sizeof(u_int), "Unexpected OT tag layout");
+    uintptr_t uot_base = uot_top - (0x1080 - 1) * sizeof(OT_TAG);
 #endif
     P_TAG *base = (P_TAG*)ot;
     unsigned nodes = 0;
     for (;;) {
 #ifdef D2_T3D_WORLD
-        if (!t3d_drawn) {
+        if (t3d_ordered) {
+            uintptr_t ubase=(uintptr_t)base;
+            if(ubase>=uot_base && ubase<=uot_top && (ubase-uot_base)%sizeof(OT_TAG)==0)
+                d2_t3d_draw_world_until((int)((ubase-uot_base)/sizeof(OT_TAG)));
+        } else if (!t3d_drawn) {
             uintptr_t ubase = (uintptr_t)base;
             if (ubase >= uot_base && ubase <= uot_top) {
-                int bucket = (int)((ubase - uot_base) / sizeof(u_long));
+                int bucket = (int)((ubase - uot_base) / sizeof(OT_TAG));
                 if (bucket < 0x1070) {
                     t3d_drawn = true;
 #ifdef D2_ORIGIN_PROF
@@ -2534,7 +2557,9 @@ extern "C" void d2_native_draw_ot(u_long *ot)
         base = next;
     }
 #ifdef D2_T3D_WORLD
-    if (!t3d_drawn) {
+    if(t3d_ordered) {
+        d2_t3d_end_ordered_world();
+    } else if (!t3d_drawn) {
 #ifdef D2_ORIGIN_PROF
         uint32_t _t3d0 = d2_oprof_cnt0();
         d2_t3d_draw_queued_buildings();

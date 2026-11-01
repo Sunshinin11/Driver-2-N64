@@ -117,6 +117,10 @@ D2_T3D_STATS ?= 0
 ifeq ($(D2_T3D_STATS),1)
 D2_OPT += -DD2_T3D_STATS=1
 endif
+D2_T3D_TELEMETRY ?= 0
+ifeq ($(D2_T3D_TELEMETRY),1)
+D2_OPT += -DD2_T3D_TELEMETRY=1
+endif
 PLAT_OBJS += $(OBJ_DIR)/port/n64/d2_t3d_world.o
 OBJS += $(OBJ_DIR)/port/n64/d2_t3d_world.o
 endif
