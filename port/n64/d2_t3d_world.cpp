@@ -1145,7 +1145,8 @@ void d2_t3d_draw_queued_buildings(void)
         }
         s_logged_diag++;
     }
-#ifdef D2_T3D_SMOKE
+    // O caminho normal de mundo deve sempre ser compilado com D2_T3D_WORLD,
+    // independentemente da flag opt-in D2_T3D_SMOKE.
     if (!s_t3d_inited) {
         d2_t3d_init();
     }
@@ -1277,7 +1278,6 @@ void d2_t3d_draw_queued_buildings(void)
     uint32_t t_end = t3d_stat_clock();
     t3d_stat_frame(t_end - t_start);
 #endif
-#endif // D2_T3D_SMOKE
 }
 
 #endif // D2_T3D_WORLD
