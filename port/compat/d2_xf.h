@@ -81,9 +81,13 @@ D2X_AI void d2x_strgb3(void *a, void *b, void *c) { d2x_st_rgb(a, 0); d2x_st_rgb
 D2X_AI unsigned int d2x_div(unsigned int num, unsigned int den)
 {
 	if (num >= den * 2) return 0x1ffff;
-	const int lz = __builtin_clz(den) - 16;
-	const int sh = lz > 0 ? lz : 0;
-	const unsigned int d = den << sh;
+	// den <= 0xffff aqui (num < 2*den e o limite acima): normaliza para 0x8000..0xffff sem chamar o clz de software da libgcc
+	unsigned int d = den;
+	int sh = 0;
+	if (d < 0x100) { sh = 8; d <<= 8; }
+	if (d < 0x1000) { sh += 4; d <<= 4; }
+	if (d < 0x4000) { sh += 2; d <<= 2; }
+	if (d < 0x8000) { sh += 1; d <<= 1; }
 	const int r1 = (int)(d & 0x7fff);
 	const int r2 = d2_unr_table[(r1 + 0x40) >> 7] + 0x101;
 	const int r3 = ((0x80 - (r2 * (r1 + 0x8000))) >> 8) & 0x1ffff;

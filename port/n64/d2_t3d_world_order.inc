@@ -83,9 +83,6 @@ int d2_t3d_begin_ordered_world(void)
 #else
     // Never touch frontend state when its OT contains no native world.
     if(!s_t3d_tile_queue_count && !s_t3d_bld_queue_count) return 1;
-#ifdef D2_T3D_TELEMETRY
-    s_live_ot_start=d2_live_clock();
-#endif
     float h=scr_z>0?(float)scr_z:256.0f;
     T3DVec3 eye={{0,0,0}},target={{0,0,256}},up={{0,-1,0}};
     t3d_viewport_set_projection(&s_t3d_viewport,2.0f*atanf(120.0f/h),16.0f,32768.0f);
@@ -95,15 +92,7 @@ int d2_t3d_begin_ordered_world(void)
     s_order_count=s_order_cursor=s_order_instance_count=0;
     for(int i=0;i<s_t3d_tile_queue_count;i++) d2_order_add_instance(s_t3d_tile_queue[i]);
     for(int i=0;i<s_t3d_bld_queue_count;i++) d2_order_add_instance(s_t3d_bld_queue[i]);
-#ifdef D2_T3D_TELEMETRY
-    uint32_t sort_start=d2_live_clock();
-#endif
     qsort(s_order_faces,s_order_count,sizeof(s_order_faces[0]),d2_order_compare);
-#ifdef D2_T3D_TELEMETRY
-    s_live_telemetry.sort+=d2_live_clock()-sort_start;
-    s_live_telemetry.prepare+=d2_live_clock()-s_live_ot_start;
-    s_live_telemetry.faces+=s_order_count;
-#endif
     s_order_active=true;
     return 1;
 #endif
@@ -112,10 +101,6 @@ int d2_t3d_begin_ordered_world(void)
 void d2_t3d_draw_world_until(int bucket)
 {
     if(!s_order_active || s_order_cursor>=s_order_count || s_order_faces[s_order_cursor].bucket<bucket) return;
-#ifdef D2_T3D_TELEMETRY
-    uint32_t render_start=d2_live_clock();
-    s_live_telemetry.batches++;
-#endif
     // The legacy backend may have changed modes/TMEM since the previous batch.
     d2_rdp_invalidate_backend_cache();
     rdpq_mode_begin();
@@ -131,36 +116,16 @@ void d2_t3d_draw_world_until(int bucket)
         if(last_instance!=face.instance) {
             t3d_matrix_set(&s_t3d_mat_pool[s_t3d_viewport._bufferIdx][face.instance],true);
             last_instance=face.instance;
-#ifdef D2_T3D_TELEMETRY
-            s_live_telemetry.matrices++;
-#endif
         }
         d2_t3d_draw_live_face(*s_order_instances[face.instance],face.poly);
     }
     t3d_matrix_pop(1);
     d2_rdp_invalidate_backend_cache();
-#ifdef D2_T3D_TELEMETRY
-    s_live_telemetry.render+=d2_live_clock()-render_start;
-#endif
 }
 
 void d2_t3d_end_ordered_world(void)
 {
     d2_t3d_draw_world_until(0);
-#ifdef D2_T3D_TELEMETRY
-    if(s_order_active) {
-        s_live_telemetry.ot_span+=d2_live_clock()-s_live_ot_start;
-        s_live_telemetry.missing+=s_live_missing;
-        if(++s_live_telemetry.frames==60) {
-            const D2LiveTelemetry& t=s_live_telemetry;
-            extern int CameraCnt;
-            debugf("[T3D_PERF] cc=%d nf=%u prep=%u sort=%u render=%u bind=%u emit=%u ring_wait=%u ot_span=%u faces=%u vtx=%u tris=%u batches=%u matrices=%u rings=%u missing=%u\n",
-                CameraCnt,t.frames,t.prepare/60,t.sort/60,t.render/60,t.bind/60,t.emit/60,t.ring_wait/60,t.ot_span/60,
-                t.faces/60,t.vertices/60,t.triangles/60,t.batches/60,t.matrices/60,t.rings,t.missing);
-            memset(&s_live_telemetry,0,sizeof(s_live_telemetry));
-        }
-    }
-#endif
     s_order_active=false;
     s_t3d_tile_queue_count=s_t3d_bld_queue_count=0;
 }

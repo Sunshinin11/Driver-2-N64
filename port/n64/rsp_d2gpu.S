@@ -11,6 +11,7 @@
         RSPQ_DefineCommand D2G_Cmd_PolyFT4,      28  # 5
         RSPQ_DefineCommand D2G_Cmd_DrawEnd,      4   # 6
         RSPQ_DefineCommand D2G_Cmd_SetTilePal,   8   # 7
+        RSPQ_DefineCommand D2G_Cmd_PolyGT3,      32  # 8
     RSPQ_EndOverlayHeader
 
     RSPQ_BeginSavedState
@@ -470,6 +471,130 @@ D2G_Cmd_PolyFT4:
     addi s3, t7, %lo(D2G_OUTPUT_BUFFER)
 
     xor t7, 0xB0
+    sb t7, %lo(D2G_OUTPUT_OFFSET)
+    j RSPQ_Loop
+    nop
+    .endfunc
+
+    #############################################################
+    # D2G_Cmd_PolyGT3 (Command 8, size 32): triangulo texturizado com cor por vertice
+    #
+    # a0: [31..24: CMD] [23..0: cor0 RRGGBB]
+    # a1..a3: (x << 16) | (y & 0xFFFF) dos vertices 0..2
+    # word 4: (u0 << 24) | (v0 << 16) | (u1 << 8) | v1
+    # word 5: (u2 << 24) | (v2 << 16)
+    # word 6: cor1 RRGGBB, word 7: cor2 RRGGBB
+    #############################################################
+    .func D2G_Cmd_PolyGT3
+D2G_Cmd_PolyGT3:
+    lw t5, CMD_ADDR(16, 32)    # uv0, uv1
+    lw t4, CMD_ADDR(20, 32)    # uv2 (u2 << 24 | v2 << 16)
+    lw t6, CMD_ADDR(24, 32)    # cor do vertice 1 (RRGGBB)
+    lw v1, CMD_ADDR(28, 32)    # cor do vertice 2 (RRGGBB)
+
+    # RGBA32 por vertice
+    sll t0, a0, 8
+    ori t0, t0, 0xFF
+    sll t6, t6, 8
+    ori t6, t6, 0xFF
+    sll v1, v1, 8
+    ori v1, v1, 0xFF
+
+    lh t1, %lo(D2G_OFX)
+    lh t2, %lo(D2G_OFY)
+    lh s5, %lo(D2G_TEX_OU)
+    lh s6, %lo(D2G_TEX_OV)
+    li s4, %lo(D2G_VTX_BUFFER)
+
+    # Vertice 0: XY (a1), UV (t5 >> 16)
+    sra t3, a1, 16
+    add t3, t3, t1
+    sll t3, t3, 2
+    sll a0, a1, 16
+    sra a0, a0, 16
+    add a0, a0, t2
+    sll a0, a0, 2
+    andi a0, a0, 0xFFFF
+    sll t3, t3, 16
+    or t3, t3, a0
+    sw t3,   0x00(s4)
+    sw t0,   0x08(s4)
+    # ST0
+    srl a0, t5, 24             # u0
+    sub a0, a0, s5
+    sll a0, a0, 5              # s0
+    srl t3, t5, 16             # v0
+    andi t3, t3, 0xFF
+    sub t3, t3, s6
+    sll t3, t3, 5              # t0
+    sll a0, a0, 16
+    or a0, a0, t3
+    sw a0,   0x0C(s4)
+
+    # Vertice 1: XY (a2), UV (t5 & 0xFFFF)
+    sra t3, a2, 16
+    add t3, t3, t1
+    sll t3, t3, 2
+    sll a0, a2, 16
+    sra a0, a0, 16
+    add a0, a0, t2
+    sll a0, a0, 2
+    andi a0, a0, 0xFFFF
+    sll t3, t3, 16
+    or t3, t3, a0
+    sw t3,   0x20(s4)
+    sw t6,   0x28(s4)
+    # ST1
+    srl a0, t5, 8
+    andi a0, a0, 0xFF          # u1
+    sub a0, a0, s5
+    sll a0, a0, 5
+    andi t3, t5, 0xFF          # v1
+    sub t3, t3, s6
+    sll t3, t3, 5
+    sll a0, a0, 16
+    or a0, a0, t3
+    sw a0,   0x2C(s4)
+
+    # Vertice 2: XY (a3), UV (t4 >> 16)
+    sra t3, a3, 16
+    add t3, t3, t1
+    sll t3, t3, 2
+    sll a0, a3, 16
+    sra a0, a0, 16
+    add a0, a0, t2
+    sll a0, a0, 2
+    andi a0, a0, 0xFFFF
+    sll t3, t3, 16
+    or t3, t3, a0
+    sw t3,   0x40(s4)
+    sw v1,   0x48(s4)
+    # ST2
+    srl a0, t4, 24             # u2
+    sub a0, a0, s5
+    sll a0, a0, 5
+    srl t3, t4, 16
+    andi t3, t3, 0xFF          # v2
+    sub t3, t3, s6
+    sll t3, t3, 5
+    sll a0, a0, 16
+    or a0, a0, t3
+    sw a0,   0x4C(s4)
+
+    lbu t7, %lo(D2G_OUTPUT_OFFSET)
+    li sp, %lo(RSPQ_Loop)
+
+    # Triangulo 1 (0, 1, 2) - Shaded + Textured
+    li a0, 0x0E00
+    li a1, %lo(D2G_VTX_BUFFER) + 0x00
+    li a2, %lo(D2G_VTX_BUFFER) + 0x20
+    li a3, %lo(D2G_VTX_BUFFER) + 0x40
+    li v0, 2
+    jal RDPQ_Triangle_Send_Async
+    addi s3, t7, %lo(D2G_OUTPUT_BUFFER)
+
+    xor t7, 0xB0
+
     sb t7, %lo(D2G_OUTPUT_OFFSET)
     j RSPQ_Loop
     nop

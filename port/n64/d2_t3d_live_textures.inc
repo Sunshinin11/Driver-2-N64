@@ -4,17 +4,6 @@ extern "C" int d2_rdp_t3d_texture(int, int, int, int, int, int, int*, int*);
 extern "C" void d2_rdp_invalidate_backend_cache(void);
 static int s_live_vertex_cursor;
 static unsigned s_live_faces, s_live_parts, s_live_missing;
-#ifdef D2_T3D_TELEMETRY
-struct D2LiveTelemetry {
-    uint32_t prepare, sort, render, bind, emit, ring_wait, ot_span;
-    uint32_t faces, vertices, triangles, batches, matrices, rings, missing, frames;
-};
-static D2LiveTelemetry s_live_telemetry;
-static uint32_t s_live_ot_start;
-static inline uint32_t d2_live_clock() {
-    uint32_t ticks; __asm__ volatile("mfc0 %0,$9" : "=r"(ticks)); return ticks;
-}
-#endif
 struct D2LiveVertex { float x, y, z, u, v; };
 
 static int d2_live_clip(const D2LiveVertex* in, int count, D2LiveVertex* out, int axis, float bound, bool keep_greater)
@@ -38,21 +27,11 @@ static int d2_live_clip(const D2LiveVertex* in, int count, D2LiveVertex* out, in
 
 static void d2_live_emit(const D2LiveVertex* v, int count, uint32_t color, int ou, int ov)
 {
-#ifdef D2_T3D_TELEMETRY
-    uint32_t emit_start=d2_live_clock();
-#endif
     int aligned = (count + 1) & ~1;
     const int capacity = D2_T3D_MAX_VERTS / 2;
     if (s_live_vertex_cursor + aligned > capacity) {
         t3d_tri_sync();
-#ifdef D2_T3D_TELEMETRY
-        uint32_t wait_start=d2_live_clock();
-#endif
         rspq_wait(); // Only the RSP reads these vertices; RDP gets inline triangles.
-#ifdef D2_T3D_TELEMETRY
-        s_live_telemetry.ring_wait+=d2_live_clock()-wait_start;
-        s_live_telemetry.rings++;
-#endif
         s_live_vertex_cursor = 0;
     }
     int first = s_t3d_viewport._bufferIdx * capacity + s_live_vertex_cursor;
@@ -73,11 +52,6 @@ static void d2_live_emit(const D2LiveVertex* v, int count, uint32_t color, int o
     t3d_tri_sync();
     s_live_vertex_cursor += aligned;
     s_live_parts++;
-#ifdef D2_T3D_TELEMETRY
-    s_live_telemetry.emit+=d2_live_clock()-emit_start;
-    s_live_telemetry.vertices+=aligned;
-    s_live_telemetry.triangles+=count-2;
-#endif
 }
 
 static void d2_live_triangle(const D2LiveVertex tri[3], uint32_t color, int page, int clut)
@@ -98,13 +72,7 @@ static void d2_live_triangle(const D2LiveVertex tri[3], uint32_t color, int page
         for(int k=1;k+1<n;k++) area+=fabsf((a[k].u-a[0].u)*(a[k+1].v-a[0].v)-(a[k].v-a[0].v)*(a[k+1].u-a[0].u));
         if(area<0.001f) continue;
         int ou,ov;
-#ifdef D2_T3D_TELEMETRY
-        uint32_t bind_start=d2_live_clock();
-#endif
         bool bound=d2_rdp_t3d_texture(page,clut,tu,tv,64,64,&ou,&ov)!=0;
-#ifdef D2_T3D_TELEMETRY
-        s_live_telemetry.bind+=d2_live_clock()-bind_start;
-#endif
         if (!bound) { s_live_missing++; continue; }
         d2_live_emit(a,n,color,ou,ov);
     }

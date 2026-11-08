@@ -88,6 +88,7 @@ enum {
     D2G_CMD_POLY_FT4       = 5,
     D2G_CMD_DRAW_END       = 6,
     D2G_CMD_SET_TILE_PAL   = 7,
+    D2G_CMD_POLY_GT3       = 8,
 };
 
 static void rdp_init_once(void)
@@ -1545,6 +1546,52 @@ static bool rsp_ft4(const short *xs, const short *ys, const unsigned char *us, c
     s_texTriCount += 2;
     return true;
 }
+// triangulo texturizado de 4 bits com cor por vertice (gouraud), montado pelo RSP
+static bool rsp_gt3(const short *xs, const short *ys, const unsigned char *us, const unsigned char *vs, int tpage, int clut, const uint32_t *col, int ofx, int ofy)
+{
+    if (!s_d2gpuOvl || s_texFormat != TF_4_BIT || s_ctxSx16 != 65536 || s_ctxSy16 != 65536 || (tpage & 15) < 8) return false;
+    short minx = xs[0], maxx = xs[0], miny = ys[0], maxy = ys[0];
+    int umin = us[0], umax = us[0], vmin = vs[0], vmax = vs[0];
+    for (int i = 1; i < 3; i++)
+    {
+        if (xs[i] < minx) minx = xs[i]; if (xs[i] > maxx) maxx = xs[i];
+        if (ys[i] < miny) miny = ys[i]; if (ys[i] > maxy) maxy = ys[i];
+        if (us[i] < umin) umin = us[i]; if (us[i] > umax) umax = us[i];
+        if (vs[i] < vmin) vmin = vs[i]; if (vs[i] > vmax) vmax = vs[i];
+    }
+    const int sx0 = (minx + ofx) << 2, sx1 = (maxx + ofx) << 2, sy0 = (miny + ofy) << 2, sy1 = (maxy + ofy) << 2;
+    if (sx1 < s_ctxCx0 || sx0 >= s_ctxCx1 || sy1 < s_ctxCy0 || sy0 >= s_ctxCy1) return true;
+    if (sx0 < -4096 || sx1 > 4095 || sy0 < -4096 || sy1 > 4095 || sx1 - sx0 > 16000 || sy1 - sy0 > 16000) return false;
+    const int uw = (umax > umin) ? (umax - umin) : 1, vh = (vmax > vmin) ? (vmax - vmin) : 1;
+    if (uw > 64 || vh > 64 || !upload_win((tpage & 15) * 64, ((tpage >> 4) & 1) * 256, clut, umin, vmin, uw, vh)) return false;
+    if (s_rspOfx != ofx || s_rspOfy != ofy)
+    {
+        s_rspOfx = ofx; s_rspOfy = ofy;
+        track_ovl_switch(s_d2gpuOvl);
+        rspq_write(s_d2gpuOvl, D2G_CMD_SET_OFFSET, 0, ((uint32_t)(int16_t)ofx << 16) | ((uint32_t)(int16_t)ofy & 0xFFFF));
+    }
+    if (s_rspTexOu != s_upOu || s_rspTexOv != s_upOv)
+    {
+        s_rspTexOu = s_upOu; s_rspTexOv = s_upOv;
+        track_ovl_switch(s_d2gpuOvl);
+        rspq_write(s_d2gpuOvl, D2G_CMD_SET_TEX_ORIGIN, 0, ((uint32_t)(uint16_t)s_upOu << 16) | ((uint32_t)(uint16_t)s_upOv & 0xFFFF));
+    }
+    if (s_tmemDirty)
+    {
+        __rdpq_autosync_use(AUTOSYNC_PIPE | AUTOSYNC_TILE(0) | AUTOSYNC_TMEM(0));
+        s_tmemDirty = false;
+    }
+    const uint32_t xy0 = ((uint32_t)(uint16_t)xs[0] << 16) | (uint16_t)ys[0], xy1 = ((uint32_t)(uint16_t)xs[1] << 16) | (uint16_t)ys[1];
+    const uint32_t xy2 = ((uint32_t)(uint16_t)xs[2] << 16) | (uint16_t)ys[2];
+    const uint32_t uv01 = ((uint32_t)us[0] << 24) | ((uint32_t)vs[0] << 16) | ((uint32_t)us[1] << 8) | vs[1];
+    const uint32_t uv2 = ((uint32_t)us[2] << 24) | ((uint32_t)vs[2] << 16);
+    track_ovl_switch(s_d2gpuOvl);
+    rspq_write(s_d2gpuOvl, D2G_CMD_POLY_GT3, col[0], xy0, xy1, xy2, uv01, uv2, col[1], col[2]);
+    s_rspFT4Count++;
+    s_triCount++;
+    s_texTriCount++;
+    return true;
+}
 int d2_native_ft4(POLY_FT4 *p)
 {
     if (!activeDrawEnv.dfe || !s_scene) return 9;
@@ -1894,6 +1941,14 @@ int d2_direct_poly(P_TAG *tag)
         const uint32_t col = shadeOn ? ((uint32_t)s_shadeLut[cr[0]] << 16) | ((uint32_t)s_shadeLut[cg[0]] << 8) | s_shadeLut[cb[0]]
                                      : ((uint32_t)s_shadeLut[128] << 16) | ((uint32_t)s_shadeLut[128] << 8) | s_shadeLut[128];
         if (rsp_ft4(xs, ys, us, vs, tpage, clut, col, ofx, ofy)) return len;
+    }
+    if (tex && !quad && gour && bm == BM_NONE && texOk)
+    {
+        uint32_t col[3];
+        for (int i = 0; i < 3; i++)
+            col[i] = shadeOn ? ((uint32_t)s_shadeLut[cr[i]] << 16) | ((uint32_t)s_shadeLut[cg[i]] << 8) | s_shadeLut[cb[i]]
+                             : ((uint32_t)s_shadeLut[128] << 16) | ((uint32_t)s_shadeLut[128] << 8) | s_shadeLut[128];
+        if (rsp_gt3(xs, ys, us, vs, tpage, clut, col, ofx, ofy)) return len;
     }
     if (!tex && !gour && s_ctxSx16 == 65536 && s_ctxSy16 == 65536)
     {
