@@ -1722,7 +1722,7 @@ int d2_native_vram_packet(P_TAG *tag)
 }
 extern "C" int d2_native_dispatch(P_TAG *tag)
 {
-    if (__builtin_expect(tag->code == 0xB3, 1)) return d2_native_ft4((POLY_FT4*)tag);
+    if (__builtin_expect(tag->code == 0xB3 || tag->code == 0x2C, 1)) return d2_native_ft4((POLY_FT4*)tag);
     const int type = tag->code & 0xF0;
     if (__builtin_expect(type == 0x20 || type == 0x30, 1)) return d2_direct_poly(tag);
     if (type == 0xE0) return d2_native_drawenv(tag);
