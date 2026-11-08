@@ -20,3 +20,14 @@ def register(P, R):
     # inicializacao do CD: nao existe
     R('Game/C/system.c', r'(?m)^(\t+)CdInit\(\);', r'\1/*d2cd*/')
     R('Game/C/main.c', r'(?m)^(\t+)CdInit\(\);', r'\1/*d2cd*/')
+
+    # system.c / fmvplay.c: o que sobrou do caminho de setores de CD
+    R('Game/C/fmvplay.c', r'(?m)^(\t+)CdInit\(\);', r'\1/*d2cd*/')
+    R('Game/C/system.c', r'(?s)void ReportMode\(int on\)\r?\n\{(?!\r?\n\t/\*d2cd).*?\r?\n\}\r?\n', 'void ReportMode(int on)\n{\n\t/*d2cd: sem CD*/\n}\n')
+    P('Game/C/system.c',
+      "static volatile u_char endread = 0;\nstatic volatile u_char load_complete = 0;\n",
+      "#if USE_CD_FILESYSTEM /*d2cd*/\nstatic volatile u_char endread = 0;\nstatic volatile u_char load_complete = 0;\n")
+    P('Game/C/system.c',
+      "\t\tCdIntToPos(current_sector, &p);\n\t\tCdControlF(CdlReadS, (u_char*)&p);\n\t}\n}\n",
+      "\t\tCdIntToPos(current_sector, &p);\n\t\tCdControlF(CdlReadS, (u_char*)&p);\n\t}\n}\n#endif /*d2cd*/\n")
+    R('Game/C/system.c', r'(?s)\tload_complete = 0;\r?\n\tendread = 0;\r?\n.*?\tShowLoading\(\);\r?\n\}', '\t/*d2cd: leitura so por arquivo (DragonFS)*/\n}')
