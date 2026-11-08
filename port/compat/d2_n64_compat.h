@@ -15,6 +15,7 @@ FILE *d2_fopen(const char *path, const char *mode); /* port/n64/sys_n64.c: redir
 void d2_audio_pump(void);
 void d2_vadpcm_set_current_lump(int lump);
 void d2_vadpcm_reset(void);
+int d2_LoadColor(void *rect, void *data);   /* upload de paleta / imagem de 16 bits: a VRAM guarda RGBA5551 do RDP */
 void d2_vadpcm_set_current_song(int song);
 int d2_vadpcm_process_music(int num_samples, void *samps_ptr);
 int d2_vadpcm_process_lump(int dbank, int start_idx, int num_samples, void *samps_ptr);

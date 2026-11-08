@@ -1135,6 +1135,8 @@ import patch_audio_native
 patch_audio_native.register(P, R)
 import patch_gpu_native
 patch_gpu_native.register(P, R)
+import patch_vram_native
+patch_vram_native.register(P, R)
 PATCHES[:] = [x for x in PATCHES if not patch_gpu_native.is_old_rename(x)]
 PATCHES[:] = [x for x in PATCHES if not (x[0].endswith('LIBGPU.C') and "initialize a linked list with it's previous items" in x[1])]
 PATCHES[:] = [x for x in PATCHES if x[0] not in patch_gte_removal.GONE]

@@ -60,6 +60,18 @@ void PsyX_SetCursorRelative(int enable) { (void)enable; }
 unsigned short d2_vramL[512 * 512] __attribute__((aligned(64)));
 unsigned short d2_vramR[512 * 512] __attribute__((aligned(64)));
 
+unsigned char d2_vcol[64 * 512];
+
+void d2_vcol_unflag(int x, int y)
+{
+    x &= 1023; y &= 511;
+    const int x0 = x & ~15;
+    unsigned short ps1[16];
+    for (int k = 0; k < 16; k++) ps1[k] = d2_vram_rd(x0 + k, y);   // a celula ainda esta marcada: devolve o equivalente PS1
+    d2_vcol[(y << 6) + (x >> 4)] = 0;
+    for (int k = 0; k < 16; k++) d2_vram_wr(x0 + k, y, ps1[k]);
+}
+
 // o RDP le a metade direita por DMA: depois de escrever, leva as linhas de cache para a RDRAM
 static void d2_vram_r_flush(int x, int y, int w, int h)
 {
@@ -109,6 +121,28 @@ void GR_CopyVRAM(unsigned short *src, int x, int y, int w, int h, int dst_x, int
         }
     }
     d2_vram_r_flush(dst_x, dst_y, w, h);
+}
+// Upload de CORES (paletas e imagens de 16 bits): o jogo manda palavras do PS1, a VRAM guarda direto o RGBA5551 do RDP.
+// Retorna 0 se o retangulo nao esta alinhado em celulas de 16 palavras (o chamador usa o caminho sem tipo).
+int GR_LoadColor(const unsigned short *src, int dst_x, int dst_y, int w, int h)
+{
+    if ((dst_x & 15) || (w & 15) || dst_x < 0 || dst_y < 0 || dst_x + w > VRAM_W || dst_y + h > VRAM_H) return 0;
+    d2_vram_touch(dst_x, dst_y, w, h);
+    if (dst_x + w > 512) d2_vram_r_barrier();
+    for (int i = 0; i < h; i++, src += w)
+    {
+        const int y = dst_y + i;
+        for (int j = 0; j < w; j++)
+        {
+            const unsigned short v = (unsigned short)((src[j] >> 8) | (src[j] << 8));   // palavra do PS1 (bytes little-endian)
+            const int x = dst_x + j;
+            const unsigned short n = d2_ps1_to_rdp(v);
+            if (x < 512) d2_vramL[(y << 9) + x] = n; else d2_vramR[(y << 9) + x - 512] = n;
+        }
+        for (int c = 0; c < w; c += 16) d2_vcol[(y << 6) + ((dst_x + c) >> 4)] = 1;
+    }
+    d2_vram_r_flush(dst_x, dst_y, w, h);
+    return 1;
 }
 void GR_ReadVRAM(unsigned short *dst, int x, int y, int dst_w, int dst_h)
 {

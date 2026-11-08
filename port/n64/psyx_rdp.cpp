@@ -448,7 +448,7 @@ static TexSlot *get_region(int px, int py, int fmt, int u0, int v0, int w, int h
             else
             {
                 unsigned short *d = (unsigned short *)(dst + y * wpad * 2);
-                for (int x = 0; x < sw; x++) d[x] = conv_color(d2_vram_rd(px + u0 + x * step, vy));
+                for (int x = 0; x < sw; x++) d[x] = d2_vram_rdn(px + u0 + x * step, vy);
                 for (int x = sw; x < wpad; x++) d[x] = 0;
             }
         }
@@ -658,7 +658,7 @@ static void upload_pal_bank(int clut)
     if (!ok)
     {
         if (e->valid && e->use > s_doneCounter) rdp_wait_idle();      // o RDP ainda pode estar lendo esta paleta
-        for (int i = 0; i < 16; i++) e->pal[i] = conv_color(d2_vram_rd(cx + i, cy));
+        for (int i = 0; i < 16; i++) e->pal[i] = d2_vram_rdn(cx + i, cy);
         data_cache_hit_writeback(e->pal, 32);
         e->clut = pkey; e->sig = cell_signature(cx, cy, 16, 1); e->vw = s_vramWrites; e->valid = 1; e->gen = ++s_genCounter;
     }
@@ -866,7 +866,7 @@ static bool upload_region(int page, int clut, int u0, int v0, int w, int h, int 
             if (!e->valid || e->clut != pkey || e->sig != sig)
             {
                 if (e->use > s_doneCounter) rdp_wait_idle();          // o RDP ainda pode estar lendo esta paleta
-                for (int i = 0; i < 16; i++) e->pal[i] = conv_color(d2_vram_rd(cx + i, cy));
+                for (int i = 0; i < 16; i++) e->pal[i] = d2_vram_rdn(cx + i, cy);
                 data_cache_hit_writeback(e->pal, 32);
                 e->clut = pkey; e->sig = sig; e->valid = 1; e->gen = ++s_genCounter;
             }
@@ -891,7 +891,7 @@ static bool upload_region(int page, int clut, int u0, int v0, int w, int h, int 
             s_palIdx = (s_palIdx + 1) % PAL_RING;
             if (s_palUse[s_palIdx] > s_doneCounter) rdp_wait_idle();
             unsigned short *pal = s_palRing[s_palIdx];
-            for (int i = 0; i < n; i++) pal[i] = conv_color(d2_vram_rd(cx + i, cy));
+            for (int i = 0; i < n; i++) pal[i] = d2_vram_rdn(cx + i, cy);
             data_cache_hit_writeback(pal, n * 2);
             rdpq_tex_upload_tlut(pal, 0, n); s_cTlut++; s_winBase = -1; if (n > 16) banks_invalidate(); else s_bank[0].clut = -1;
 #ifdef D2_ORIGIN_PROF
@@ -1040,7 +1040,7 @@ static bool upload_pal(int clut)
     s_palIdx = (s_palIdx + 1) % PAL_RING;
     if (s_palUse[s_palIdx] > s_doneCounter) rdp_wait_idle();
     unsigned short *pal = s_palRing[s_palIdx];
-    for (int i = 0; i < n; i++) pal[i] = conv_color(d2_vram_rd(cx + i, cy));
+    for (int i = 0; i < n; i++) pal[i] = d2_vram_rdn(cx + i, cy);
     data_cache_hit_writeback(pal, n * 2);
     rdpq_tex_upload_tlut(pal, 0, n); s_cTlut++; s_winBase = -1; if (n > 16) banks_invalidate(); else s_bank[0].clut = -1;
 #ifdef D2_ORIGIN_PROF

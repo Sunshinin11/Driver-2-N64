@@ -10,6 +10,7 @@ extern DRAWENV activeDrawEnv;
 extern void (*drawsync_callback)(void);
 extern "C" void d2_native_draw_ot(u_long *p);
 extern "C" int d2_native_draw_prim(P_TAG *p);
+extern "C" int GR_LoadColor(const unsigned short *src, int dst_x, int dst_y, int w, int h);
 
 int ClearImage(RECT16 *r, u_char red, u_char green, u_char blue)
 {
@@ -29,6 +30,12 @@ int DrawSync(int)
 int LoadImage(RECT16 *r, u_long *p)
 {
     GR_CopyVRAM((unsigned short*)p,0,0,r->w,r->h,r->x,r->y);
+    return 0;
+}
+extern "C" int d2_LoadColor(void *rect, void *p)
+{
+    RECT16 *r = (RECT16 *)rect;
+    if (!GR_LoadColor((const unsigned short *)p, r->x, r->y, r->w, r->h)) LoadImage(r, (u_long *)p);
     return 0;
 }
 int LoadImage2(RECT16 *r, u_long *p)
