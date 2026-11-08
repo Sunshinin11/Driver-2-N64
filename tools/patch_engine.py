@@ -637,6 +637,10 @@ P('Game/C/tile.c', "void drawMeshLit(MVERTEX(*VSP)[5][5], int m, int n, _pct* pc
 P('Game/C/draw.c', "void PlotBuildingModel(MODEL* model, int rot, _pct* pc)\n{", "void PlotBuildingModel(MODEL* model, int rot, _pct* pc);\nvoid PlotBuildingModelSubdivNxN(MODEL* model, int rot, _pct* pc, int n);\nvoid D2_VC_ORIG(PlotBuildingModel)(MODEL* model, int rot, _pct* pc)\n{")
 P('Game/C/draw.c', "void PlotBuildingModelSubdivNxN(MODEL* model, int rot, _pct* pc, int n)\n{", "void D2_VC_ORIG(PlotBuildingModelSubdivNxN)(MODEL* model, int rot, _pct* pc, int n)\n{")
 
+# ---- carros (port/n64/d2_vtxcache.cpp): cada vertice do modelo do carro e projetado UMA vez por chamada (os triangulos compartilham vertices) ----
+R('Game/C/cars.c', r'd2x_ldv3\(v0, v1, v2\);\n\n\t\td2x_rtpt\(\);', 'd2_vc_car_rtpt3(indices);')
+R('Game/C/cars.c', r'(?<!d2_vc_car_begin\(vlist\);\n)\twhile \(numTris > 0\)', '\td2_vc_car_begin(vlist);\n\twhile (numTris > 0)')
+
 # ---- buffer de vertices e splits menores: nunca escrever alem dele; economiza ~305 KB de RAM ----
 P('PsyCross/src/gpu/PsyX_GPU.cpp', "#define MAX_DRAW_SPLITS 1024", "#define MAX_DRAW_SPLITS 16")
 P('PsyCross/src/gpu/PsyX_GPU.cpp',

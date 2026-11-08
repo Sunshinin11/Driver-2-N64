@@ -67,8 +67,18 @@ static inline const VCEnt *vc_get_lit(int i)
 	}
 	return e;
 }
+// carros: o motor chama d2_vc_car_begin(vlist) antes do laco e d2_vc_car_rtpt3(indices) por triangulo (no lugar de LDV3 + RTPT)
+extern "C" void d2_vc_car_begin(const void *vlist) { vc_begin((const SVECTOR *)vlist); }
 static inline short vc_sx(unsigned int xy) { return (short)(xy & 0xffff); }
 static inline short vc_sy(unsigned int xy) { return (short)(xy >> 16); }
+extern "C" void d2_vc_car_rtpt3(unsigned int ix)
+{
+	const VCEnt *A = vc_get(ix & 0xff), *B = vc_get((ix >> 8) & 0xff), *C = vc_get((ix >> 16) & 0xff);
+	d2xf.sz[0] = d2xf.sz[3]; d2xf.sz[1] = A->z; d2xf.sz[2] = B->z; d2xf.sz[3] = C->z;
+	d2xf.sx[0] = vc_sx(A->xy); d2xf.sy[0] = vc_sy(A->xy);
+	d2xf.sx[1] = vc_sx(B->xy); d2xf.sy[1] = vc_sy(B->xy);
+	d2xf.sx[2] = vc_sx(C->xy); d2xf.sy[2] = vc_sy(C->xy);
+}
 // NCLIP com os tres SXY
 static inline int vc_nclip(unsigned int a, unsigned int b, unsigned int c)
 {
