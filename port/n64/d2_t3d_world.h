@@ -5,7 +5,6 @@
 extern "C" {
 #endif
 
-#ifdef D2_T3D_WORLD
 
 void d2_t3d_init(void);
 void d2_t3d_on_models_loaded(void);
@@ -20,27 +19,6 @@ void d2_t3d_end_ordered_world(void);
 int  d2_t3d_get_queued_count(void);
 void d2_t3d_get_stats(int* vtx_total, int* vtx_used, int* models_converted);
 
-#else
-
-static inline void d2_t3d_init(void) {}
-static inline void d2_t3d_on_models_loaded(void) {}
-static inline int  d2_t3d_has_model(int model_idx) { (void)model_idx; return 0; }
-static inline void d2_t3d_set_tile_tint(unsigned int psx_colour) { (void)psx_colour; }
-static inline void d2_t3d_queue_tile(int model_idx, int yang, int z, int tx, int ty, int tz) {
-    (void)model_idx; (void)yang; (void)z; (void)tx; (void)ty; (void)tz;
-}
-static inline void d2_t3d_queue_building(int model_idx, int yang, int z, int tx, int ty, int tz) {
-    (void)model_idx; (void)yang; (void)z; (void)tx; (void)ty; (void)tz;
-}
-static inline void d2_t3d_draw_queued_buildings(void) {}
-static inline int  d2_t3d_get_queued_count(void) { return 0; }
-static inline void d2_t3d_get_stats(int* vtx_total, int* vtx_used, int* models_converted) {
-    if (vtx_total) *vtx_total = 0;
-    if (vtx_used) *vtx_used = 0;
-    if (models_converted) *models_converted = 0;
-}
-
-#endif // D2_T3D_WORLD
 
 #ifdef __cplusplus
 }

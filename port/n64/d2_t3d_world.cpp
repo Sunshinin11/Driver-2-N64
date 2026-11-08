@@ -7,7 +7,6 @@
 
 #include "d2_t3d_world.h"
 
-#ifdef D2_T3D_WORLD
 
 #ifndef D2_T3D_LIVE_TEXTURES
 #define D2_T3D_LIVE_TEXTURES 1
@@ -47,28 +46,6 @@ static rspq_block_t* s_t3d_model_blocks[MAX_MODEL_SLOTS];
 static bool s_t3d_live_model[MAX_MODEL_SLOTS];
 static unsigned char s_t3d_tile_ofs[MAX_MODEL_SLOTS]; // 229 = water/grass, 133 = road/pavement, 0 = building
 
-#if defined(D2_T3D_STATS) || defined(D2_ORIGIN_PROF)
-static unsigned short s_t3d_model_triangles[MAX_MODEL_SLOTS];
-#endif
-#ifdef D2_T3D_STATS
-static unsigned s_stat_candidates, s_stat_native, s_stat_queued, s_stat_triangles;
-static unsigned s_stat_ticks, s_stat_frames;
-static uint32_t t3d_stat_clock(void) {
-    uint32_t ticks;
-    __asm__ volatile("mfc0 %0,$9" : "=r"(ticks));
-    return ticks;
-}
-static void t3d_stat_frame(uint32_t ticks) {
-    s_stat_ticks += ticks;
-    if (++s_stat_frames < 30) return;
-    extern int CameraCnt;
-    debugf("[T3D_WORK] cc=%d frames=%u candidates=%u native=%u legacy=%u queued=%u triangles=%u submit_ticks=%u\n",
-           CameraCnt, s_stat_frames, s_stat_candidates, s_stat_native,
-           s_stat_candidates - s_stat_native, s_stat_queued, s_stat_triangles, s_stat_ticks);
-    s_stat_candidates = s_stat_native = s_stat_queued = s_stat_triangles = 0;
-    s_stat_ticks = s_stat_frames = 0;
-}
-#endif
 
 // Matrix pool for queued instances (double buffered: 2 frames x 448 instances x 64B = 56 KB)
 static T3DMat4FP s_t3d_mat_pool[2][D2_T3D_MAX_MATS] __attribute__((aligned(16)));
@@ -398,9 +375,6 @@ void d2_t3d_on_models_loaded(void)
             s_t3d_model_blocks[i] = NULL;
         }
         s_t3d_tile_ofs[i] = 0;
-#if defined(D2_T3D_STATS) || defined(D2_ORIGIN_PROF)
-        s_t3d_model_triangles[i] = 0;
-#endif
     }
 
     s_t3d_vtx_used = 0;
@@ -924,9 +898,6 @@ void d2_t3d_on_models_loaded(void)
             }
 
             s_t3d_tile_ofs[mid] = is_tile ? (unsigned char)base_ofse : 0;
-#if defined(D2_T3D_STATS) || defined(D2_ORIGIN_PROF)
-            s_t3d_model_triangles[mid] = (unsigned short)total_tris;
-#endif
             s_t3d_models_converted++;
             if (is_tile) s_t3d_tiles_converted++;
             else s_t3d_blds_converted++;
@@ -955,11 +926,6 @@ void d2_t3d_on_models_loaded(void)
 
 int d2_t3d_has_model(int model_idx)
 {
-#ifdef D2_T3D_STATS
-    s_stat_candidates++;
-    if (model_idx >= 0 && model_idx < MAX_MODEL_SLOTS && s_t3d_model_blocks[model_idx])
-        s_stat_native++;
-#endif
     if (model_idx < 0 || model_idx >= MAX_MODEL_SLOTS) return 0;
     return s_t3d_live_model[model_idx] || s_t3d_model_blocks[model_idx] != NULL;
 }
@@ -988,14 +954,6 @@ void d2_t3d_queue_tile(int model_idx, int yang, int z, int tx, int ty, int tz)
     q->tx = tx;
     q->ty = ty;
     q->tz = tz;
-#ifdef D2_T3D_STATS
-    s_stat_queued++;
-    s_stat_triangles += s_t3d_model_triangles[model_idx];
-#endif
-#ifdef D2_ORIGIN_PROF
-    g_d2_oprof.objs[OPROF_T3D_GRD]++;
-    g_d2_oprof.tris[OPROF_T3D_GRD] += s_t3d_model_triangles[model_idx];
-#endif
 }
 
 void d2_t3d_queue_building(int model_idx, int yang, int z, int tx, int ty, int tz)
@@ -1010,14 +968,6 @@ void d2_t3d_queue_building(int model_idx, int yang, int z, int tx, int ty, int t
     q->tx = tx;
     q->ty = ty;
     q->tz = tz;
-#ifdef D2_T3D_STATS
-    s_stat_queued++;
-    s_stat_triangles += s_t3d_model_triangles[model_idx];
-#endif
-#ifdef D2_ORIGIN_PROF
-    g_d2_oprof.objs[OPROF_T3D_BLD]++;
-    g_d2_oprof.tris[OPROF_T3D_BLD] += s_t3d_model_triangles[model_idx];
-#endif
 }
 
 int d2_t3d_get_queued_count(void)
@@ -1168,12 +1118,7 @@ void d2_t3d_draw_queued_buildings(void)
         d2_rdp_invalidate_backend_cache();
     }
 
-#ifdef D2_T3D_STATS
-    uint32_t t_end = t3d_stat_clock();
-    t3d_stat_frame(t_end - t_start);
-#endif
 }
 
 #include "d2_t3d_world_order.inc"
 
-#endif // D2_T3D_WORLD

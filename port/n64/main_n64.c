@@ -56,11 +56,6 @@ int main(void)
     display_init(RESOLUTION_320x240, DEPTH_16_BPP, 2, GAMMA_NONE, FILTERS_RESAMPLE);
     /* sem console_init(): ele recria o display em 640x240 (614 KB transitorios - estoura a RAM) e a imagem do jogo ficava cortada na metade
        esquerda. O printf/debugf de depuracao vai pelo ISViewer/USB. Use -DD2_FB640 para o console em 640x240. */
-#ifdef D2_FB640
-    console_init();
-    console_set_debug(true);
-    console_set_render_mode(RENDER_MANUAL);
-#endif
     /* margem de seguranca (overscan) - DEPOIS do console_init(); valores em pontos do VI (base 640x480). */
     vi_set_borders((vi_borders_t){ N64_OVERSCAN_X, N64_OVERSCAN_X, N64_OVERSCAN_Y, N64_OVERSCAN_Y });
     timer_init();

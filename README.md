@@ -19,6 +19,7 @@ O código do jogo original roda na CPU VR4300 do N64 (requer **Expansion Pak / 8
 | `tools/ares_headless/` | Harness em C++ para executar a ROM no emulador ares sem interface gráfica, injetar botões e coletar métricas. |
 | `tools/nuvem/` | Scripts de medição e benchmark automatizados (`bench.sh`, `cc.sh`, `mk.sh`, `run.sh`, `pgo.sh`, `layout.sh`). |
 | `data/` | Imagem do disco original (`Driver2CD1.bin`) rastreada via **Git LFS**. |
+| `docs/` | Documentação técnica aprofundada (`docs/OTIMIZACAO_N64.md`). |
 | `Makefile.d2`, `build.sh` | Sistema de compilação libdragon / N64. |
 | `setup_engine.sh`, `patch_engine.sh` | Scripts de obtenção e aplicação de patches no motor upstream. |
 | `hot.ld` | Script de linker que posiciona funções críticas juntas nos 16 KB de cache de instruções do VR4300. |
@@ -164,6 +165,18 @@ bash tools/nuvem/cc.sh versao_a versao_b
 - **Log do build**: `build_d2.log` (ou `/tmp/build.log`).
 - **Capturas de tela**: `$OUTDIR/frame_XXXXX.ppm`, folha de contatos `$OUTDIR/sheet.png` e imagem final `$OUTDIR/final.png`.
 - **Perfil do processador**: `/tmp/prof.txt` (quando executado com `D2_PROF=1`).
+
+---
+
+## Distinção Importante: Resultados Históricos vs. Validação Local
+
+- **Resultados Históricos Registrados** (documentados em `docs/OTIMIZACAO_N64.md`):
+  Medições realizadas em 28-29/10/2026 em ambiente Linux na nuvem executando ares headless com software Vulkan:
+  - Fase Inicial (25/10): ~8,37M ticks/passo (~5,6 fps)
+  - Otimizações de Fase 1 (GTE nativa, VTX cache, caminho direto OT->RDP, bancos de paleta, hot.ld): **~4,456M ticks/passo (~10,5 fps)**
+- **Validação Desta Publicação**:
+  - A integridade dos scripts, idempotência do `patch_engine.py`, parsing do CD1 e compatibilidade do Makefile foram validados no ambiente local.
+  - Não foram realizadas novas corridas completas de benchmark no console nem no harness do ares durante este commit.
 
 ---
 

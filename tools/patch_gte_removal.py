@@ -86,8 +86,6 @@ def register(P, R):
     R('Game/C/targets.c', r'\(short\)MFC2\(18\)', '(short)d2xf.sz[2]')
     R('Game/C/targets.c', r'\(short\)MFC2\(19\)', '(short)d2xf.sz[3]')
 
-    # ---------------- DebugOverlay.cpp: o macro antigo dispensava o ';' ----------------
-    R('utils/DebugOverlay.cpp', r'((?:gte|d2x)_stsxy0\(&line->x0\))(\s*\n)', r'\1;\2')
 
     # ---------------- LIBGTE.C: estado de geometria e funcoes sem uso saem ----------------
     P('PsyCross/src/psx/LIBGTE.C',
@@ -120,6 +118,6 @@ RENAME_FILES = [
     'Game/C/debris.c', 'Game/C/cars.c', 'Game/C/tile.c', 'Game/C/motion_c.c', 'Game/C/draw.c', 'Game/C/shadow.c',
     'Game/C/event.c', 'Game/C/job_fx.c', 'Game/C/sky.c', 'Game/C/targets.c', 'Game/C/cosmetic.c', 'Game/C/sound.c',
     'Game/C/overmap.c', 'Game/C/drivinggames.c', 'Game/C/bomberman.c', 'Game/ASM/rndrasm.c',
-    'utils/DebugOverlay.cpp', 'PsyCross/src/psx/LIBGTE.C',
+    'PsyCross/src/psx/LIBGTE.C',
 ]
 def rename(t): return RENAME_RX.sub(lambda m: 'd2x_' + m.group(1), t)

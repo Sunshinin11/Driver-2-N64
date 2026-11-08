@@ -13,3 +13,17 @@ COMPAT = ('ClearImage', 'ClearImage2', 'DrawSync', 'LoadImage', 'LoadImage2', 'M
 
 def is_old_rename(x):
     return x[0].endswith('LIBGPU.C') and any(x[2].lstrip().split('(')[0].endswith('PsyX_compat_' + f) for f in COMPAT)
+
+
+# partes do motor que o N64 nao compila: saem da arvore (patch_engine.py apaga) e ficam sem regras de patch
+DEAD = (
+    'PsyCross/src/gpu', 'PsyCross/src/render', 'PsyCross/src/audio', 'PsyCross/src/pad', 'PsyCross/src/util',
+    'PsyCross/src/PsyX_main.cpp',
+    'utils/DebugOverlay.cpp', 'utils/audio_source', 'utils/video_source', 'utils/fs.cpp', 'utils/ini.c', 'utils/riff.cpp', 'utils/riff.h',
+    'utils/targa.cpp', 'Game/C/xaplay.c',
+)
+
+def is_dead(path):
+    if not path.lower().endswith(('.c', '.cpp')):
+        return False  # cabecalhos ficam: LIBGPU/LIBAPI ainda os incluem
+    return any(path == d or path.startswith(d + '/') for d in DEAD)

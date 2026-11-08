@@ -11,7 +11,6 @@
 #include "d2_vram.h"
 #include <libdragon.h>
 #include <wav64.h>
-#include "d2_perfdbg.h"
 #include <string.h>
 #include <stdlib.h>
 #include <stdio.h>
@@ -159,10 +158,6 @@ struct D2SpuVoice {
 };
 static D2SpuVoice s_spuVoice[D2_SPU_VOICES];
 
-#ifdef D2_ORIGIN_PROF
-extern "C" uint32_t g_d2_aud_adpcm_sfx_blocks = 0;
-extern "C" uint32_t g_d2_aud_adpcm_xm_blocks  = 0;
-#endif
 
 struct D2NativeSfx {
     wav64_t *wav;
@@ -386,16 +381,8 @@ int PsyX_SPUAL_GetKeyStatus(u_int bits) { int r = 0; if (s_spuInited) for (int n
 void PsyX_SPUAL_GetAllKeysStatus(char *s) { for (int n = 0; n < D2_SPU_VOICES; n++) s[n] = s_spuInited && mixer_ch_playing(n); }
 int PsyX_SPUAL_SetMute(int on) { int old = s_spuMute; s_spuMute = on != 0; if (s_spuInited) { for (int n = 0; n < D2_SPU_VOICES; n++) d2_spu_apply_voice(&s_spuVoice[n], n); } return old; }
 void d2_audio_pump() {
-#ifdef D2_PERFDBG
-    uint32_t t0 = perf_cnt0();
     d2_sys_pump_vbl_cb();
     if (s_spuInited) mixer_try_play();
-    g_perf_cur.audio_pump_ticks += perf_cnt0() - t0;
-    g_perf_cur.audio_pump_calls++;
-#else
-    d2_sys_pump_vbl_cb();
-    if (s_spuInited) mixer_try_play();
-#endif
 }
 int PsyX_SPUAL_SetReverb(int) { return 0; }
 int PsyX_SPUAL_GetReverbState() { return 0; }

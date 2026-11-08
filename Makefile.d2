@@ -22,7 +22,7 @@ PSYX_C   := $(addprefix $(SRC)/PsyCross/src/psx/,ABS.C LIBGTE.C LIBAPI.C LIBGPU.
 PSYX_CPP := $(addprefix $(SRC)/PsyCross/src/gte/,half_float.cpp)
 PSYX_OBJS := $(patsubst %.C,$(OBJ_DIR)/%.o,$(PSYX_C)) $(patsubst %.cpp,$(OBJ_DIR)/%.o,$(PSYX_CPP))
 PLAT_C    := port/n64/main_n64.c port/n64/psyx_n64.c port/n64/sys_n64.c
-PLAT_CXX  := port/n64/d2_entry.cpp port/n64/psyx_backend.cpp port/n64/libetc_n64.cpp port/n64/fs_n64.cpp port/n64/psyx_rdp.cpp port/n64/n64_gpu_api.cpp port/n64/d2_gpu_state.cpp port/n64/stubs_n64.cpp port/n64/xf_native.cpp port/n64/d2_vtxcache.cpp port/n64/d2_origin.cpp port/n64/d2_perfdbg.cpp
+PLAT_CXX  := port/n64/d2_entry.cpp port/n64/psyx_backend.cpp port/n64/libetc_n64.cpp port/n64/fs_n64.cpp port/n64/psyx_rdp.cpp port/n64/n64_gpu_api.cpp port/n64/d2_gpu_state.cpp port/n64/stubs_n64.cpp port/n64/xf_native.cpp port/n64/d2_vtxcache.cpp
 PLAT_OBJS := $(patsubst %.c,$(OBJ_DIR)/%.o,$(PLAT_C)) $(patsubst %.cpp,$(OBJ_DIR)/%.o,$(PLAT_CXX))
 OBJS := $(GAME_OBJS) $(PSYX_OBJS) $(PLAT_OBJS)
 
@@ -33,94 +33,25 @@ HOT_LD ?= hot.ld
 ifneq ($(wildcard $(HOT_LD)),)
 N64_LDFLAGS += --section-ordering-file=$(HOT_LD)
 endif
-# Otimizacoes de desempenho (ver docs/OTIMIZACAO_N64.md). Para medir sem elas: make ... D2_OPT=
+# Caminhos nativos sempre ligados (o codigo do port ja foi simplificado; estes -D so afetam os arquivos do motor remendados)
 D2_OPT ?= -DD2_DIRECT -DD2_NATIVE_OT -DD2_NOSUBQ -DD2_XF_NATIVE -DD2_VTXCACHE -DD2_LEANLOAD -DD2_FASTOT -DD2_N64_PERF -DD2_PSX_FIDELITY
 
-D2_NO_TANNER_SHADOW ?= 1
-ifeq ($(D2_NO_TANNER_SHADOW),1)
 D2_OPT += -DD2_NO_TANNER_SHADOW
-endif
 
-D2_ORIGIN ?= 0
-ifeq ($(D2_ORIGIN),1)
-D2_OPT += -DD2_ORIGIN
-endif
-
-D2_TRANSDBG ?= 0
-ifeq ($(D2_TRANSDBG),1)
-D2_OPT += -DD2_TRANSDBG -DD2_ORIGIN
-endif
-
-D2_PERFDBG ?= 0
-ifeq ($(D2_PERFDBG),1)
-D2_OPT += -DD2_PERFDBG
-endif
-
-D2_ORIGIN_PROF ?= 0
-ifeq ($(D2_ORIGIN_PROF),1)
-D2_OPT += -DD2_ORIGIN_PROF
-PLAT_OBJS += $(OBJ_DIR)/port/n64/d2_origin_prof.o
-OBJS += $(OBJ_DIR)/port/n64/d2_origin_prof.o
-endif
-
-D2_PERF_NIGHT ?= 0
-ifeq ($(D2_PERF_NIGHT),1)
-D2_OPT += -DD2_PERF_NIGHT
-endif
-
-D2_PERF_APE ?= 0
-ifeq ($(D2_PERF_APE),1)
-D2_OPT += -DD2_PERF_APE
-endif
-
-D2_PERF_MISSION1 ?= 0
-ifeq ($(D2_PERF_MISSION1),1)
-D2_OPT += -DD2_PERF_MISSION1
-endif
-
-D2_BENCH ?= 0
-ifeq ($(D2_BENCH),1)
-D2_OPT += -DD2_BENCH
-endif
-
-D2_RSP_TEX ?= 0
-ifeq ($(D2_RSP_TEX),1)
-D2_RSP_GPU := 1
-D2_OPT += -DD2_RSP_TEX=1
-endif
-
-D2_RSP_GPU ?= 1
-ifeq ($(D2_RSP_GPU),1)
 D2_OPT += -DD2_RSP_GPU=1
 PLAT_OBJS += $(BUILD_DIR)/port/n64/rsp_d2gpu.o
 OBJS += $(BUILD_DIR)/port/n64/rsp_d2gpu.o
-endif
 
-D2_T3D_WORLD ?= 0
-ifeq ($(D2_T3D_WORLD),1)
 T3D_DIR = submodules/tiny3d
 N64_LDFLAGS := $(T3D_DIR)/build/libt3d.a $(N64_LDFLAGS)
 D2_OPT += -DD2_T3D_WORLD=1
 D2_INC += -I$(T3D_DIR)/src
-D2_T3D_SMOKE ?= 0
-ifeq ($(D2_T3D_SMOKE),1)
-D2_OPT += -DD2_T3D_SMOKE=1
-endif
-D2_T3D_DIAG ?= 0
-ifeq ($(D2_T3D_DIAG),1)
-D2_OPT += -DD2_T3D_DIAG=1
-endif
-D2_T3D_STATS ?= 0
-ifeq ($(D2_T3D_STATS),1)
-D2_OPT += -DD2_T3D_STATS=1
-endif
 D2_T3D_TELEMETRY ?= 0
 ifeq ($(D2_T3D_TELEMETRY),1)
 D2_OPT += -DD2_T3D_TELEMETRY=1
 endif
 PLAT_OBJS += $(OBJ_DIR)/port/n64/d2_t3d_world.o
 OBJS += $(OBJ_DIR)/port/n64/d2_t3d_world.o
-endif
 
 D2_OPT += -DD2_VADPCM=1
 FLAGS_FILE = $(BUILD_DIR)/.d2_flags

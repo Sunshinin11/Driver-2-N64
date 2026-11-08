@@ -657,297 +657,6 @@ P('PsyCross/src/gpu/PsyX_GPU.cpp',
   "\t\t\t}\n\n\t\t\tGPUDrawSplit& lastSplit = g_splits[g_splitIndex];\n\t\t\tlastSplit.numVerts = g_vertexIndex - lastSplit.startVertex;\n\n\t\t\tif (isendprim(basePacket))",
   "#ifdef D2_FASTOT\n\t\t\t\tGPUDrawSplit& lastSplit = g_splits[g_splitIndex];\n\t\t\t\tlastSplit.numVerts = g_vertexIndex - lastSplit.startVertex;\n\t\t\t}\n#else\n\t\t\t}\n\n\t\t\tGPUDrawSplit& lastSplit = g_splits[g_splitIndex];\n\t\t\tlastSplit.numVerts = g_vertexIndex - lastSplit.startVertex;\n#endif\n\n\t\t\tif (isendprim(basePacket))")
 
-# ---- Diagnostico de origem de primitivas (D2_ORIGIN / D2_ORIGIN_PROF) ----
-P('PsyCross/include/psx/libgpu.h',
-  "#else\n#define addPrim(ot, p)\t\tsetaddr(p, getaddr(ot)), setaddr(ot, p)\n#endif\n\n#define addPrims(ot, p0, p1)\tsetaddr(p1, getaddr(ot)),setaddr(ot, p0)",
-  "#else\n#ifdef D2_ORIGIN\n#define addPrim(ot, p)\t\t(D2_ORIGIN_TAG_AUTO(p), setaddr(p, getaddr(ot)), setaddr(ot, p))\n#define addPrims(ot, p0, p1)\t(D2_ORIGIN_TAG_CHAIN(p0, p1), setaddr(p1, getaddr(ot)), setaddr(ot, p0))\n#elif defined(D2_ORIGIN_PROF)\n#define addPrim(ot, p)\t\t(((P_TAG *)(p))->pgxp_index = g_d2_oprof_cat, g_d2_oprof.prims[g_d2_oprof_cat]++, setaddr(p, getaddr(ot)), setaddr(ot, p))\n#define addPrims(ot, p0, p1)\t(((P_TAG *)(p0))->pgxp_index = g_d2_oprof_cat, ((P_TAG *)(p1))->pgxp_index = g_d2_oprof_cat, g_d2_oprof.prims[g_d2_oprof_cat] += 2, setaddr(p1, getaddr(ot)), setaddr(ot, p0))\n#else\n#define addPrim(ot, p)\t\tsetaddr(p, getaddr(ot)), setaddr(ot, p)\n#define addPrims(ot, p0, p1)\tsetaddr(p1, getaddr(ot)),setaddr(ot, p0)\n#endif\n#endif")
-
-P('Game/C/draw.c',
-  '#include "draw.h"\n',
-  '#include "draw.h"\n#include "d2_t3d_world.h"\n')
-
-P('Game/C/draw.c',
-  "\twhile (num_buildings--)\n\t{\n\t\tcop = (CELL_OBJECT*)*objects;\n\t\tmat = cop->yang;\n\n\t\tif (prev_mat == mat)\n\t\t{\n\t\t\tZ = Apply_InvCameraMatrixSetTrans(&cop->pos);\n\t\t}\n\t\telse\n\t\t{\n\t\t\tZ = Apply_InvCameraMatrixAndSetMatrix(&cop->pos, &CompoundMatrix[prev_mat = mat]);\n\t\t}\n\n\t\tmodel = Z > DRAW_LOD_DIST_LOW ? pLodModels[cop->type] : modelpointers[cop->type];",
-  "\twhile (num_buildings--)\n\t{\n\t\tcop = (CELL_OBJECT*)*objects;\n#ifdef D2_ORIGIN_PROF\n\t\textern int permanentModelSlotBitfield[];\n\t\tint _is_perm = (permanentModelSlotBitfield[cop->type >> 5] & (1 << (cop->type & 31))) != 0;\n\t\tint _bcat = _is_perm ? OPROF_PERM_BLD : OPROF_SPOOL_BLD;\n#ifdef D2_T3D_WORLD\n\t\tif (d2_t3d_has_model(cop->type)) _bcat = OPROF_T3D_BLD;\n#endif\n\t\tD2_OPROF_SCOPE(_op_b, _bcat);\n#endif\n\t\tmat = cop->yang;\n\n\t\tif (prev_mat == mat)\n\t\t{\n\t\t\tZ = Apply_InvCameraMatrixSetTrans(&cop->pos);\n\t\t}\n\t\telse\n\t\t{\n\t\t\tZ = Apply_InvCameraMatrixAndSetMatrix(&cop->pos, &CompoundMatrix[prev_mat = mat]);\n\t\t}\n\n\t\tD2_ORIGIN_SET_SCOPE(\"PlotBuildingModel\");\n\t\tD2_ORIGIN_SET_CELL(cop->type, cop->pos.vx, cop->pos.vy, cop->pos.vz);\n\t\tmodel = Z > DRAW_LOD_DIST_LOW ? pLodModels[cop->type] : modelpointers[cop->type];\n#ifdef D2_T3D_WORLD\n\t\tif (d2_t3d_has_model(cop->type))\n\t\t{\n\t\t\td2_t3d_queue_building(cop->type, cop->yang, Z, d2xf.tr[0], d2xf.tr[1], d2xf.tr[2]);\n\t\t\tdrawlimit = (int)(current->primptr - current->primtab);\n\t\t\tif (PRIMTAB_SIZE - drawlimit < 60000)\n\t\t\t\tbreak;\n\t\t\tobjects++;\n\t\t\tcontinue;\n\t\t}\n#endif\n#ifdef D2_ORIGIN_PROF\n\t\tg_d2_oprof.objs[_bcat]++;\n\t\t{\n\t\t\tconst int _sf = model->shape_flags, _f2 = model->flags2;\n\t\t\tif (_is_perm) {\n\t\t\t\tif (_sf & (SHAPE_FLAG_TRANS | SHAPE_FLAG_ALPHA)) g_d2_oprof.perm_bld_alpha++;\n\t\t\t\telse if (_f2 & (MODEL_FLAG_MEDIAN | MODEL_FLAG_JUNC | MODEL_FLAG_ALLEY | MODEL_FLAG_GRASS | MODEL_FLAG_PATH)) g_d2_oprof.perm_bld_roadfurn++;\n\t\t\t\telse if (_f2 & (MODEL_FLAG_ANIMOBJ | MODEL_FLAG_CHAIR | MODEL_FLAG_BARRIER | MODEL_FLAG_SMASHABLE | MODEL_FLAG_LAMP | MODEL_FLAG_TREE)) g_d2_oprof.perm_bld_props++;\n\t\t\t\telse g_d2_oprof.perm_bld_other++;\n\t\t\t} else {\n\t\t\t\tif (!(_sf & (SHAPE_FLAG_SPRITE | SHAPE_FLAG_WATER | SHAPE_FLAG_TILE | SHAPE_FLAG_ROAD | SHAPE_FLAG_TRANS | SHAPE_FLAG_ALPHA)) &&\n\t\t\t\t    !(_f2 & (MODEL_FLAG_ANIMOBJ | MODEL_FLAG_CHAIR | MODEL_FLAG_BARRIER | MODEL_FLAG_SMASHABLE | MODEL_FLAG_LAMP | MODEL_FLAG_TREE)))\n\t\t\t\t\tg_d2_oprof.spool_bld_static++;\n\t\t\t\telse\n\t\t\t\t\tg_d2_oprof.spool_bld_other++;\n\t\t\t}\n\t\t}\n#endif")
-
-P('Game/C/draw.c',
-  "numShadows = 0;\n\n\twhile (numFound--)",
-  "numShadows = 0;\n\tD2_ORIGIN_SET_SCOPE(\"DrawSprites\");\n\n\twhile (numFound--)")
-
-P('Game/C/draw.c',
-  "z = Apply_InvCameraMatrixAndSetMatrix((VECTOR_NOPAD*)plotContext.scribble, (MATRIX2*)&face_camera);",
-  "D2_ORIGIN_SET_CELL(modelnumber, pco->pos.vx, pco->pos.vy, pco->pos.vz);\n\t\tz = Apply_InvCameraMatrixAndSetMatrix((VECTOR_NOPAD*)plotContext.scribble, (MATRIX2*)&face_camera);")
-
-P('Game/C/draw.c',
-  "void RenderModel(MODEL* model, MATRIX* matrix, VECTOR* pos, int zBias, int flags, int subdiv, int nrot)\n{",
-  "void RenderModel(MODEL* model, MATRIX* matrix, VECTOR* pos, int zBias, int flags, int subdiv, int nrot)\n{\n\tD2_ORIGIN_SET_SCOPE(\"RenderModel\");\n\tD2_ORIGIN_SET_CELL(-1, pos ? pos->vx : 0, pos ? pos->vy : 0, pos ? pos->vz : 0);")
-
-P('Game/C/draw.c',
-  "void DrawAllTheCars(int view)\n{",
-  "void DrawAllTheCars(int view)\n{\n\tD2_ORIGIN_SET_SCOPE(\"DrawCars\");")
-
-P('Game/C/tile.c',
-  "tilePointers = (PACKED_CELL_OBJECT **)tiles;\n\n\twhile (tile_amount--)",
-  "tilePointers = (PACKED_CELL_OBJECT **)tiles;\n\tD2_ORIGIN_SET_SCOPE(\"DrawTILES\");\n#ifdef D2_T3D_WORLD\n\td2_t3d_set_tile_tint(plotContext.colour);\n#endif\n\n\twhile (tile_amount--)")
-
-P('Game/C/tile.c',
-  "model_number = (ppco->value >> 6) | (ppco->pos.vy & 1) << 10;\n\n\t\tif (previous_matrix == yang)",
-  "model_number = (ppco->value >> 6) | (ppco->pos.vy & 1) << 10;\n\t\tD2_ORIGIN_SET_CELL(model_number, ppco->pos.vx, ppco->pos.vy, ppco->pos.vz);\n\n\t\tif (previous_matrix == yang)")
-
-P('Game/C/overlay.c',
-  "void DrawPercentageBar(PERCENTAGE_BAR *bar)\n{",
-  "void DrawPercentageBar(PERCENTAGE_BAR *bar)\n{\n\tD2_ORIGIN_SET_SCOPE(\"overlay/HUD/Bar\");")
-
-P('Game/C/overlay.c',
-  "\t\tpoly = (POLY_G4 *)current->primptr;\n\t\tsetPolyG4(poly);",
-  "\t\tpoly = (POLY_G4 *)current->primptr;\n#ifdef D2_ORIGIN\n\t\tD2_ORIGIN_TAG(poly, \"overlay/HUD/Bar/Fill\", -1, NULL, 0x38, NULL, NULL);\n#endif\n\t\tsetPolyG4(poly);")
-
-P('Game/C/overlay.c',
-  "\tpoly2 = (POLY_G4 *)current->primptr;\n\n\tsetPolyG4(poly2);",
-  "\tpoly2 = (POLY_G4 *)current->primptr;\n#ifdef D2_ORIGIN\n\t\tD2_ORIGIN_TAG(poly2, \"overlay/HUD/Bar/Trans\", -1, NULL, 0x38, NULL, NULL);\n#endif\n\n\tsetPolyG4(poly2);")
-
-P('Game/C/overlay.c',
-  "\tLINE_F4* lineF4 = (LINE_F4*)current->primptr;\n\tsetLineF4(lineF4);",
-  "\tLINE_F4* lineF4 = (LINE_F4*)current->primptr;\n#ifdef D2_ORIGIN\n\t\tD2_ORIGIN_TAG(lineF4, \"overlay/HUD/Bar/Line4\", -1, NULL, 0x4C, NULL, NULL);\n#endif\n\tsetLineF4(lineF4);")
-
-P('Game/C/overlay.c',
-  "\tLINE_F2* lineF2 = (LINE_F2*)current->primptr;\n\tsetLineF2(lineF2);",
-  "\tLINE_F2* lineF2 = (LINE_F2*)current->primptr;\n#ifdef D2_ORIGIN\n\t\tD2_ORIGIN_TAG(lineF2, \"overlay/HUD/Bar/Line2\", -1, NULL, 0x40, NULL, NULL);\n#endif\n\tsetLineF2(lineF2);")
-
-P('Game/C/overlay.c',
-  "\tnull = (DR_TPAGE*)current->primptr;\n\tsetDrawTPage(null, 1, 0, tpage);",
-  "\tnull = (DR_TPAGE*)current->primptr;\n#ifdef D2_ORIGIN\n\t\tD2_ORIGIN_TAG(null, \"overlay/HUD/TransparencyOn\", -1, NULL, 0xE1, NULL, NULL);\n#endif\n\tsetDrawTPage(null, 1, 0, tpage);")
-
-P('Game/C/overlay.c',
-  "void DisplayOverlays(void)\n{",
-  "void DisplayOverlays(void)\n{\n\tD2_ORIGIN_SET_SCOPE(\"overlay/HUD\");")
-
-P('Game/C/shadow.c',
-  "void PlaceShadowForCar(VECTOR *shadowPoints, int subdiv, int zOfs, int flag)\n{",
-  "void PlaceShadowForCar(VECTOR *shadowPoints, int subdiv, int zOfs, int flag)\n{\n\tD2_ORIGIN_SET_SCOPE(\"shadow\");\n\tD2_OPROF_SCOPE(_op_shd, OPROF_SHADOWS);\n\tD2_OPROF_OBJ(OPROF_SHADOWS);\n#ifdef D2_PERFDBG\n\tPERF_START(shd);\n#endif")
-
-P('Game/C/debris.c',
-  "void HandleDebris(void)\n{",
-  "void HandleDebris(void)\n{\n\tD2_ORIGIN_SET_SCOPE(\"debris\");")
-
-P('Game/C/cosmetic.c',
-  "void AddBrakeLight(CAR_DATA *cp)\n{",
-  "void AddBrakeLight(CAR_DATA *cp)\n{\n\tD2_ORIGIN_SET_SCOPE(\"lights/BrakeLight\");")
-
-P('Game/C/cosmetic.c',
-  "void AddNightLights(CAR_DATA *cp)\n{",
-  "void AddNightLights(CAR_DATA *cp)\n{\n\tD2_ORIGIN_SET_SCOPE(\"lights/NightLights\");")
-
-P('Game/C/debris.c',
-  "void PlacePoolForCar(CAR_DATA *cp, CVECTOR *col, int front, int in_car)\n{",
-  "void PlacePoolForCar(CAR_DATA *cp, CVECTOR *col, int front, int in_car)\n{\n\tD2_ORIGIN_SET_SCOPE(front ? \"lights/PoolFront\" : \"lights/PoolBack\");")
-
-P('Game/C/debris.c',
-  "void ShowCarlight(SVECTOR *v1, CAR_DATA *cp, CVECTOR *col, short size, short flare_size, TEXTURE_DETAILS *texture,int flag)\n{",
-  "void ShowCarlight(SVECTOR *v1, CAR_DATA *cp, CVECTOR *col, short size, short flare_size, TEXTURE_DETAILS *texture,int flag)\n{\n\tD2_ORIGIN_SET_SCOPE(\"lights/Carlight\");")
-
-P('Game/C/debris.c',
-  "void ShowLight(VECTOR *v1, CVECTOR *col, short size, TEXTURE_DETAILS *texture)\n{",
-  "void ShowLight(VECTOR *v1, CVECTOR *col, short size, TEXTURE_DETAILS *texture)\n{\n\tD2_ORIGIN_SET_SCOPE(\"lights/ShowLight\");")
-
-P('Game/C/debris.c',
-  "void ShowFlare(VECTOR* v1, CVECTOR* col, short size, int rotation)\n{",
-  "void ShowFlare(VECTOR* v1, CVECTOR* col, short size, int rotation)\n{\n\tD2_ORIGIN_SET_SCOPE(\"lights/ShowFlare\");")
-
-P('Game/C/debris.c',
-  "void ShowGroundLight(VECTOR *v1, CVECTOR *col, short size)\n{",
-  "void ShowGroundLight(VECTOR *v1, CVECTOR *col, short size)\n{\n\tD2_ORIGIN_SET_SCOPE(\"lights/GroundLight\");")
-
-P('Game/C/debris.c',
-  "void AddTrafficLight(CELL_OBJECT *cop, int x, int y, int z, int flag, int yang)\n{",
-  "void AddTrafficLight(CELL_OBJECT *cop, int x, int y, int z, int flag, int yang)\n{\n\tD2_ORIGIN_SET_SCOPE(\"lights/TrafficLight\");")
-
-P('Game/C/debris.c',
-  "void DisplaySmoke(SMOKE* smoke)\n{",
-  "void DisplaySmoke(SMOKE* smoke)\n{\n\tD2_ORIGIN_SET_SCOPE(\"debris/Smoke\");")
-
-P('Game/C/debris.c',
-  "void DisplaySpark(SMOKE *spark)\n{",
-  "void DisplaySpark(SMOKE *spark)\n{\n\tD2_ORIGIN_SET_SCOPE(\"debris/Spark\");")
-
-P('Game/C/shadow.c',
-  "void sQuad(SVECTOR *v0, SVECTOR *v1, SVECTOR *v2, SVECTOR *v3, CVECTOR* light_col, int LightSortCorrect)\n{",
-  "void sQuad(SVECTOR *v0, SVECTOR *v1, SVECTOR *v2, SVECTOR *v3, CVECTOR* light_col, int LightSortCorrect)\n{\n\tD2_ORIGIN_SET_SCOPE(\"lights/HeadlightCone\");")
-
-P('Game/C/sky.c',
-  "void DrawSkyDome(void)\n{",
-  "void DrawSkyDome(void)\n{\n\tD2_ORIGIN_SET_SCOPE(\"sky\");")
-
-P('Game/C/pres.c',
-  "int PrintStringHires(char* string, int x, int y)\n{",
-  "int PrintStringHires(char* string, int x, int y)\n{\n\tD2_ORIGIN_SET_SCOPE(\"text/pres\");")
-
-P('Game/C/targets.c',
-  "void DrawTargetArrowModel(TARGET_ARROW_MODEL *pTargetArrowModel, VECTOR *pPosition, int shadow, int invert)\n{",
-  "void DrawTargetArrowModel(TARGET_ARROW_MODEL *pTargetArrowModel, VECTOR *pPosition, int shadow, int invert)\n{\n\tD2_ORIGIN_SET_SCOPE(\"DrawTargetArrow\");\n\tD2_ORIGIN_SET_CELL(999, pPosition ? pPosition->vx : 0, pPosition ? pPosition->vy : 0, pPosition ? pPosition->vz : 0);")
-
-P('Game/C/targets.c',
-  "\t\ttri_indices += 3;\n\t\tgte_rtpt();\n\n\t\tsetPolyF3(poly);",
-  "\t\ttri_indices += 3;\n\t\tgte_rtpt();\n\t\tconst unsigned int _h = (unsigned short)d2xf.h;\n\t\tif (2 * (unsigned int)d2xf.sz[1] <= _h || 2 * (unsigned int)d2xf.sz[2] <= _h || 2 * (unsigned int)d2xf.sz[3] <= _h)\n\t\t{\n#ifdef D2_PERFDBG\n\t\t\tg_cull_cnt_arrow++;\n#endif\n\t\t\tcontinue;\n\t\t}\n\n\t\tsetPolyF3(poly);")
-
-P('Game/C/draw.c',
-  "void PlotModelSubdivNxN(MODEL* model, int rot, _pct* pc, int n)\n{",
-  "void PlotModelSubdivNxN(MODEL* model, int rot, _pct* pc, int n)\n{\n\tD2_ORIGIN_SET_SCOPE(\"PlotModelSubdivNxN\");")
-
-P('Game/C/system.c',
-  "\tClearOTagR((u_long*)current->ot, OTSIZE);\n\tcurrent->primptr = current->primtab;\n}",
-  "\tClearOTagR((u_long*)current->ot, OTSIZE);\n\tcurrent->primptr = current->primtab;\n#ifdef D2_ORIGIN\n\textern void d2_origin_frame_begin(void);\n\td2_origin_frame_begin();\n#endif\n}")
-
-P('Game/C/system.c',
-  "\tClearOTagR((u_long*)current->ot, OTSIZE);\n\tcurrent->primptr = current->primtab;\n}\n\nshort paddp;",
-  "\tClearOTagR((u_long*)current->ot, OTSIZE);\n\tcurrent->primptr = current->primtab;\n#ifdef D2_ORIGIN\n\textern void d2_origin_frame_begin(void);\n\td2_origin_frame_begin();\n#endif\n}\n\nshort paddp;")
-
-P('Game/C/pedest.c',
-  "void DrawAllPedestrians(void)\n{\n\tLPPEDESTRIAN pPed;\n\n\tpPed = pUsedPeds;",
-  "void DrawAllPedestrians(void)\n{\n\tLPPEDESTRIAN pPed;\n\tD2_ORIGIN_SET_SCOPE(\"DrawPedestrians\");\n#ifdef D2_PERFDBG\n\textern int g_in_pedestrians;\n\tg_in_pedestrians = 1;\n#endif\n\n\tpPed = pUsedPeds;")
-
-P('Game/C/pedest.c',
-  "\t\tpPed = pPed->pNext;\n\t}\n\n\t/*\n\tpPed = pUsedPeds;",
-  "\t\tpPed = pPed->pNext;\n\t}\n#ifdef D2_PERFDBG\n\tg_in_pedestrians = 0;\n#endif\n\n\t/*\n\tpPed = pUsedPeds;")
-
-P('Game/C/motion_c.c',
-  "void DrawCiv(LPPEDESTRIAN pPed)\n{",
-  "void DrawCiv(LPPEDESTRIAN pPed)\n{\n\tD2_ORIGIN_SET_SCOPE(\"DrawCiv\");\n#ifdef D2_PERFDBG\n\tg_perf_cur.cnt_pedestrians_drawn++;\n\tuint32_t _t_anim0 = perf_cnt0();\n#endif")
-
-P('Game/C/motion_c.c',
-  "\tpos.vx = pPed->position.vx - camera_position.vx;\n\tpos.vy = pPed->position.vy - camera_position.vy;\n\tpos.vz = pPed->position.vz - camera_position.vz;",
-  "#ifdef D2_PERFDBG\n\tg_perf_cur.ped_anim_ticks += perf_cnt0() - _t_anim0;\n\tuint32_t _t_tr0 = perf_cnt0();\n#endif\n\tpos.vx = pPed->position.vx - camera_position.vx;\n\tpos.vy = pPed->position.vy - camera_position.vy;\n\tpos.vz = pPed->position.vz - camera_position.vz;")
-
-P('Game/C/motion_c.c',
-  "\t// translate bones to screen and draw sprites\n\tj = 0;",
-  "#ifdef D2_PERFDBG\n\tg_perf_cur.ped_transform_ticks += perf_cnt0() - _t_tr0;\n\tuint32_t _t_as0 = perf_cnt0();\n#endif\n\t// translate bones to screen and draw sprites\n\tj = 0;")
-
-P('Game/C/motion_c.c',
-  "\tRoundShadow(&ppos, &cv, size);\n}",
-  "\tRoundShadow(&ppos, &cv, size);\n#ifdef D2_PERFDBG\n\tg_perf_cur.ped_assembly_ticks += perf_cnt0() - _t_as0;\n#endif\n}")
-
-P('Game/C/motion_c.c',
-  "void DrawTanner(LPPEDESTRIAN pPed)\n{",
-  "void DrawTanner(LPPEDESTRIAN pPed)\n{\n\tD2_ORIGIN_SET_SCOPE(\"DrawTanner\");\n#ifdef D2_PERFDBG\n\tg_perf_cur.cnt_pedestrians_drawn++;\n\tuint32_t _t_anim0 = perf_cnt0();\n#endif")
-
-P('Game/C/motion_c.c',
-  "\tnewRotateBones(pPed, &Skel[LOWERBACK]);",
-  "#ifdef D2_PERFDBG\n\tg_perf_cur.ped_anim_ticks += perf_cnt0() - _t_anim0;\n\tuint32_t _t_tr0 = perf_cnt0();\n#endif\n\tnewRotateBones(pPed, &Skel[LOWERBACK]);\n#ifdef D2_PERFDBG\n\tg_perf_cur.ped_transform_ticks += perf_cnt0() - _t_tr0;\n\tuint32_t _t_as0 = perf_cnt0();\n#endif")
-
-P('Game/C/motion_c.c',
-  "\tbDoingShadow = 0;\n}\n\n// [D] [T]\nint DrawCharacter",
-  "\tbDoingShadow = 0;\n#ifdef D2_PERFDBG\n\tg_perf_cur.ped_assembly_ticks += perf_cnt0() - _t_as0;\n#endif\n}\n\n// [D] [T]\nint DrawCharacter")
-
-P('Game/C/motion_c.c',
-  "int DrawCharacter(LPPEDESTRIAN pPed)\n{",
-  "int DrawCharacter(LPPEDESTRIAN pPed)\n{\n\tD2_ORIGIN_SET_SCOPE(\"DrawCharacter\");\n#ifdef D2_PERFDBG\n\tg_perf_cur.cnt_pedestrians_drawn++;\n\tuint32_t _t_anim0 = perf_cnt0();\n#endif")
-
-P('Game/C/motion_c.c',
-  "\tnewRotateBones(pPed, &Skel[LOWERBACK]);\n\n\tgte_SetRotMatrix(&inv_camera_matrix);",
-  "#ifdef D2_PERFDBG\n\tg_perf_cur.ped_anim_ticks += perf_cnt0() - _t_anim0;\n\tuint32_t _t_tr0 = perf_cnt0();\n#endif\n\tnewRotateBones(pPed, &Skel[LOWERBACK]);\n#ifdef D2_PERFDBG\n\tg_perf_cur.ped_transform_ticks += perf_cnt0() - _t_tr0;\n\tuint32_t _t_as0 = perf_cnt0();\n#endif\n\n\tgte_SetRotMatrix(&inv_camera_matrix);")
-
-P('Game/C/motion_c.c',
-  "\t\tRoundShadow(&pos, &cv, size);\n\t}\n\n\treturn 1;\n}",
-  "\t\tRoundShadow(&pos, &cv, size);\n\t}\n#ifdef D2_PERFDBG\n\tg_perf_cur.ped_assembly_ticks += perf_cnt0() - _t_as0;\n#endif\n\n\treturn 1;\n}")
-
-P('Game/C/targets.c',
-  "\t\taddPrim(current->ot + z, poly);\n\n\t\tcurrent->primptr += sizeof(POLY_F3);",
-  "\t\t#ifdef D2_ORIGIN\n\t\tshort _sxy[4][2] = { {poly->x0, poly->y0}, {poly->x1, poly->y1}, {poly->x2, poly->y2}, {0, 0} };\n\t\tshort _sz[4] = { (short)d2xf.sz[1], (short)d2xf.sz[2], (short)d2xf.sz[3], 0 };\n\t\td2_origin_tag_cull(poly, \"DrawTargetArrow\", 999, NULL, 0x20, _sxy, _sz, 0, z);\n\t\t#endif\n\t\taddPrim(current->ot + z, poly);\n\n\t\tcurrent->primptr += sizeof(POLY_F3);")
-
-P('Game/Frontend/FEmain.c',
-  "wantedTimeOfDay = TIME_DAY;",
-  "#if defined(D2_TRANSDBG) || defined(D2_PERF_NIGHT)\n\t\twantedTimeOfDay = TIME_NIGHT;\n#else\n\t\twantedTimeOfDay = TIME_DAY;\n#endif")
-
-P('Game/C/mission.c',
-  "\tif(wantedTimeOfDay > -1)\n\t\tgTimeOfDay = wantedTimeOfDay;",
-  "#if defined(D2_TRANSDBG) || defined(D2_PERF_NIGHT)\n\tgTimeOfDay = TIME_NIGHT;\n#else\n\tif(wantedTimeOfDay > -1)\n\t\tgTimeOfDay = wantedTimeOfDay;\n#endif")
-
-
-# ---- D2_PERFDBG: instrumentacao de desempenho ----
-P('Game/C/system.c',
-  "\tPutDispEnv(&current->disp);\n\tPutDrawEnv(&current->draw);\n\tDrawOTag((u_long*)(current->ot + OTSIZE-1));\n",
-  "\tPutDispEnv(&current->disp);\n\tPutDrawEnv(&current->draw);\n#ifdef D2_PERFDBG\n\tPERF_START(bk);\n\tDrawOTag((u_long*)(current->ot + OTSIZE-1));\n\tPERF_END_ADD(bk, backend_ticks);\n#else\n\tDrawOTag((u_long*)(current->ot + OTSIZE-1));\n#endif\n")
-
-P('Game/C/main.c',
-  "\tif (!FilterFrameTime())\n\t\treturn;\n\n\tUpdatePadData();",
-  "#ifdef D2_PERFDBG\n\tPERF_START(vbl);\n\twhile (!FilterFrameTime())\n\t{\n\t\td2_audio_pump();\n\t}\n\tPERF_END_ADD(vbl, vblank_wait_ticks);\n\tperf_frame_start();\n#else\n\tif (!FilterFrameTime())\n\t\treturn;\n#endif\n\n\tUpdatePadData();")
-
-P('Game/C/main.c',
-  "\tcnt = FastForward ? 7 : 1;\n\twhile (--cnt >= 0)\n\t\tStepGame();",
-  "\tcnt = FastForward ? 7 : 1;\n#ifdef D2_PERFDBG\n\tPERF_START(step);\n\twhile (--cnt >= 0)\n\t\tStepGame();\n\tPERF_END_ADD(step, stepgame_ticks);\n#elif defined(D2_ORIGIN_PROF)\n\t{\n\t\tuint32_t _st0 = d2_oprof_cnt0();\n\t\twhile (--cnt >= 0)\n\t\t\tStepGame();\n\t\tg_d2_oprof.step_ticks += d2_oprof_cnt0() - _st0;\n\t}\n#else\n\twhile (--cnt >= 0)\n\t\tStepGame();\n#endif")
-
-P('Game/C/main.c',
-  "\t_CutRec_Draw();\n\tDrawGame();\n\t\n\tif (game_over)",
-  "\t_CutRec_Draw();\n\tDrawGame();\n#ifdef D2_PERFDBG\n\tperf_frame_end();\n#endif\n\t\n\tif (game_over)")
-
-P('Game/C/main.c',
-  "\t\tObjectDrawnValue = FrameCnt;\n\t\tDrawPauseMenus();\n\n\t\tRenderGame2(0);\n\t\tSwapDrawBuffers();",
-  "\t\tObjectDrawnValue = FrameCnt;\n\t\tDrawPauseMenus();\n\n#ifdef D2_PERFDBG\n\t\tPERF_START(draw);\n\t\tRenderGame2(0);\n\t\tPERF_END_ADD(draw, drawgame_ticks);\n\t\tSwapDrawBuffers();\n#else\n\t\tRenderGame2(0);\n\t\tSwapDrawBuffers();\n#endif")
-
-P('Game/C/main.c',
-  "\tif (doSpooling)\n\t{\n\t\tCheckValidSpoolData();\n\t\tControlMap();\n\t}",
-  "\tif (doSpooling)\n\t{\n#ifdef D2_PERFDBG\n\t\tPERF_START(spool);\n\t\tCheckValidSpoolData();\n\t\tControlMap();\n\t\tPERF_END_ADD(spool, step_spool_ticks);\n#else\n\t\tCheckValidSpoolData();\n\t\tControlMap();\n#endif\n\t}")
-
-P('Game/C/main.c',
-  "\tif (gInGameCutsceneActive == 0)\n\t{\n\t\tCheckSpecialSpool();\n\t}",
-  "\tif (gInGameCutsceneActive == 0)\n\t{\n#ifdef D2_PERFDBG\n\t\tPERF_START(s_spool);\n\t\tCheckSpecialSpool();\n\t\tPERF_END_ADD(s_spool, step_spool_ticks);\n#else\n\t\tCheckSpecialSpool();\n#endif\n\t}")
-
-P('Game/C/main.c',
-  "\t\t\tcase CONTROL_TYPE_CIV_AI:\n\t\t\t\tCivControl(cp);\n\t\t\t\tbreak;\n\t\t\tcase CONTROL_TYPE_PURSUER_AI:\n\t\t\t\tCopControl(cp);\n\t\t\t\tbreak;",
-  "\t\t\tcase CONTROL_TYPE_CIV_AI:\n#ifdef D2_PERFDBG\n\t\t\t\t{\n\t\t\t\t\tPERF_START(cai);\n\t\t\t\t\tCivControl(cp);\n\t\t\t\t\tPERF_END_ADD(cai, step_ai_ticks);\n\t\t\t\t}\n#else\n\t\t\t\tCivControl(cp);\n#endif\n\t\t\t\tbreak;\n\t\t\tcase CONTROL_TYPE_PURSUER_AI:\n#ifdef D2_PERFDBG\n\t\t\t\t{\n\t\t\t\t\tPERF_START(pai);\n\t\t\t\t\tCopControl(cp);\n\t\t\t\t\tPERF_END_ADD(pai, step_ai_ticks);\n\t\t\t\t}\n#else\n\t\t\t\tCopControl(cp);\n#endif\n\t\t\t\tbreak;")
-
-P('Game/C/main.c',
-  "\t\tStepCarPhysics(cp);\n\t\tcp++;",
-  "#ifdef D2_PERFDBG\n\t\tPERF_START(phys);\n\t\tStepCarPhysics(cp);\n\t\tPERF_END_ADD(phys, step_cars_physics_ticks);\n#else\n\t\tStepCarPhysics(cp);\n#endif\n\t\tcp++;")
-
-P('Game/C/main.c',
-  "\t\tProcessTannerPad(pl->pPed, t0, t1, t2);\n\t}",
-  "#ifdef D2_PERFDBG\n\t\tPERF_START(tpad);\n\t\tProcessTannerPad(pl->pPed, t0, t1, t2);\n\t\tPERF_END_ADD(tpad, step_pedestrians_ticks);\n#else\n\t\tProcessTannerPad(pl->pPed, t0, t1, t2);\n#endif\n\t}")
-
-P('Game/C/main.c',
-  "\tif (!game_over)\n\t{\n\t\tif(pathAILoaded)\n\t\t\tControlCops();\n\n\t\tif (gLoadedMotionCapture)\n\t\t\tHandlePedestrians();\n\t}\n\n\tGlobalTimeStep();\n\tUpdatePlayers();\n\tDoScenaryCollisions();",
-  "\tif (!game_over)\n\t{\n\t\tif(pathAILoaded)\n\t\t{\n#ifdef D2_PERFDBG\n\t\t\tPERF_START(cops);\n\t\t\tControlCops();\n\t\t\tPERF_END_ADD(cops, step_ai_ticks);\n#else\n\t\t\tControlCops();\n#endif\n\t\t}\n\n\t\tif (gLoadedMotionCapture)\n\t\t{\n#ifdef D2_PERFDBG\n\t\t\tPERF_START(hpeds);\n\t\t\tHandlePedestrians();\n\t\t\tPERF_END_ADD(hpeds, step_pedestrians_ticks);\n#else\n\t\t\tHandlePedestrians();\n#endif\n\t\t}\n\t}\n\n#ifdef D2_PERFDBG\n\tPERF_START(gtime);\n\tGlobalTimeStep();\n\tPERF_END_ADD(gtime, step_cars_physics_ticks);\n#else\n\tGlobalTimeStep();\n#endif\n\tUpdatePlayers();\n#ifdef D2_PERFDBG\n\tPERF_START(coll);\n\tDoScenaryCollisions();\n\tPERF_END_ADD(coll, step_collision_ticks);\n#else\n\tDoScenaryCollisions();\n#endif")
-
-P('Game/C/main.c',
-  "\tCurrentPlayerView = view;\n\tInitCamera(&player[view]);",
-  "\tD2_OPROF_DRAW_BEGIN();\n\tCurrentPlayerView = view;\n\tInitCamera(&player[view]);")
-
-P('Game/C/main.c',
-  "\tif (gLoadedMotionCapture != 0)\n\t\tDrawAllPedestrians();\n\n\t// do a lot of stuff\n\tDisplayMissionTitle();",
-  "\tif (gLoadedMotionCapture != 0)\n\t{\n\t\tD2_OPROF_SCOPE(_op_ped, OPROF_PEDS);\n#ifdef D2_PERFDBG\n\t\tPERF_START(ped);\n\t\tDrawAllPedestrians();\n\t\tPERF_END_ADD(ped, draw_pedestrians_ticks);\n#else\n\t\tDrawAllPedestrians();\n#endif\n\t}\n\n\t// do a lot of stuff\n\t{\n\t\tD2_OPROF_SCOPE(_op_mt, OPROF_HUD);\n\t\tDisplayMissionTitle();\n\t}")
-
-P('Game/C/main.c',
-  "\tDrawDrivingGames();\n\tDrawThrownBombs();\n\tAddGroundDebris();\n\n\t// draw events that use cell object\n\tDrawEvents(0);\n\n\tcurrent->ot += 10;\n\n\tDrawSmashable_sprites();\n\tHandleDebris();\n\n\tcurrent->ot -= 10;\n\n\tDrawAllExplosions();",
-  "\t{\n\t\tD2_OPROF_SCOPE(_op_fx1, OPROF_EFFECTS);\n\t\tDrawDrivingGames();\n\t\tDrawThrownBombs();\n\t\tAddGroundDebris();\n\n\t\t// draw events that use cell object\n\t\tDrawEvents(0);\n\n\t\tcurrent->ot += 10;\n\n#ifdef D2_PERFDBG\n\t\tPERF_START(fx);\n#endif\n\t\tDrawSmashable_sprites();\n\t\tHandleDebris();\n\n\t\tcurrent->ot -= 10;\n\n\t\tDrawAllExplosions();\n#ifdef D2_PERFDBG\n\t\tPERF_END_ADD(fx, draw_effects_ticks);\n#endif\n\t}")
-
-P('Game/C/main.c',
-  "\tif (gLoadedOverlay)\n\t\tDisplayOverlays();\n\n\tDrawMission();\n\n\tif (!FastForward && NumPlayers == 1)\n\t\tDrawLensFlare();",
-  "\t{\n\t\tD2_OPROF_SCOPE(_op_hud, OPROF_HUD);\n\t\tif (gLoadedOverlay)\n\t\t{\n#ifdef D2_PERFDBG\n\t\t\tPERF_START(fx_ovl);\n\t\t\tDisplayOverlays();\n\t\t\tPERF_END_ADD(fx_ovl, draw_effects_ticks);\n#else\n\t\t\tDisplayOverlays();\n#endif\n\t\t}\n\n\t\tDrawMission();\n\t}\n\n\tif (!FastForward && NumPlayers == 1)\n\t{\n\t\tD2_OPROF_SCOPE(_op_lf, OPROF_EFFECTS);\n\t\tDrawLensFlare();\n\t}")
-
-P('Game/C/main.c',
-  "\tif (notInDreaAndStevesEvilLair)\n\t{\t\t\n\t\tDrawSkyDome();\n\n\t\tif (current->primtab - (current->primptr - PRIMTAB_SIZE) > 40000)\n\t\t{\n\t\t\tDoWeather(gWeather);\n\t\t}\n\t}\n\n\tif (current->primtab - (current->primptr - PRIMTAB_SIZE) > 37000)\n\t{\n\t\tDrawTyreTracks();\n\t}\n\n\tDrawAllTheCars(view);\n\n#ifndef PSX",
-  "#ifdef D2_PERFDBG\n\tPERF_START(fx_env);\n#endif\n\tif (notInDreaAndStevesEvilLair)\n\t{\n\t\t{\n\t\t\tD2_OPROF_SCOPE(_op_sky, OPROF_SKY);\n\t\t\tDrawSkyDome();\n\t\t}\n\n\t\tif (current->primtab - (current->primptr - PRIMTAB_SIZE) > 40000)\n\t\t{\n\t\t\tD2_OPROF_SCOPE(_op_wth, OPROF_EFFECTS);\n\t\t\tDoWeather(gWeather);\n\t\t}\n\t}\n\n\tif (current->primtab - (current->primptr - PRIMTAB_SIZE) > 37000)\n\t{\n\t\tD2_OPROF_SCOPE(_op_tyr, OPROF_SHADOWS);\n\t\tDrawTyreTracks();\n\t}\n#ifdef D2_PERFDBG\n\tPERF_END_ADD(fx_env, draw_effects_ticks);\n#endif\n\n\t{\n\t\tD2_OPROF_SCOPE(_op_cars, OPROF_CARS);\n\t\tDrawAllTheCars(view);\n\t}\n\tD2_OPROF_DRAW_END();\n\n#ifndef PSX")
-
-P('Game/C/draw.c',
-  "\tSetupDrawMapPSX();\n\n\t// clean cell cache",
-  "\tD2_OPROF_ENTER(_op_mapw, OPROF_MAP_WALK);\n\tSetupDrawMapPSX();\n\n\t// clean cell cache")
-
-P('Game/C/draw.c',
-  "\tSetupPlaneColours(combointensity);\n\n\tif (drawData.anim_objs_found)\n\t\tDrawAllAnimatingObjects((CELL_OBJECT**)anim_obj_buffer, drawData.anim_objs_found);\n\n\tif (drawData.sprites_found)\n\t\tDrawSprites((PACKED_CELL_OBJECT**)spriteList, drawData.sprites_found);\n\n\tif (drawData.tiles_found)\n\t\tDrawTILES((PACKED_CELL_OBJECT**)model_tile_ptrs, drawData.tiles_found);\n\n\tif (drawData.other_models_found)\n\t\tDrawAllBuildings((CELL_OBJECT**)model_object_ptrs, drawData.other_models_found);",
-  "\tSetupPlaneColours(combointensity);\n\tD2_OPROF_LEAVE(_op_mapw);\n\n\tif (drawData.anim_objs_found)\n\t{\n\t\tD2_OPROF_SCOPE(_op_anim, OPROF_SPRITES);\n\t\tDrawAllAnimatingObjects((CELL_OBJECT**)anim_obj_buffer, drawData.anim_objs_found);\n\t}\n\n\tif (drawData.sprites_found)\n\t{\n\t\tD2_OPROF_SCOPE(_op_spr, OPROF_SPRITES);\n#ifdef D2_ORIGIN_PROF\n\t\tg_d2_oprof.objs[OPROF_SPRITES] += drawData.sprites_found;\n#endif\n#ifdef D2_PERFDBG\n\t\tPERF_START(spr);\n\t\tDrawSprites((PACKED_CELL_OBJECT**)spriteList, drawData.sprites_found);\n\t\tPERF_END_ADD(spr, draw_sprites_ticks);\n#else\n\t\tDrawSprites((PACKED_CELL_OBJECT**)spriteList, drawData.sprites_found);\n#endif\n\t}\n\n\tif (drawData.tiles_found)\n\t{\n\t\tD2_OPROF_SCOPE(_op_til, OPROF_GROUND);\n#ifdef D2_PERFDBG\n\t\tPERF_START(tiles);\n\t\tDrawTILES((PACKED_CELL_OBJECT**)model_tile_ptrs, drawData.tiles_found);\n\t\tPERF_END_ADD(tiles, draw_ground_ticks);\n#else\n\t\tDrawTILES((PACKED_CELL_OBJECT**)model_tile_ptrs, drawData.tiles_found);\n#endif\n\t}\n\n\tif (drawData.other_models_found)\n\t{\n#ifdef D2_PERFDBG\n\t\tPERF_START(bld);\n\t\tDrawAllBuildings((CELL_OBJECT**)model_object_ptrs, drawData.other_models_found);\n\t\tPERF_END_ADD(bld, draw_buildings_ticks);\n#else\n\t\tDrawAllBuildings((CELL_OBJECT**)model_object_ptrs, drawData.other_models_found);\n#endif\n\t}")
-
-P('Game/C/draw.c',
-  "\t\t\tDrawCar(cars_to_draw[i], view);\n\t\t\t\n\t\t\tspacefree -= 2000;",
-  "\t\t\tD2_OPROF_OBJ(OPROF_CARS);\n#ifdef D2_PERFDBG\n\t\t\tuint32_t _shd0 = g_perf_cur.draw_shadows_ticks;\n\t\t\tPERF_START(car);\n\t\t\tDrawCar(cars_to_draw[i], view);\n\t\t\tuint32_t _dcar = perf_cnt0() - _pt0_car;\n\t\t\tuint32_t _dshd = g_perf_cur.draw_shadows_ticks - _shd0;\n\t\t\tif (_dcar >= _dshd) g_perf_cur.draw_cars_ticks += (_dcar - _dshd);\n#else\n\t\t\tDrawCar(cars_to_draw[i], view);\n#endif\n\t\t\t\n\t\t\tspacefree -= 2000;")
-
-P('Game/C/tile.c',
-  "\t\tif (Z <= DRAW_LOD_DIST_HIGH)\n\t\t{\n\t\t\tif (Low2HighDetailTable[model_number] != 0xffff)\n\t\t\t\tmodel_number = Low2HighDetailTable[model_number];\n\n\t\t\tpModel = modelpointers[model_number];\n\n\t\t\tif (Z < 2000)\n\t\t\t\tTileNxN(pModel, 4, 75);\n\t\t\telse\n\t\t\t\tTileNxN(pModel, 2, 35);\n\t\t}\n\t\telse\n\t\t{\n\t\t\tpModel = Z > DRAW_LOD_DIST_LOW ? pLodModels[model_number] : modelpointers[model_number];",
-  "#ifdef D2_T3D_WORLD\n\t\t{\n\t\t\tint _t3d_mid = model_number;\n\t\t\tif (Z <= DRAW_LOD_DIST_HIGH) {\n\t\t\t\tif (Low2HighDetailTable[model_number] != 0xffff) _t3d_mid = Low2HighDetailTable[model_number];\n\t\t\t} else if (Z > DRAW_LOD_DIST_LOW) {\n\t\t\t\tif (Low2LowerDetailTable[model_number] != 0xffff) _t3d_mid = Low2LowerDetailTable[model_number];\n\t\t\t}\n\t\t\tif (d2_t3d_has_model(_t3d_mid)) {\n\t\t\t\tD2_OPROF_SCOPE(_op_t3dg, OPROF_T3D_GRD);\n\t\t\t\td2_t3d_queue_tile(_t3d_mid, yang, Z, d2xf.tr[0], d2xf.tr[1], d2xf.tr[2]);\n\t\t\t\tcontinue;\n\t\t\t}\n\t\t}\n#endif\n\t\tD2_OPROF_OBJ(OPROF_GROUND);\n\t\tif (Z <= DRAW_LOD_DIST_HIGH)\n\t\t{\n\t\t\tif (Low2HighDetailTable[model_number] != 0xffff)\n\t\t\t\tmodel_number = Low2HighDetailTable[model_number];\n\n\t\t\tpModel = modelpointers[model_number];\n\n\t\t\tif (Z < 2000)\n\t\t\t{\n#ifdef D2_ORIGIN_PROF\n\t\t\t\tg_d2_oprof.ground_sub4++;\n#endif\n\t\t\t\tTileNxN(pModel, 4, 75);\n\t\t\t}\n\t\t\telse\n\t\t\t{\n#ifdef D2_ORIGIN_PROF\n\t\t\t\tg_d2_oprof.ground_sub2++;\n#endif\n\t\t\t\tTileNxN(pModel, 2, 35);\n\t\t\t}\n\t\t}\n\t\telse\n\t\t{\n#ifdef D2_ORIGIN_PROF\n\t\t\tg_d2_oprof.ground_1x1++;\n#endif\n\t\t\tpModel = Z > DRAW_LOD_DIST_LOW ? pLodModels[model_number] : modelpointers[model_number];")
-
-P('Game/C/shadow.c',
-  "\tdrawMesh((MVERTEX(*)[5][5])subdivVerts, subdiv, subdiv, &plotContext);\n\n\tcurrent->primptr = plotContext.primptr;\n}",
-  "\tdrawMesh((MVERTEX(*)[5][5])subdivVerts, subdiv, subdiv, &plotContext);\n\n\tcurrent->primptr = plotContext.primptr;\n#ifdef D2_PERFDBG\n\tPERF_END_ADD(shd, draw_shadows_ticks);\n#endif\n}")
-
 # ---- sombra do Tanner: render offscreen nao suportado no N64 ----
 P('Game/C/motion_c.c',
   "\t\t\tTannerShadow(pPed, &v, moon_position + GameLevel, &cV, pPed->dir.vy);\n\t\t}\n\t\telse\n\t\t{\n\t\t\tcV.b = 32;\n\t\t\tcV.g = 32;\n\t\t\tcV.r = 32;\n\t\t\tTannerShadow(pPed, &v, sun_position + GameLevel, &cV, pPed->dir.vy);",
@@ -1137,10 +846,21 @@ import patch_gpu_native
 patch_gpu_native.register(P, R)
 import patch_vram_native
 patch_vram_native.register(P, R)
-PATCHES[:] = [x for x in PATCHES if not patch_gpu_native.is_old_rename(x)]
+PATCHES[:] = [x for x in PATCHES if not patch_gpu_native.is_old_rename(x) and not patch_gpu_native.is_dead(x[0])]
+REGEX[:] = [x for x in REGEX if not patch_gpu_native.is_dead(x[0])]
 PATCHES[:] = [x for x in PATCHES if not (x[0].endswith('LIBGPU.C') and "initialize a linked list with it's previous items" in x[1])]
 PATCHES[:] = [x for x in PATCHES if x[0] not in patch_gte_removal.GONE]
 REGEX[:] = [x for x in REGEX if x[0] not in patch_gte_removal.GONE]
+
+def prune():
+    import shutil
+    for d in patch_gpu_native.DEAD:
+        fp = os.path.join(ROOT, d)
+        if os.path.isdir(fp):
+            for r, _, fs in os.walk(fp):
+                for f in fs:
+                    if f.lower().endswith(('.c', '.cpp')): os.remove(os.path.join(r, f))
+        elif os.path.exists(fp): os.remove(fp)
 
 def main():
     ok = skipped = missing = 0
@@ -1187,6 +907,7 @@ def main():
         cache[fp] = patch_gte_removal.rename(s)
     for fp, s in cache.items():
         open(fp, 'w', encoding='latin-1', newline='').write(s)
+    prune()
     print('patch_engine.py: %d aplicados, %d ja aplicados, %d faltando' % (ok, skipped, missing))
     return 0
 sys.exit(main())
