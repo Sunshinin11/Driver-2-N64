@@ -1499,6 +1499,52 @@ static bool subdiv_quad(const PV *q, int page, int clut)
 static unsigned int s_dCnt;
 int d2_direct_poly_i(P_TAG *tag);
 int d2_direct_poly(P_TAG *tag);
+// quad texturizado de 4 bits (pagina em x >= 512): o RSP monta os dois triangulos, com 7 palavras de comando em vez de ~30 escritas pela CPU
+static bool rsp_ft4(const short *xs, const short *ys, const unsigned char *us, const unsigned char *vs, int tpage, int clut, uint32_t col, int ofx, int ofy)
+{
+    if (!s_d2gpuOvl || s_texFormat != TF_4_BIT || s_ctxSx16 != 65536 || s_ctxSy16 != 65536 || (tpage & 15) < 8) return false;
+    short minx = xs[0], maxx = xs[0], miny = ys[0], maxy = ys[0];
+    int umin = us[0], umax = us[0], vmin = vs[0], vmax = vs[0];
+    for (int i = 1; i < 4; i++)
+    {
+        if (xs[i] < minx) minx = xs[i]; if (xs[i] > maxx) maxx = xs[i];
+        if (ys[i] < miny) miny = ys[i]; if (ys[i] > maxy) maxy = ys[i];
+        if (us[i] < umin) umin = us[i]; if (us[i] > umax) umax = us[i];
+        if (vs[i] < vmin) vmin = vs[i]; if (vs[i] > vmax) vmax = vs[i];
+    }
+    const int sx0 = (minx + ofx) << 2, sx1 = (maxx + ofx) << 2, sy0 = (miny + ofy) << 2, sy1 = (maxy + ofy) << 2;
+    if (sx1 < s_ctxCx0 || sx0 >= s_ctxCx1 || sy1 < s_ctxCy0 || sy0 >= s_ctxCy1) return true;     // fora do recorte: nada a desenhar
+    if (sx0 < -4096 || sx1 > 4095 || sy0 < -4096 || sy1 > 4095 || sx1 - sx0 > 16000 || sy1 - sy0 > 16000) return false;
+    const int uw = (umax > umin) ? (umax - umin) : 1, vh = (vmax > vmin) ? (vmax - vmin) : 1;
+    if (uw > 64 || vh > 64 || !upload_win((tpage & 15) * 64, ((tpage >> 4) & 1) * 256, clut, umin, vmin, uw, vh)) return false;
+    if (s_rspOfx != ofx || s_rspOfy != ofy)
+    {
+        s_rspOfx = ofx; s_rspOfy = ofy;
+        track_ovl_switch(s_d2gpuOvl);
+        rspq_write(s_d2gpuOvl, D2G_CMD_SET_OFFSET, 0, ((uint32_t)(int16_t)ofx << 16) | ((uint32_t)(int16_t)ofy & 0xFFFF));
+    }
+    if (s_rspTexOu != s_upOu || s_rspTexOv != s_upOv)
+    {
+        s_rspTexOu = s_upOu; s_rspTexOv = s_upOv;
+        track_ovl_switch(s_d2gpuOvl);
+        rspq_write(s_d2gpuOvl, D2G_CMD_SET_TEX_ORIGIN, 0, ((uint32_t)(uint16_t)s_upOu << 16) | ((uint32_t)(uint16_t)s_upOv & 0xFFFF));
+    }
+    if (s_tmemDirty)
+    {
+        __rdpq_autosync_use(AUTOSYNC_PIPE | AUTOSYNC_TILE(0) | AUTOSYNC_TMEM(0));
+        s_tmemDirty = false;
+    }
+    const uint32_t xy0 = ((uint32_t)(uint16_t)xs[0] << 16) | (uint16_t)ys[0], xy1 = ((uint32_t)(uint16_t)xs[1] << 16) | (uint16_t)ys[1];
+    const uint32_t xy2 = ((uint32_t)(uint16_t)xs[2] << 16) | (uint16_t)ys[2], xy3 = ((uint32_t)(uint16_t)xs[3] << 16) | (uint16_t)ys[3];
+    const uint32_t uv01 = ((uint32_t)us[0] << 24) | ((uint32_t)vs[0] << 16) | ((uint32_t)us[1] << 8) | vs[1];
+    const uint32_t uv23 = ((uint32_t)us[2] << 24) | ((uint32_t)vs[2] << 16) | ((uint32_t)us[3] << 8) | vs[3];
+    track_ovl_switch(s_d2gpuOvl);
+    rspq_write(s_d2gpuOvl, D2G_CMD_POLY_FT4, col, xy0, xy1, xy2, xy3, uv01, uv23);
+    s_rspFT4Count++;
+    s_triCount += 2;
+    s_texTriCount += 2;
+    return true;
+}
 int d2_native_ft4(POLY_FT4 *p)
 {
     if (!activeDrawEnv.dfe || !s_scene) return 9;
@@ -1515,59 +1561,11 @@ int d2_native_ft4(POLY_FT4 *p)
     const int ofy = activeDrawEnv.ofs[1] - activeDispEnv.disp.y;
 
     s_ft4Total++;
-    // quad texturizado de 4 bits: o RSP monta os dois triangulos (caminho curto de comandos, sem os 30 words de CPU por triangulo)
-    if (s_d2gpuOvl && s_texFormat == TF_4_BIT && s_ctxSx16 == 65536 && s_ctxSy16 == 65536 && (p->tpage & 15) >= 8)
     {
-        short minx = p->x0, maxx = p->x0, miny = p->y0, maxy = p->y0;
-        if (p->x1 < minx) minx = p->x1; if (p->x1 > maxx) maxx = p->x1;
-        if (p->x2 < minx) minx = p->x2; if (p->x2 > maxx) maxx = p->x2;
-        if (p->x3 < minx) minx = p->x3; if (p->x3 > maxx) maxx = p->x3;
-        if (p->y1 < miny) miny = p->y1; if (p->y1 > maxy) maxy = p->y1;
-        if (p->y2 < miny) miny = p->y2; if (p->y2 > maxy) maxy = p->y2;
-        if (p->y3 < miny) miny = p->y3; if (p->y3 > maxy) maxy = p->y3;
-        const int sx0 = (minx + ofx) << 2, sx1 = (maxx + ofx) << 2, sy0 = (miny + ofy) << 2, sy1 = (maxy + ofy) << 2;
-        if (sx1 < s_ctxCx0 || sx0 >= s_ctxCx1 || sy1 < s_ctxCy0 || sy0 >= s_ctxCy1) return 9;
-        if (sx0 >= -4096 && sx1 <= 4095 && sy0 >= -4096 && sy1 <= 4095 && sx1 - sx0 <= 16000 && sy1 - sy0 <= 16000)
-        {
-            int umin = p->u0, umax = p->u0, vmin = p->v0, vmax = p->v0;
-            if (p->u1 < umin) umin = p->u1; if (p->u1 > umax) umax = p->u1;
-            if (p->u2 < umin) umin = p->u2; if (p->u2 > umax) umax = p->u2;
-            if (p->u3 < umin) umin = p->u3; if (p->u3 > umax) umax = p->u3;
-            if (p->v1 < vmin) vmin = p->v1; if (p->v1 > vmax) vmax = p->v1;
-            if (p->v2 < vmin) vmin = p->v2; if (p->v2 > vmax) vmax = p->v2;
-            if (p->v3 < vmin) vmin = p->v3; if (p->v3 > vmax) vmax = p->v3;
-            const int uw = (umax > umin) ? (umax - umin) : 1, vh = (vmax > vmin) ? (vmax - vmin) : 1;
-            if (uw <= 64 && vh <= 64 && upload_win(((p->tpage & 15) * 64), ((p->tpage >> 4) & 1) * 256, p->clut, umin, vmin, uw, vh))
-            {
-                if (s_rspOfx != ofx || s_rspOfy != ofy)
-                {
-                    s_rspOfx = ofx; s_rspOfy = ofy;
-                    track_ovl_switch(s_d2gpuOvl);
-                    rspq_write(s_d2gpuOvl, D2G_CMD_SET_OFFSET, 0, ((uint32_t)(int16_t)ofx << 16) | ((uint32_t)(int16_t)ofy & 0xFFFF));
-                }
-                if (s_rspTexOu != s_upOu || s_rspTexOv != s_upOv)
-                {
-                    s_rspTexOu = s_upOu; s_rspTexOv = s_upOv;
-                    track_ovl_switch(s_d2gpuOvl);
-                    rspq_write(s_d2gpuOvl, D2G_CMD_SET_TEX_ORIGIN, 0, ((uint32_t)(uint16_t)s_upOu << 16) | ((uint32_t)(uint16_t)s_upOv & 0xFFFF));
-                }
-                if (s_tmemDirty)
-                {
-                    __rdpq_autosync_use(AUTOSYNC_PIPE | AUTOSYNC_TILE(0) | AUTOSYNC_TMEM(0));
-                    s_tmemDirty = false;
-                }
-                const uint32_t col = ((uint32_t)s_shadeLut[p->r0] << 16) | ((uint32_t)s_shadeLut[p->g0] << 8) | s_shadeLut[p->b0];
-                const uint32_t xy0 = *(const uint32_t*)&p->x0, xy1 = *(const uint32_t*)&p->x1, xy2 = *(const uint32_t*)&p->x2, xy3 = *(const uint32_t*)&p->x3;
-                const uint32_t uv01 = (*(const uint16_t*)&p->u0 << 16) | *(const uint16_t*)&p->u1;
-                const uint32_t uv23 = (*(const uint16_t*)&p->u2 << 16) | *(const uint16_t*)&p->u3;
-                track_ovl_switch(s_d2gpuOvl);
-                rspq_write(s_d2gpuOvl, D2G_CMD_POLY_FT4, col, xy0, xy1, xy2, xy3, uv01, uv23);
-                s_rspFT4Count++;
-                s_triCount += 2;
-                s_texTriCount += 2;
-                return 9;
-            }
-        }
+        const short xs[4] = { p->x0, p->x1, p->x2, p->x3 }, ys[4] = { p->y0, p->y1, p->y2, p->y3 };
+        const unsigned char us[4] = { p->u0, p->u1, p->u2, p->u3 }, vs[4] = { p->v0, p->v1, p->v2, p->v3 };
+        const uint32_t col = ((uint32_t)s_shadeLut[p->r0] << 16) | ((uint32_t)s_shadeLut[p->g0] << 8) | s_shadeLut[p->b0];
+        if (rsp_ft4(xs, ys, us, vs, p->tpage, p->clut, col, ofx, ofy)) return 9;
     }
     const short *xy[4] = { &p->x0, &p->x1, &p->x2, &p->x3 };
     const unsigned char *uv[4] = { &p->u0, &p->u1, &p->u2, &p->u3 };
@@ -1891,6 +1889,12 @@ int d2_direct_poly(P_TAG *tag)
     s_dCnt++;
 
     const int ofx = activeDrawEnv.ofs[0] - activeDispEnv.disp.x, ofy = activeDrawEnv.ofs[1] - activeDispEnv.disp.y;
+    if (tex && quad && !gour && bm == BM_NONE && texOk)
+    {
+        const uint32_t col = shadeOn ? ((uint32_t)s_shadeLut[cr[0]] << 16) | ((uint32_t)s_shadeLut[cg[0]] << 8) | s_shadeLut[cb[0]]
+                                     : ((uint32_t)s_shadeLut[128] << 16) | ((uint32_t)s_shadeLut[128] << 8) | s_shadeLut[128];
+        if (rsp_ft4(xs, ys, us, vs, tpage, clut, col, ofx, ofy)) return len;
+    }
     if (!tex && !gour && s_ctxSx16 == 65536 && s_ctxSy16 == 65536)
     {
         short minx = xs[0], maxx = xs[0], miny = ys[0], maxy = ys[0];
