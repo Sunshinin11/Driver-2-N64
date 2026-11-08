@@ -6,7 +6,6 @@ export N64_INST="${N64_INST:-/opt/libdragon}"
 export PATH="$N64_INST/bin:$PATH"
 [ -d port/redriver2/src_rebuild/Game ] || bash ./setup_engine.sh
 bash ./patch_engine.sh
-python3 tools/gen_stubs.py
 if [ "${1:-}" = "clean" ]; then exec make -f Makefile.d2 clean; fi
 rm -f d2_n64.z64
 exec make -f Makefile.d2 -j"$(nproc)" all "$@"

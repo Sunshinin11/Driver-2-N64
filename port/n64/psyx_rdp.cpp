@@ -22,7 +22,7 @@
 #include "d2_t3d_world.h"
 
 extern "C" {
-extern unsigned short vram[];      // psyx_backend.cpp (valores nativos de 16 bits, ja no formato do PS1)
+#include "d2_vram.h"   // VRAM nativa (metade esquerda com bytes trocados, metade direita ja no formato do RDP)
 extern DRAWENV activeDrawEnv;
 extern DISPENV activeDispEnv;
 void d2_sys_note_frame(void);      // sys_n64.c
@@ -50,8 +50,6 @@ TextureID g_whiteTexture = 1, g_vramTexture = 2;
 static TexFormat s_texFormat;
 static bool s_textured, s_offscreen;
 static BlendMode s_blend;
-static const GrVertex *s_verts;
-static int s_numVerts;
 static int s_modeKey = -1;
 static int s_benchTris, s_benchTex;
 static int s_triCount, s_texTriCount, s_subTri, s_calls; static unsigned s_areaH[6];
@@ -223,9 +221,6 @@ static unsigned int s_genCounter;
 // ---------------------------------------------------------------- VRAM "sombra" (4 bits): x >= 512 ja no formato do RDP (nibbles trocados)
 // 512 palavras x 512 linhas; convertida por celula (64 x 32 palavras) sob demanda, sempre que a celula da VRAM mudou
 #define SH_W 512
-static unsigned short s_shadow[SH_W * 512] __attribute__((aligned(64)));
-static unsigned int s_shVer[16 * 16];
-static bool s_shInit;
 static unsigned int s_shLastUse;
 static int s_upOu, s_upOv;                         // origem (em texels) da regiao que ficou na TMEM: coordenadas de textura = (u - ou, v - ov)
 static TexSlot s_shTag;
@@ -237,46 +232,6 @@ static unsigned int s_rejScissor, s_rejScreenClip, s_rejUvClip, s_rejUpload, s_r
 static inline unsigned int cnt0(void) { unsigned int c; __asm__ volatile("mfc0 %0,$9" : "=r"(c)); return c; }
 static unsigned int s_cLdSh, s_cLdReg, s_cLdWin, s_cTlut, s_cWinHit, s_cCalls;   // contadores por quadro (uploads de textura / paleta)                            // so o endereco e usado (marca "TMEM carregada a partir da sombra")
 static struct { unsigned int k0, k1, sig; } s_shLast;
-
-static void shadow_convert_cell(int cx, int cy)
-{
-    for (int r = 0; r < 32; r++)
-    {
-        const int y = cy * 32 + r;
-        const unsigned int *src = (const unsigned int *)(vram + (y << 10) + cx * 64);
-        unsigned int *dst = (unsigned int *)(s_shadow + y * SH_W + (cx - 8) * 64);
-        for (int k = 0; k < 32; k++)
-        {
-            unsigned int x = src[k];
-            x = ((x & 0x00FF00FFu) << 8) | ((x >> 8) & 0x00FF00FFu);
-            dst[k] = ((x & 0x0F0F0F0Fu) << 4) | ((x >> 4) & 0x0F0F0F0Fu);
-        }
-        data_cache_hit_writeback(dst, 128);
-    }
-}
-static unsigned int s_shSyncedAt = 0xFFFFFFFFu;   // s_vramWrites na ultima sincronizacao completa da sombra
-static void shadow_sync(int wx, int wy, int ww, int wh);
-// converte (uma vez) todas as celulas da metade direita da VRAM que mudaram desde a ultima chamada; sem escrita de VRAM nao faz nada
-static inline void shadow_sync_all(void)
-{
-    if (s_shSyncedAt == s_vramWrites) return;
-    shadow_sync(512, 0, 512, 512);
-    s_shSyncedAt = s_vramWrites;
-}
-static void shadow_sync(int wx, int wy, int ww, int wh)      // celulas tocadas pela regiao (em palavras de VRAM)
-{
-    if (!s_shInit) { for (int i = 0; i < 256; i++) s_shVer[i] = 0xFFFFFFFFu; s_shInit = true; }
-    int cx0 = (wx & 1023) >> 6, cx1 = ((wx + ww - 1) & 1023) >> 6, cy0 = (wy & 511) >> 5, cy1 = ((wy + wh - 1) & 511) >> 5;
-    for (int cy = cy0; cy <= cy1; cy++)
-        for (int cx = cx0; cx <= cx1; cx++)
-        {
-            const int i = cy * 16 + cx;
-            if (s_shVer[i] == s_cellVer[i]) continue;
-            if (s_shLastUse > s_doneCounter) rdp_wait_idle();       // o RDP ainda pode estar lendo a versao antiga
-            shadow_convert_cell(cx, cy);
-            s_shVer[i] = s_cellVer[i];
-        }
-}
 
 static inline void d2_perf_tlut_upload(const void *pal, int idx, int n) {
 #ifdef D2_PERFDBG
@@ -315,27 +270,8 @@ static inline size_t d2_perf_upload_sub(rdpq_tile_t tile, const surface_t *surf,
 }
 #define rdpq_tex_upload_sub d2_perf_upload_sub
 
-static inline void d2_perf_shadow_sync(int x, int y, int w, int h) {
-#ifdef D2_PERFDBG
-    uint32_t t0 = perf_cnt0();
-    shadow_sync(x, y, w, h);
-    g_perf_cur.bk_shadow_sync_ticks += perf_cnt0() - t0;
-#else
-    shadow_sync(x, y, w, h);
-#endif
-}
-#define shadow_sync d2_perf_shadow_sync
-
-static inline void d2_perf_shadow_sync_all(void) {
-#ifdef D2_PERFDBG
-    uint32_t t0 = perf_cnt0();
-    shadow_sync_all();
-    g_perf_cur.bk_shadow_sync_ticks += perf_cnt0() - t0;
-#else
-    shadow_sync_all();
-#endif
-}
-#define shadow_sync_all d2_perf_shadow_sync_all
+// o RDP le a metade direita da VRAM (paginas de textura) por DMA: antes de reescreve-la, espera ele terminar
+extern "C" void d2_vram_r_barrier(void) { if (s_shLastUse > s_doneCounter) rdp_wait_idle(); }
 
 // decodifica a regiao (u0,v0,w,h com passo step) da pagina (px,py) para o slot; retorna false se nao couber
 static TexSlot *get_region(int px, int py, int fmt, int u0, int v0, int w, int h, int step, int *outW, int *outH, int *outWpad, int clut, int rgba_mode)
@@ -418,19 +354,18 @@ static TexSlot *get_region(int px, int py, int fmt, int u0, int v0, int w, int h
     {
         uint32_t *d32 = (uint32_t *)dst;
         const int cx = (clut & 63) * 16, cy = clut >> 6;
-        const unsigned short *pal = (fmt != TF_16_BIT) ? (vram + ((cy & 511) << 10)) : NULL;
         for (int y = 0; y < sh; y++)
         {
-            const unsigned short *row = vram + (((py + v0 + y * step) & 511) << 10);
+            const int vy = py + v0 + y * step;
             uint32_t *d = d32 + y * wpad;
             if (fmt == TF_4_BIT)
             {
                 for (int x = 0; x < sw; x++)
                 {
                     int u = u0 + x * step;
-                    unsigned int word = row[(px + (u >> 2)) & 1023];
+                    unsigned int word = d2_vram_rd(px + (u >> 2), vy);
                     int idx = (word >> ((u & 3) * 4)) & 15;
-                    unsigned short psx_col = pal[(cx + idx) & 1023];
+                    unsigned short psx_col = d2_vram_rd(cx + idx, cy);
                     d[x] = psx_to_rgba32(psx_col);
                 }
             }
@@ -439,9 +374,9 @@ static TexSlot *get_region(int px, int py, int fmt, int u0, int v0, int w, int h
                 for (int x = 0; x < sw; x++)
                 {
                     int u = u0 + x * step;
-                    unsigned int word = row[(px + (u >> 1)) & 1023];
+                    unsigned int word = d2_vram_rd(px + (u >> 1), vy);
                     int idx = (word >> ((u & 1) * 8)) & 255;
-                    unsigned short psx_col = pal[(cx + idx) & 1023];
+                    unsigned short psx_col = d2_vram_rd(cx + idx, cy);
                     d[x] = psx_to_rgba32(psx_col);
                 }
             }
@@ -450,7 +385,7 @@ static TexSlot *get_region(int px, int py, int fmt, int u0, int v0, int w, int h
                 for (int x = 0; x < sw; x++)
                 {
                     int u = u0 + x * step;
-                    unsigned short psx_col = row[(px + u) & 1023];
+                    unsigned short psx_col = d2_vram_rd(px + u, vy);
                     d[x] = psx_to_rgba32(psx_col);
                 }
             }
@@ -461,7 +396,7 @@ static TexSlot *get_region(int px, int py, int fmt, int u0, int v0, int w, int h
     {
         for (int y = 0; y < sh; y++)
         {
-            const unsigned short *row = vram + (((py + v0 + y * step) & 511) << 10);
+            const int vy = py + v0 + y * step;
             if (fmt == TF_4_BIT)
             {
                 unsigned char *d = dst + y * (wpad / 2);
@@ -469,21 +404,19 @@ static TexSlot *get_region(int px, int py, int fmt, int u0, int v0, int w, int h
                 if (step == 1 && (u0 & 3) == 0)
                 {
                     // 4 texels (uma palavra da VRAM) por vez: troca os nibbles de cada byte (o RDP quer o texel da esquerda no nibble alto)
-                    const unsigned short *src = row + ((px + (u0 >> 2)) & 1023);
                     const int words = sw >> 2;
+                    const int x0 = (px + (u0 >> 2)) & 1023;
                     unsigned short *d16 = (unsigned short *)d;
-                    for (int k = 0; k < words; k++)
-                    {
-                        unsigned int wv = src[k];
-                        unsigned int lo = wv & 0xFF, hi = wv >> 8;
-                        d16[k] = (unsigned short)((((lo & 15) << 4 | lo >> 4) << 8) | ((hi & 15) << 4 | hi >> 4));
-                    }
+                    if (x0 >= 512 && x0 + words <= 1024)
+                        memcpy(d16, &d2_vramR[(vy & 511) * 512 + (x0 - 512)], (size_t)words * 2);   // metade direita: ja no formato do RDP
+                    else
+                        for (int k = 0; k < words; k++) d16[k] = d2_vconv(d2_vram_rd(x0 + k, vy));
                     x = words << 2;
                 }
                 for (; x < sw; x++)
                 {
                     int u = u0 + x * step;
-                    unsigned int word = row[(px + (u >> 2)) & 1023];
+                    unsigned int word = d2_vram_rd(px + (u >> 2), vy);
                     unsigned int n = (word >> ((u & 3) * 4)) & 15;
                     if (x & 1) d[x >> 1] |= (unsigned char)n; else d[x >> 1] = (unsigned char)(n << 4);
                 }
@@ -495,16 +428,19 @@ static TexSlot *get_region(int px, int py, int fmt, int u0, int v0, int w, int h
                 int x = 0;
                 if (step == 1 && (u0 & 1) == 0)
                 {
-                    const unsigned short *src = row + ((px + (u0 >> 1)) & 1023);
                     const int words = sw >> 1;
                     unsigned short *d16 = (unsigned short *)d;
-                    for (int k = 0; k < words; k++) { unsigned int wv = src[k]; d16[k] = (unsigned short)((wv << 8) | (wv >> 8)); }
+                    const int x0 = (px + (u0 >> 1)) & 1023;
+                    if (x0 + words <= 512)
+                        memcpy(d16, &d2_vramL[(vy & 511) * 512 + x0], (size_t)words * 2);   // metade esquerda: ja na ordem de memoria do N64
+                    else
+                        for (int k = 0; k < words; k++) { unsigned int wv = d2_vram_rd(x0 + k, vy); d16[k] = (unsigned short)((wv << 8) | (wv >> 8)); }
                     x = words << 1;
                 }
                 for (; x < sw; x++)
                 {
                     int u = u0 + x * step;
-                    unsigned int word = row[(px + (u >> 1)) & 1023];
+                    unsigned int word = d2_vram_rd(px + (u >> 1), vy);
                     d[x] = (unsigned char)(word >> ((u & 1) * 8));
                 }
                 for (int pb = sw; pb < wpad; pb++) d[pb] = 0;
@@ -512,7 +448,7 @@ static TexSlot *get_region(int px, int py, int fmt, int u0, int v0, int w, int h
             else
             {
                 unsigned short *d = (unsigned short *)(dst + y * wpad * 2);
-                for (int x = 0; x < sw; x++) d[x] = conv_color(row[(px + u0 + x * step) & 1023]);
+                for (int x = 0; x < sw; x++) d[x] = conv_color(d2_vram_rd(px + u0 + x * step, vy));
                 for (int x = sw; x < wpad; x++) d[x] = 0;
             }
         }
@@ -722,8 +658,7 @@ static void upload_pal_bank(int clut)
     if (!ok)
     {
         if (e->valid && e->use > s_doneCounter) rdp_wait_idle();      // o RDP ainda pode estar lendo esta paleta
-        const unsigned short *src = vram + ((cy & 511) << 10);
-        for (int i = 0; i < 16; i++) e->pal[i] = conv_color(src[(cx + i) & 1023]);
+        for (int i = 0; i < 16; i++) e->pal[i] = conv_color(d2_vram_rd(cx + i, cy));
         data_cache_hit_writeback(e->pal, 32);
         e->clut = pkey; e->sig = cell_signature(cx, cy, 16, 1); e->vw = s_vramWrites; e->valid = 1; e->gen = ++s_genCounter;
     }
@@ -834,7 +769,6 @@ static bool upload_win(int px, int py, int clut, int u0, int v0, int w, int h)
     if (v0 + h > wv0 + 64) wv0 = ((v0 + h - 64) + 15) & ~15;
     if (wv0 + 64 > 256) wv0 = 192;
     if (wv0 < 0) wv0 = 0;
-    shadow_sync_all();
     s_win.px = px; s_win.py = py; s_win.wu0 = wu0; s_win.wv0 = wv0; s_win.vw = s_vramWrites;
     s_shLastUse = ++s_useCounter;
     if (!s_leanTiles)
@@ -855,7 +789,7 @@ static bool upload_win(int px, int py, int clut, int u0, int v0, int w, int h)
     // o RDP limita coordenadas de carga a < 1024: a imagem comeca no byte 0 ou 512 da linha (troca so quando muda)
     int bx = ((px - 512) * 4 + wu0) >> 1; const int by = py + wv0;
     const int base = bx >= 512 ? 512 : 0;
-    if (base != s_winBase) { track_ovl_switch(0); rdpq_set_texture_image_raw(0, PhysicalAddr((const char *)s_shadow + base), FMT_I8, SH_W * 2, 512); s_winBase = base; }
+    if (base != s_winBase) { track_ovl_switch(0); rdpq_set_texture_image_raw(0, PhysicalAddr((const char *)d2_vramR + base), FMT_I8, SH_W * 2, 512); s_winBase = base; }
     bx -= base;
     track_ovl_switch(0);
     rdpq_load_tile(TILE6, bx, by, bx + 32, by + 64);
@@ -907,7 +841,6 @@ static bool upload_region(int page, int clut, int u0, int v0, int w, int h, int 
     if (useShadow)
     {
         const int wx = px + (u0 >> 2), ww = ((u0 + w - 1) >> 2) - (u0 >> 2) + 1;
-        shadow_sync(wx, py + v0, ww, h);
         shSig = cell_signature(wx, py + v0, ww, h);
         shK0 = (unsigned)px | ((unsigned)py << 10) | ((unsigned)u0 << 20);
         shK1 = (unsigned)v0 | ((unsigned)w << 8) | ((unsigned)h << 20);
@@ -933,8 +866,7 @@ static bool upload_region(int page, int clut, int u0, int v0, int w, int h, int 
             if (!e->valid || e->clut != pkey || e->sig != sig)
             {
                 if (e->use > s_doneCounter) rdp_wait_idle();          // o RDP ainda pode estar lendo esta paleta
-                const unsigned short *src = vram + ((cy & 511) << 10);
-                for (int i = 0; i < 16; i++) e->pal[i] = conv_color(src[(cx + i) & 1023]);
+                for (int i = 0; i < 16; i++) e->pal[i] = conv_color(d2_vram_rd(cx + i, cy));
                 data_cache_hit_writeback(e->pal, 32);
                 e->clut = pkey; e->sig = sig; e->valid = 1; e->gen = ++s_genCounter;
             }
@@ -955,12 +887,11 @@ static bool upload_region(int page, int clut, int u0, int v0, int w, int h, int 
         else if (paletted && (s_lastUp.clut != pkey || s_lastUp.fmt != s_texFormat || s_lastUp.palVer != s_vramWrites || s_lastUp.slot == 0))
         {
             const int cx = (clut & 63) * 16, cy = (clut & 0xFFFF) >> 6;
-            const unsigned short *src = vram + ((cy & 511) << 10);
             const int n = s_texFormat == TF_4_BIT ? 16 : 256;
             s_palIdx = (s_palIdx + 1) % PAL_RING;
             if (s_palUse[s_palIdx] > s_doneCounter) rdp_wait_idle();
             unsigned short *pal = s_palRing[s_palIdx];
-            for (int i = 0; i < n; i++) pal[i] = conv_color(src[(cx + i) & 1023]);
+            for (int i = 0; i < n; i++) pal[i] = conv_color(d2_vram_rd(cx + i, cy));
             data_cache_hit_writeback(pal, n * 2);
             rdpq_tex_upload_tlut(pal, 0, n); s_cTlut++; s_winBase = -1; if (n > 16) banks_invalidate(); else s_bank[0].clut = -1;
 #ifdef D2_ORIGIN_PROF
@@ -992,7 +923,7 @@ static bool upload_region(int page, int clut, int u0, int v0, int w, int h, int 
             // carga direta da sombra (como a janela): bytes [e0/2, e1/2) das linhas v0..v0+h, origem da textura em ua+e0
             const int e0 = (u0 - ua) & ~1, e1 = ((u0 - ua) + w + 1) & ~1, nb = (e1 - e0) >> 1, pitch = (nb + 7) & ~7;
             int bx = (px - 512) * 2 + ((ua + e0) >> 1); const int by = py + v0, base = bx >= 512 ? 512 : 0;
-            if (base != s_winBase) { rdpq_set_texture_image_raw(0, PhysicalAddr((const char *)s_shadow + base), FMT_I8, SH_W * 2, 512); s_winBase = base; }
+            if (base != s_winBase) { rdpq_set_texture_image_raw(0, PhysicalAddr((const char *)d2_vramR + base), FMT_I8, SH_W * 2, 512); s_winBase = base; }
             bx -= base;
             rdpq_set_tile(TILE6, FMT_I8, 0, pitch, NULL);
             rdpq_load_tile(TILE6, bx, by, bx + nb, by + h);
@@ -1008,7 +939,7 @@ static bool upload_region(int page, int clut, int u0, int v0, int w, int h, int 
             s_curBank = -1; s_pbClut = -1;
 #endif
 #else
-            surface_t surf = surface_make(s_shadow + (py + v0) * SH_W + ((px - 512) + (ua >> 2)), FMT_CI4, 256 - ua, 256 - v0, SH_W * 2);
+            surface_t surf = surface_make(d2_vramR + (py + v0) * SH_W + ((px - 512) + (ua >> 2)), FMT_CI4, 256 - ua, 256 - v0, SH_W * 2);
             rdpq_texparms_t parms = {};
             rdpq_tex_upload_sub(TILE0, &surf, &parms, u0 - ua, 0, (u0 - ua) + w, h); s_cLdSh++; s_leanTiles = false; s_tmemWin = false;
 #ifdef D2_PALBANK
@@ -1105,12 +1036,11 @@ static bool upload_pal(int clut)
     const int pkey = clut;
     if (s_lastUp.clut == pkey && s_lastUp.fmt == s_texFormat && s_lastUp.palVer == s_vramWrites && s_lastUp.slot != 0) return false;
     const int cx = (clut & 63) * 16, cy = (clut & 0xFFFF) >> 6;
-    const unsigned short *src = vram + ((cy & 511) << 10);
     const int n = s_texFormat == TF_4_BIT ? 16 : 256;
     s_palIdx = (s_palIdx + 1) % PAL_RING;
     if (s_palUse[s_palIdx] > s_doneCounter) rdp_wait_idle();
     unsigned short *pal = s_palRing[s_palIdx];
-    for (int i = 0; i < n; i++) pal[i] = conv_color(src[(cx + i) & 1023]);
+    for (int i = 0; i < n; i++) pal[i] = conv_color(d2_vram_rd(cx + i, cy));
     data_cache_hit_writeback(pal, n * 2);
     rdpq_tex_upload_tlut(pal, 0, n); s_cTlut++; s_winBase = -1; if (n > 16) banks_invalidate(); else s_bank[0].clut = -1;
 #ifdef D2_ORIGIN_PROF
@@ -1205,39 +1135,11 @@ static inline void emit_tri(bool tex, const DV &a, const DV &b, const DV &c, flo
 }
 
 // versao inteira: coordenadas ja em 1/4 de pixel, cor 0..255, u/v em texels, mult = 32/step
-static inline void emit_tri_i(bool tex, const int *X4, const int *Y4, const uint32_t *rgba, const GrVertex *const *gv, int ou, int ov, int mult)
-{
-    uint32_t res = AUTOSYNC_PIPE;
-    if (tex) res |= AUTOSYNC_TILE(0) | AUTOSYNC_TMEM(0);
-    __rdpq_autosync_use(res);
-    for (int i = 0; i < 3; i++)
-    {
-        uint32_t xy = ((uint32_t)(int16_t)X4[i] << 16) | ((uint32_t)Y4[i] & 0xFFFF);
-        if (tex)
-        {
-            int s = ((int)gv[i]->u - ou) * mult, t = ((int)gv[i]->v - ov) * mult;
-            rspq_write(RDPQ_OVL_ID, RDPQ_CMD_TRIANGLE_DATA, 32 * i, xy, 0, rgba[i], ((uint32_t)(int16_t)s << 16) | ((uint32_t)t & 0xFFFF), 0x10000, 0x10000);
-        }
-        else rspq_write(RDPQ_OVL_ID, RDPQ_CMD_TRIANGLE_DATA, 32 * i, xy, 0, rgba[i], 0, 0, 0);
-    }
-    if (tex) rdpq_write(20, RDPQ_OVL_ID, RDPQ_CMD_TRIANGLE, 0xC000 | ((RDPQ_CMD_TRI | 6) << 8));
-    else     rdpq_write(12, RDPQ_OVL_ID, RDPQ_CMD_TRIANGLE, 0xC000 | ((RDPQ_CMD_TRI | 4) << 8));
-}
+
 
 // ---------------------------------------------------------------- contrato GR_*
 extern "C" {
 
-#ifdef D2_GTEPROF
-extern "C" int __real_GTE_operator(int);
-unsigned int d2_gp[4]; unsigned int d2_gpf[64][2];
-extern "C" int __wrap_GTE_operator(int op)
-{
-    unsigned int t0, t1; __asm__ volatile("mfc0 %0,$9" : "=r"(t0));
-    int r = __real_GTE_operator(op);
-    __asm__ volatile("mfc0 %0,$9" : "=r"(t1));
-    d2_gp[0] += t1 - t0; d2_gp[1]++; d2_gpf[op & 63][0]++; d2_gpf[op & 63][1] += t1 - t0; return r;
-}
-#endif
 extern "C" void d2_audio_pump(void);
 char PsyX_BeginScene(void)
 {
@@ -1275,11 +1177,6 @@ void PsyX_EndScene(void)
 #endif
 #ifdef D2_ORIGIN_PROF
     const uint32_t _oprof_end0 = d2_oprof_cnt0();
-#endif
-#ifdef D2_GTEPROF
-    if ((d2_rdp_frames % 30) == 0) { debugf("[gte] ops=%u ticks=%u\n", d2_gp[1], d2_gp[0]); for (int i = 0; i < 64; i++) if (d2_gpf[i][0]) debugf("[gtef] %02x n=%u t=%u\n", i, d2_gpf[i][0], d2_gpf[i][1]); }
-    memset(d2_gpf, 0, sizeof d2_gpf);
-    d2_gp[0] = d2_gp[1] = 0;
 #endif
     if (!s_scene) { d2_sys_note_frame(); return; }
     s_scene = false;
@@ -1409,9 +1306,7 @@ void GR_Clear(int x, int y, int w, int h, unsigned char r, unsigned char g, unsi
 }
 
 void GR_SwapWindow() {}
-void GR_UpdateVRAM() {}
 void GR_StoreFrameBuffer(int, int, int, int) {}
-void GR_ReadFramebufferDataToVRAM() {}
 void GR_SaveVRAM(const char *, int, int, int, int, int) {}
 
 TextureID GR_CreateRGBATexture(int, int, u_char *) { return 3; }
@@ -1450,7 +1345,6 @@ void GR_SetupClipMode(const RECT16 *r, int enable)
 void GR_SetViewPort(int, int, int, int) {}
 void GR_SetOverrideTextureSize(int, int) {}
 void GR_SetWireframe(int) {}
-void GR_UpdateVertexBuffer(const GrVertex *v, int n) { s_verts = v; s_numVerts = n; }
 void GR_PushDebugLabel(const char *) {}
 void GR_PopDebugLabel() {}
 
@@ -2006,32 +1900,7 @@ static inline void calc_primitive_colors(uint32_t *outRgba, int count, const uin
 #endif
 }
 
-void GR_DrawTriangles(int start, int count)
-{
-    if (!s_scene || s_offscreen || !s_verts || count <= 0) return;
-    if (!ensure_slots()) return;
-    s_calls++; s_subTri += count;
-    begin_batch(s_textured && s_texFormat != TF_32_BIT_RGBA, s_blend);
-    const int sx16 = s_ctxSx16, sy16 = s_ctxSy16;
-    for (int t = 0; t < count; t++)
-    {
-        const GrVertex *g = &s_verts[start + t * 3];
-        PV pv[3];
-        uint32_t rgba[3];
-        uint8_t cr[3] = { g[0].r, g[1].r, g[2].r };
-        uint8_t cg[3] = { g[0].g, g[1].g, g[2].g };
-        uint8_t cb[3] = { g[0].b, g[1].b, g[2].b };
-        calc_primitive_colors(rgba, 3, cr, cg, cb, s_blend, s_textured);
-        for (int i = 0; i < 3; i++)
-        {
-            pv[i].X4 = ((int)g[i].x * sx16) >> 14;
-            pv[i].Y4 = ((int)g[i].y * sy16) >> 14;
-            pv[i].rgba = rgba[i];
-            pv[i].s32 = g[i].u << 5; pv[i].t32 = g[i].v << 5;
-        }
-        tri_core(&pv[0], &pv[1], &pv[2], g[0].page, g[0].clut);
-    }
-}
+
 
 
 // Quad texturizado cujo UV (retangulo alinhado aos eixos) nao cabe na TMEM (ex.: ceu 128x84): divide o quad nas linhas dos blocos
@@ -2105,8 +1974,6 @@ static bool subdiv_quad(const PV *q, int page, int clut)
 #ifdef D2_DIRECT
 // ---------------------------------------------------------------- caminho direto: poligono do PS1 (OT) -> RDP, sem GrVertex/lotes
 // Chamado por ProcessFlatPoly/ProcessGouraudPoly (PsyX_GPU.cpp). Devolve o tamanho do primitivo (em palavras) ou 0 para o caminho antigo.
-extern TextureID overrideTexture;
-void d2_flush_splits(void);           // PsyX_GPU.cpp: desenha o que ja estava em lotes (mantem a ordem da OT)
 static unsigned int s_dCnt;
 int d2_direct_poly_i(P_TAG *tag);
 int d2_direct_poly(P_TAG *tag);
@@ -2123,7 +1990,7 @@ int d2_native_ft4(POLY_FT4 *p)
     }
 #endif
     if (!ensure_slots()) return 9;
-    d2_flush_splits();
+
     const RECT16 &c = activeDrawEnv.clip;
     if (c.x != s_clipKey[0] || c.y != s_clipKey[1] || c.w != s_clipKey[2] || c.h != s_clipKey[3] ||
         (activeDispEnv.disp.x | (activeDispEnv.disp.w << 16)) != s_clipKey[4] ||
@@ -2278,7 +2145,7 @@ int d2_native_rect(P_TAG *tag)
 {
     const int code = tag->code, kind = code & 0xFD;
     const bool tex = kind == 0x64 || kind == 0x74 || kind == 0x7C;
-    if (tex && overrideTexture != 0) return 0;
+    
     int w, h, len;
     if (kind == 0x60) { TILE *p = (TILE *)tag; w = p->w; h = p->h; len = 3; }
     else if (kind == 0x64) { SPRT *p = (SPRT *)tag; w = p->w; h = p->h; len = 4; }
@@ -2296,7 +2163,7 @@ int d2_native_rect(P_TAG *tag)
 #endif
     if (!activeDrawEnv.dfe || !s_scene || w <= 0 || h <= 0) return len;
     if (!ensure_slots()) return len;
-    d2_flush_splits();
+
     const RECT16 &clip = activeDrawEnv.clip;
     if (clip.x != s_clipKey[0] || clip.y != s_clipKey[1] || clip.w != s_clipKey[2] || clip.h != s_clipKey[3] ||
         (activeDispEnv.disp.x | (activeDispEnv.disp.w << 16)) != s_clipKey[4] ||
@@ -2346,7 +2213,7 @@ int d2_native_line(P_TAG *tag)
     if(type==0x50 && sub!=0) return sub==8 ? 7 : sub==12 ? 9 : 0;
     const int len=type==0x50?4:(sub==0?3:sub==8?5:6);
     if (!activeDrawEnv.dfe || !s_scene || !ensure_slots()) return len;
-    d2_flush_splits();
+
     const RECT16 &c=activeDrawEnv.clip;
     if(c.x!=s_clipKey[0]||c.y!=s_clipKey[1]||c.w!=s_clipKey[2]||c.h!=s_clipKey[3]||(activeDispEnv.disp.x|(activeDispEnv.disp.w<<16))!=s_clipKey[4]||(activeDispEnv.disp.y|(activeDispEnv.disp.h<<16))!=s_clipKey[5]) GR_SetupClipMode(&c,1);
     const BlendMode bm=(tag->code&2)?(BlendMode)(((activeDrawEnv.tpage>>5)&3)+1):BM_NONE;
@@ -2386,7 +2253,7 @@ int d2_native_psyx(P_TAG *tag)
 {
     /* Pacotes B1/B2 sao extensoes do port para PC, nao comandos do GPU do PS1. */
     const int sub=tag->code&15;
-    if(sub==1) { overrideTexture=0; return 2; }
+    if(sub==1) return 2;
     if(sub==2) return 2; /* marcador textual de debug */
     return 0;
 }
@@ -2394,7 +2261,7 @@ int d2_native_vram_packet(P_TAG *tag)
 {
     const int type=tag->code&0xF0;
     if(type==0 && (tag->code&15)==0) return 3;
-    if(type==0xA0 || (type==0 && (tag->code&15)==1)) d2_flush_splits();
+    
     if(type==0xA0) {
         DR_LOAD *p=(DR_LOAD*)tag;
         RECT16 r; *(unsigned int*)&r.x=*(unsigned int*)&p->code[1]; *(unsigned int*)&r.w=*(unsigned int*)&p->code[2];
@@ -2430,51 +2297,29 @@ extern "C" int d2_native_draw_prim(P_TAG *tag)
     if (__builtin_expect(n <= 0, 0)) debugf("[native-gpu] primitiva isolada desconhecida code=%02x\n", tag ? tag->code : 0);
     return n;
 }
-extern "C" void d2_native_draw_ot(u_long *ot)
+// ---- OT nativo (Etapa 3): vetor de baldes por slot, sem lista ligada entre slots e sem terminador ----
+struct D2OtReg { uintptr_t base; int n; };
+static D2OtReg s_otReg[8];
+static int s_otRegN = 0, s_otRegRR = 0;
+extern "C" void d2_ot_register(void *ot, int n)
 {
-    if (!ot) return;
-#ifdef D2_PERFDBG
-    uint32_t t_ot0 = perf_cnt0();
-#endif
+    const uintptr_t b = (uintptr_t)ot;
+    for (int i = 0; i < s_otRegN; i++) if (s_otReg[i].base == b) { s_otReg[i].n = n; return; }
+    if (s_otRegN < 8) { s_otReg[s_otRegN].base = b; s_otReg[s_otRegN].n = n; s_otRegN++; return; }
+    s_otReg[s_otRegRR].base = b; s_otReg[s_otRegRR].n = n; s_otRegRR = (s_otRegRR + 1) & 7;
+}
+static const D2OtReg *d2_ot_find(uintptr_t p)
+{
+    for (int i = 0; i < s_otRegN; i++)
+        if (p >= s_otReg[i].base && p < s_otReg[i].base + (uintptr_t)s_otReg[i].n * sizeof(OT_TAG)) return &s_otReg[i];
+    return 0;
+}
 #ifdef D2_ORIGIN_PROF
-    uint32_t _ot_t0 = d2_oprof_cnt0();
-    uint32_t _ot_prim_acc = 0;
+static uint32_t _ot_prim_acc;
 #endif
-#ifdef D2_T3D_WORLD
-    bool t3d_drawn = false;
-    bool t3d_ordered = d2_t3d_begin_ordered_world() != 0;
-    uintptr_t uot_top = (uintptr_t)ot;
-    // Extended PsyCross OT entries contain both pointer and length (8 bytes
-    // on N64). u_long is only 4 bytes and misidentifies every depth bucket.
-    static_assert(sizeof(OT_TAG) == P_LEN * sizeof(u_int), "Unexpected OT tag layout");
-    uintptr_t uot_base = uot_top - (0x1080 - 1) * sizeof(OT_TAG);
-#endif
-    P_TAG *base = (P_TAG*)ot;
-    unsigned nodes = 0;
-    for (;;) {
-#ifdef D2_T3D_WORLD
-        if (t3d_ordered) {
-            uintptr_t ubase=(uintptr_t)base;
-            if(ubase>=uot_base && ubase<=uot_top && (ubase-uot_base)%sizeof(OT_TAG)==0)
-                d2_t3d_draw_world_until((int)((ubase-uot_base)/sizeof(OT_TAG)));
-        } else if (!t3d_drawn) {
-            uintptr_t ubase = (uintptr_t)base;
-            if (ubase >= uot_base && ubase <= uot_top) {
-                int bucket = (int)((ubase - uot_base) / sizeof(OT_TAG));
-                if (bucket < 0x1070) {
-                    t3d_drawn = true;
-#ifdef D2_ORIGIN_PROF
-                    uint32_t _t3d0 = d2_oprof_cnt0();
-                    d2_t3d_draw_queued_buildings();
-                    _ot_prim_acc += d2_oprof_cnt0() - _t3d0;
-#else
-                    d2_t3d_draw_queued_buildings();
-#endif
-                }
-            }
-        }
-#endif
-        if (__builtin_expect(++nodes > 65536, 0)) { debugf("[native-ot] ciclo ou OT invalida\n"); break; }
+// desenha um no da lista de comandos (um pacote, ou varios em sequencia dentro do mesmo tag)
+static inline void d2_ot_node(P_TAG *base)
+{
         const unsigned words = getlen(base);
         if (__builtin_expect(words != 0, 1)) {
 #ifdef D2_ORIGIN_PROF
@@ -2551,10 +2396,85 @@ extern "C" void d2_native_draw_ot(u_long *ot)
             g_d2_oprof_bk_cat = OPROF_OTHER;
 #endif
         }
+}
+
+extern "C" void d2_native_draw_ot(u_long *ot)
+{
+    if (!ot) return;
+#ifdef D2_PERFDBG
+    uint32_t t_ot0 = perf_cnt0();
+#endif
+#ifdef D2_ORIGIN_PROF
+    uint32_t _ot_t0 = d2_oprof_cnt0();
+    _ot_prim_acc = 0;
+#endif
+#ifdef D2_T3D_WORLD
+    bool t3d_drawn = false;
+    bool t3d_ordered = d2_t3d_begin_ordered_world() != 0;
+    uintptr_t uot_top = (uintptr_t)ot;
+    // Extended PsyCross OT entries contain both pointer and length (8 bytes
+    // on N64). u_long is only 4 bytes and misidentifies every depth bucket.
+    static_assert(sizeof(OT_TAG) == P_LEN * sizeof(u_int), "Unexpected OT tag layout");
+    uintptr_t uot_base = uot_top - (0x1080 - 1) * sizeof(OT_TAG);
+#endif
+    const D2OtReg *rg = d2_ot_find((uintptr_t)ot);
+    if (rg) {
+        const int top = (int)(((uintptr_t)ot - rg->base) / sizeof(OT_TAG));
+        const OT_TAG *slots = (const OT_TAG*)rg->base;
+        for (int sl = top; sl >= 0; --sl) {
+#ifdef D2_T3D_WORLD
+            {
+                const int bucket = 0x107F - (top - sl);
+                if (t3d_ordered) {
+                    if (bucket >= 0 && bucket <= 0x107F) d2_t3d_draw_world_until(bucket);
+                } else if (!t3d_drawn && bucket >= 0 && bucket < 0x1070) {
+                    t3d_drawn = true;
+#ifdef D2_ORIGIN_PROF
+                    uint32_t _t3d0 = d2_oprof_cnt0();
+                    d2_t3d_draw_queued_buildings();
+                    _ot_prim_acc += d2_oprof_cnt0() - _t3d0;
+#else
+                    d2_t3d_draw_queued_buildings();
+#endif
+                }
+            }
+#endif
+            for (P_TAG *pk = (P_TAG*)slots[sl].addr; pk; pk = (P_TAG*)nextPrim(pk)) d2_ot_node(pk);
+        }
+    } else {
+    // cadeia avulsa (ex.: texto de debug do FntFlush): lista de pacotes terminada em 0
+    P_TAG *base = (P_TAG*)ot;
+    unsigned nodes = 0;
+    for (;;) {
+#ifdef D2_T3D_WORLD
+        if (t3d_ordered) {
+            uintptr_t ubase=(uintptr_t)base;
+            if(ubase>=uot_base && ubase<=uot_top && (ubase-uot_base)%sizeof(OT_TAG)==0)
+                d2_t3d_draw_world_until((int)((ubase-uot_base)/sizeof(OT_TAG)));
+        } else if (!t3d_drawn) {
+            uintptr_t ubase = (uintptr_t)base;
+            if (ubase >= uot_base && ubase <= uot_top) {
+                int bucket = (int)((ubase - uot_base) / sizeof(OT_TAG));
+                if (bucket < 0x1070) {
+                    t3d_drawn = true;
+#ifdef D2_ORIGIN_PROF
+                    uint32_t _t3d0 = d2_oprof_cnt0();
+                    d2_t3d_draw_queued_buildings();
+                    _ot_prim_acc += d2_oprof_cnt0() - _t3d0;
+#else
+                    d2_t3d_draw_queued_buildings();
+#endif
+                }
+            }
+        }
+#endif
+        if (__builtin_expect(++nodes > 65536, 0)) { debugf("[native-ot] ciclo ou OT invalida\n"); break; }
+        d2_ot_node(base);
         if (isendprim(base)) break;
         P_TAG *next = (P_TAG*)nextPrim(base);
         if (__builtin_expect(!next || next == base, 0)) break;
         base = next;
+    }
     }
 #ifdef D2_T3D_WORLD
     if(t3d_ordered) {
@@ -2592,7 +2512,7 @@ int d2_direct_poly_i(P_TAG *tag)
     const bool tex = (code & 0x04) != 0, quad = (code & 0x08) != 0, gour = (code & 0x10) != 0;
     const bool semi = (code & 0x02) != 0, shadeOn = (code & 0x01) == 0;
     const int len = gour ? (tex ? (quad ? 12 : 9) : (quad ? 8 : 6)) : (tex ? (quad ? 9 : 7) : (quad ? 5 : 4));
-    if (tex && overrideTexture != 0) return 0;
+    
 
     // decodifica os vertices (o layout muda com gouraud/textura)
     const unsigned int *w = (const unsigned int *)tag + P_LEN;     // primeira palavra = cor0 + code
@@ -2628,7 +2548,7 @@ int d2_direct_poly_i(P_TAG *tag)
     }
     if (!activeDrawEnv.dfe || !s_scene) return len;             // fora da tela: o caminho antigo tambem descarta
     if (!ensure_slots()) return len;
-    d2_flush_splits();
+
 
     // recorte (clip) do ambiente de desenho
     {

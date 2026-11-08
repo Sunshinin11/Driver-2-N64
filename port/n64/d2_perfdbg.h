@@ -90,14 +90,6 @@ typedef struct {
     uint32_t ped_transform_ticks;
     uint32_t ped_assembly_ticks;
 
-    // Diagnostico 3: GTE inside pedestrians
-    uint32_t gte_peds_rtps_cnt, gte_peds_rtps_ticks;
-    uint32_t gte_peds_rtpt_cnt, gte_peds_rtpt_ticks;
-    uint32_t gte_peds_nclip_cnt, gte_peds_nclip_ticks;
-    uint32_t gte_peds_avsz3_cnt, gte_peds_avsz3_ticks;
-    uint32_t gte_peds_avsz4_cnt, gte_peds_avsz4_ticks;
-    uint32_t gte_peds_mvmva_cnt, gte_peds_mvmva_ticks;
-    uint32_t gte_peds_emul_cnt, gte_peds_emul_ticks;
 
     // f) Audio
     uint32_t audio_pump_ticks;

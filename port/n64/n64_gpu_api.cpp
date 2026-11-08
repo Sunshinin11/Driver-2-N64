@@ -4,10 +4,8 @@
 #include "psx/libgpu.h"
 #include "PsyX/PsyX_render.h"
 #include "PsyX/PsyX_public.h"
-#include "gpu/PsyX_GPU.h"
 
 extern int g_GPUDisabledState;
-extern int g_splitIndex;
 extern DRAWENV activeDrawEnv;
 extern void (*drawsync_callback)(void);
 extern "C" void d2_native_draw_ot(u_long *p);
@@ -25,9 +23,6 @@ int ClearImage2(RECT16 *r, u_char red, u_char green, u_char blue)
 }
 int DrawSync(int)
 {
-    GR_UpdateVRAM();
-    GR_ReadFramebufferDataToVRAM();
-    if(g_splitIndex>0) DrawAllSplits();
     if(drawsync_callback) drawsync_callback();
     return 0;
 }
@@ -38,7 +33,7 @@ int LoadImage(RECT16 *r, u_long *p)
 }
 int LoadImage2(RECT16 *r, u_long *p)
 {
-    LoadImage(r,p); GR_UpdateVRAM(); GR_ReadFramebufferDataToVRAM(); return 0;
+    LoadImage(r,p); return 0;
 }
 int MoveImage(RECT16 *r, int x, int y)
 {
@@ -47,10 +42,9 @@ int MoveImage(RECT16 *r, int x, int y)
 }
 void DrawOTag(u_long *p)
 {
-    if(g_GPUDisabledState) { ClearSplits(); return; }
-    if(PsyX_BeginScene()) ClearSplits();
+    if(g_GPUDisabledState) return;
+    PsyX_BeginScene();
     d2_native_draw_ot(p);
-    DrawAllSplits();
 }
 void DrawOTagEnv(u_long *p, DRAWENV *env)
 {
@@ -58,7 +52,7 @@ void DrawOTagEnv(u_long *p, DRAWENV *env)
 }
 void DrawPrim(void *p)
 {
-    if(g_GPUDisabledState) { ClearSplits(); return; }
-    if(PsyX_BeginScene()) ClearSplits();
+    if(g_GPUDisabledState) return;
+    PsyX_BeginScene();
     d2_native_draw_prim((P_TAG*)p);
 }

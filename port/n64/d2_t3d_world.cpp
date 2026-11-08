@@ -19,7 +19,8 @@
 #include "C/draw.h"
 #include "C/main.h"
 #include "C/texture.h"
-#include "psx/gtereg.h"
+#include "d2_xf.h"
+#include "d2_vram.h"
 #ifdef ONE
 #undef ONE
 #endif
@@ -27,7 +28,6 @@
 extern "C" {
     extern TEXINF* tpage_ids[128];
     extern int tpage_amount;
-    extern unsigned short vram[];
 }
 extern XYPAIR *permlist;
 
@@ -227,7 +227,6 @@ static uint32_t sample_poly_color(int tset, int tid,
     const int py = ((tpage_val >> 4) & 1) * 256;
     const int cx = (clut_val & 63) * 16;
     const int cy = (clut_val >> 6) & 511;
-    const unsigned short* pal = vram + (cy << 10);
 
     uint32_t sum_r = 0, sum_g = 0, sum_b = 0, cnt = 0;
 
@@ -244,9 +243,9 @@ static uint32_t sample_poly_color(int tset, int tid,
             if (u < 0) u = 0; else if (u > 255) u = 255;
             if (v < 0) v = 0; else if (v > 255) v = 255;
 
-            unsigned short word = vram[(((py + v) & 511) << 10) + ((px + (u >> 2)) & 1023)];
+            unsigned short word = d2_vram_rd(px + (u >> 2), py + v);
             int idx = (word >> ((u & 3) * 4)) & 15;
-            unsigned short c16 = pal[(cx + idx) & 1023];
+            unsigned short c16 = d2_vram_rd(cx + idx, cy);
             if (c16 != 0) {
                 int r5 = c16 & 31, g5 = (c16 >> 5) & 31, b5 = (c16 >> 10) & 31;
                 sum_r += (r5 << 3) | (r5 >> 2);
@@ -267,9 +266,9 @@ static uint32_t sample_poly_color(int tset, int tid,
                 if (u < 0) u = 0; else if (u > 255) u = 255;
                 if (v < 0) v = 0; else if (v > 255) v = 255;
 
-                unsigned short word = vram[(((py + v) & 511) << 10) + ((px + (u >> 2)) & 1023)];
+                unsigned short word = d2_vram_rd(px + (u >> 2), py + v);
                 int idx = (word >> ((u & 3) * 4)) & 15;
-                unsigned short c16 = pal[(cx + idx) & 1023];
+                unsigned short c16 = d2_vram_rd(cx + idx, cy);
                 if (c16 != 0) {
                     int r5 = c16 & 31, g5 = (c16 >> 5) & 31, b5 = (c16 >> 10) & 31;
                     sum_r += (r5 << 3) | (r5 >> 2);

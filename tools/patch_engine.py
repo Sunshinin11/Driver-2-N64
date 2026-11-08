@@ -626,7 +626,7 @@ P('PsyCross/src/gpu/PsyX_GPU.cpp',
   "// forward declarations\nint ParsePrimitive(P_TAG* polyTag);\n",
   "// N64 (caminho direto): desenha os lotes pendentes antes de um poligono direto, para manter a ordem da OT\nextern \"C\" int d2_direct_poly(P_TAG* tag);\nextern \"C\" void d2_flush_splits(void)\n{\n\tif (g_splitIndex <= 0 || g_vertexIndex <= 0) return;\n\tGPUDrawSplit& l = g_splits[g_splitIndex];\n\tl.numVerts = g_vertexIndex - l.startVertex;\n\tDrawAllSplits();\n}\n\n// forward declarations\nint ParsePrimitive(P_TAG* polyTag);\n")
 
-# ---- GTE nativo (port/compat/d2_gte_inline.h, D2_GTE_NATIVE): o macro doCOP2 nao pode renomear a definicao da funcao ----
+# ---- GTE nativo (port/compat/d2_gte_inline.h, D2_XF_NATIVE): o macro doCOP2 nao pode renomear a definicao da funcao ----
 P('PsyCross/src/psx/INLINE_C.C', "#undef CTC2\n", "#undef CTC2\n#undef doCOP2\n")
 
 # ---- Fase 1.1 (port/n64/d2_vtxcache.cpp, D2_VTXCACHE): versoes com cache de vertices substituem estas; as originais ficam com _orig ----
@@ -668,7 +668,7 @@ P('Game/C/draw.c',
 
 P('Game/C/draw.c',
   "\twhile (num_buildings--)\n\t{\n\t\tcop = (CELL_OBJECT*)*objects;\n\t\tmat = cop->yang;\n\n\t\tif (prev_mat == mat)\n\t\t{\n\t\t\tZ = Apply_InvCameraMatrixSetTrans(&cop->pos);\n\t\t}\n\t\telse\n\t\t{\n\t\t\tZ = Apply_InvCameraMatrixAndSetMatrix(&cop->pos, &CompoundMatrix[prev_mat = mat]);\n\t\t}\n\n\t\tmodel = Z > DRAW_LOD_DIST_LOW ? pLodModels[cop->type] : modelpointers[cop->type];",
-  "\twhile (num_buildings--)\n\t{\n\t\tcop = (CELL_OBJECT*)*objects;\n#ifdef D2_ORIGIN_PROF\n\t\textern int permanentModelSlotBitfield[];\n\t\tint _is_perm = (permanentModelSlotBitfield[cop->type >> 5] & (1 << (cop->type & 31))) != 0;\n\t\tint _bcat = _is_perm ? OPROF_PERM_BLD : OPROF_SPOOL_BLD;\n#ifdef D2_T3D_WORLD\n\t\tif (d2_t3d_has_model(cop->type)) _bcat = OPROF_T3D_BLD;\n#endif\n\t\tD2_OPROF_SCOPE(_op_b, _bcat);\n#endif\n\t\tmat = cop->yang;\n\n\t\tif (prev_mat == mat)\n\t\t{\n\t\t\tZ = Apply_InvCameraMatrixSetTrans(&cop->pos);\n\t\t}\n\t\telse\n\t\t{\n\t\t\tZ = Apply_InvCameraMatrixAndSetMatrix(&cop->pos, &CompoundMatrix[prev_mat = mat]);\n\t\t}\n\n\t\tD2_ORIGIN_SET_SCOPE(\"PlotBuildingModel\");\n\t\tD2_ORIGIN_SET_CELL(cop->type, cop->pos.vx, cop->pos.vy, cop->pos.vz);\n\t\tmodel = Z > DRAW_LOD_DIST_LOW ? pLodModels[cop->type] : modelpointers[cop->type];\n#ifdef D2_T3D_WORLD\n\t\tif (d2_t3d_has_model(cop->type))\n\t\t{\n\t\t\td2_t3d_queue_building(cop->type, cop->yang, Z, C2_TRX, C2_TRY, C2_TRZ);\n\t\t\tdrawlimit = (int)(current->primptr - current->primtab);\n\t\t\tif (PRIMTAB_SIZE - drawlimit < 60000)\n\t\t\t\tbreak;\n\t\t\tobjects++;\n\t\t\tcontinue;\n\t\t}\n#endif\n#ifdef D2_ORIGIN_PROF\n\t\tg_d2_oprof.objs[_bcat]++;\n\t\t{\n\t\t\tconst int _sf = model->shape_flags, _f2 = model->flags2;\n\t\t\tif (_is_perm) {\n\t\t\t\tif (_sf & (SHAPE_FLAG_TRANS | SHAPE_FLAG_ALPHA)) g_d2_oprof.perm_bld_alpha++;\n\t\t\t\telse if (_f2 & (MODEL_FLAG_MEDIAN | MODEL_FLAG_JUNC | MODEL_FLAG_ALLEY | MODEL_FLAG_GRASS | MODEL_FLAG_PATH)) g_d2_oprof.perm_bld_roadfurn++;\n\t\t\t\telse if (_f2 & (MODEL_FLAG_ANIMOBJ | MODEL_FLAG_CHAIR | MODEL_FLAG_BARRIER | MODEL_FLAG_SMASHABLE | MODEL_FLAG_LAMP | MODEL_FLAG_TREE)) g_d2_oprof.perm_bld_props++;\n\t\t\t\telse g_d2_oprof.perm_bld_other++;\n\t\t\t} else {\n\t\t\t\tif (!(_sf & (SHAPE_FLAG_SPRITE | SHAPE_FLAG_WATER | SHAPE_FLAG_TILE | SHAPE_FLAG_ROAD | SHAPE_FLAG_TRANS | SHAPE_FLAG_ALPHA)) &&\n\t\t\t\t    !(_f2 & (MODEL_FLAG_ANIMOBJ | MODEL_FLAG_CHAIR | MODEL_FLAG_BARRIER | MODEL_FLAG_SMASHABLE | MODEL_FLAG_LAMP | MODEL_FLAG_TREE)))\n\t\t\t\t\tg_d2_oprof.spool_bld_static++;\n\t\t\t\telse\n\t\t\t\t\tg_d2_oprof.spool_bld_other++;\n\t\t\t}\n\t\t}\n#endif")
+  "\twhile (num_buildings--)\n\t{\n\t\tcop = (CELL_OBJECT*)*objects;\n#ifdef D2_ORIGIN_PROF\n\t\textern int permanentModelSlotBitfield[];\n\t\tint _is_perm = (permanentModelSlotBitfield[cop->type >> 5] & (1 << (cop->type & 31))) != 0;\n\t\tint _bcat = _is_perm ? OPROF_PERM_BLD : OPROF_SPOOL_BLD;\n#ifdef D2_T3D_WORLD\n\t\tif (d2_t3d_has_model(cop->type)) _bcat = OPROF_T3D_BLD;\n#endif\n\t\tD2_OPROF_SCOPE(_op_b, _bcat);\n#endif\n\t\tmat = cop->yang;\n\n\t\tif (prev_mat == mat)\n\t\t{\n\t\t\tZ = Apply_InvCameraMatrixSetTrans(&cop->pos);\n\t\t}\n\t\telse\n\t\t{\n\t\t\tZ = Apply_InvCameraMatrixAndSetMatrix(&cop->pos, &CompoundMatrix[prev_mat = mat]);\n\t\t}\n\n\t\tD2_ORIGIN_SET_SCOPE(\"PlotBuildingModel\");\n\t\tD2_ORIGIN_SET_CELL(cop->type, cop->pos.vx, cop->pos.vy, cop->pos.vz);\n\t\tmodel = Z > DRAW_LOD_DIST_LOW ? pLodModels[cop->type] : modelpointers[cop->type];\n#ifdef D2_T3D_WORLD\n\t\tif (d2_t3d_has_model(cop->type))\n\t\t{\n\t\t\td2_t3d_queue_building(cop->type, cop->yang, Z, d2xf.tr[0], d2xf.tr[1], d2xf.tr[2]);\n\t\t\tdrawlimit = (int)(current->primptr - current->primtab);\n\t\t\tif (PRIMTAB_SIZE - drawlimit < 60000)\n\t\t\t\tbreak;\n\t\t\tobjects++;\n\t\t\tcontinue;\n\t\t}\n#endif\n#ifdef D2_ORIGIN_PROF\n\t\tg_d2_oprof.objs[_bcat]++;\n\t\t{\n\t\t\tconst int _sf = model->shape_flags, _f2 = model->flags2;\n\t\t\tif (_is_perm) {\n\t\t\t\tif (_sf & (SHAPE_FLAG_TRANS | SHAPE_FLAG_ALPHA)) g_d2_oprof.perm_bld_alpha++;\n\t\t\t\telse if (_f2 & (MODEL_FLAG_MEDIAN | MODEL_FLAG_JUNC | MODEL_FLAG_ALLEY | MODEL_FLAG_GRASS | MODEL_FLAG_PATH)) g_d2_oprof.perm_bld_roadfurn++;\n\t\t\t\telse if (_f2 & (MODEL_FLAG_ANIMOBJ | MODEL_FLAG_CHAIR | MODEL_FLAG_BARRIER | MODEL_FLAG_SMASHABLE | MODEL_FLAG_LAMP | MODEL_FLAG_TREE)) g_d2_oprof.perm_bld_props++;\n\t\t\t\telse g_d2_oprof.perm_bld_other++;\n\t\t\t} else {\n\t\t\t\tif (!(_sf & (SHAPE_FLAG_SPRITE | SHAPE_FLAG_WATER | SHAPE_FLAG_TILE | SHAPE_FLAG_ROAD | SHAPE_FLAG_TRANS | SHAPE_FLAG_ALPHA)) &&\n\t\t\t\t    !(_f2 & (MODEL_FLAG_ANIMOBJ | MODEL_FLAG_CHAIR | MODEL_FLAG_BARRIER | MODEL_FLAG_SMASHABLE | MODEL_FLAG_LAMP | MODEL_FLAG_TREE)))\n\t\t\t\t\tg_d2_oprof.spool_bld_static++;\n\t\t\t\telse\n\t\t\t\t\tg_d2_oprof.spool_bld_other++;\n\t\t\t}\n\t\t}\n#endif")
 
 P('Game/C/draw.c',
   "numShadows = 0;\n\n\twhile (numFound--)",
@@ -788,7 +788,7 @@ P('Game/C/targets.c',
 
 P('Game/C/targets.c',
   "\t\ttri_indices += 3;\n\t\tgte_rtpt();\n\n\t\tsetPolyF3(poly);",
-  "\t\ttri_indices += 3;\n\t\tgte_rtpt();\n\t\tconst unsigned int _h = (unsigned short)C2_H;\n\t\tif (2 * (unsigned int)C2_SZ1 <= _h || 2 * (unsigned int)C2_SZ2 <= _h || 2 * (unsigned int)C2_SZ3 <= _h)\n\t\t{\n#ifdef D2_PERFDBG\n\t\t\tg_cull_cnt_arrow++;\n#endif\n\t\t\tcontinue;\n\t\t}\n\n\t\tsetPolyF3(poly);")
+  "\t\ttri_indices += 3;\n\t\tgte_rtpt();\n\t\tconst unsigned int _h = (unsigned short)d2xf.h;\n\t\tif (2 * (unsigned int)d2xf.sz[1] <= _h || 2 * (unsigned int)d2xf.sz[2] <= _h || 2 * (unsigned int)d2xf.sz[3] <= _h)\n\t\t{\n#ifdef D2_PERFDBG\n\t\t\tg_cull_cnt_arrow++;\n#endif\n\t\t\tcontinue;\n\t\t}\n\n\t\tsetPolyF3(poly);")
 
 P('Game/C/draw.c',
   "void PlotModelSubdivNxN(MODEL* model, int rot, _pct* pc, int n)\n{",
@@ -852,7 +852,7 @@ P('Game/C/motion_c.c',
 
 P('Game/C/targets.c',
   "\t\taddPrim(current->ot + z, poly);\n\n\t\tcurrent->primptr += sizeof(POLY_F3);",
-  "\t\t#ifdef D2_ORIGIN\n\t\tshort _sxy[4][2] = { {poly->x0, poly->y0}, {poly->x1, poly->y1}, {poly->x2, poly->y2}, {0, 0} };\n\t\tshort _sz[4] = { (short)MFC2(17), (short)MFC2(18), (short)MFC2(19), 0 };\n\t\td2_origin_tag_cull(poly, \"DrawTargetArrow\", 999, NULL, 0x20, _sxy, _sz, 0, z);\n\t\t#endif\n\t\taddPrim(current->ot + z, poly);\n\n\t\tcurrent->primptr += sizeof(POLY_F3);")
+  "\t\t#ifdef D2_ORIGIN\n\t\tshort _sxy[4][2] = { {poly->x0, poly->y0}, {poly->x1, poly->y1}, {poly->x2, poly->y2}, {0, 0} };\n\t\tshort _sz[4] = { (short)d2xf.sz[1], (short)d2xf.sz[2], (short)d2xf.sz[3], 0 };\n\t\td2_origin_tag_cull(poly, \"DrawTargetArrow\", 999, NULL, 0x20, _sxy, _sz, 0, z);\n\t\t#endif\n\t\taddPrim(current->ot + z, poly);\n\n\t\tcurrent->primptr += sizeof(POLY_F3);")
 
 P('Game/Frontend/FEmain.c',
   "wantedTimeOfDay = TIME_DAY;",
@@ -942,7 +942,7 @@ P('Game/C/draw.c',
 
 P('Game/C/tile.c',
   "\t\tif (Z <= DRAW_LOD_DIST_HIGH)\n\t\t{\n\t\t\tif (Low2HighDetailTable[model_number] != 0xffff)\n\t\t\t\tmodel_number = Low2HighDetailTable[model_number];\n\n\t\t\tpModel = modelpointers[model_number];\n\n\t\t\tif (Z < 2000)\n\t\t\t\tTileNxN(pModel, 4, 75);\n\t\t\telse\n\t\t\t\tTileNxN(pModel, 2, 35);\n\t\t}\n\t\telse\n\t\t{\n\t\t\tpModel = Z > DRAW_LOD_DIST_LOW ? pLodModels[model_number] : modelpointers[model_number];",
-  "#ifdef D2_T3D_WORLD\n\t\t{\n\t\t\tint _t3d_mid = model_number;\n\t\t\tif (Z <= DRAW_LOD_DIST_HIGH) {\n\t\t\t\tif (Low2HighDetailTable[model_number] != 0xffff) _t3d_mid = Low2HighDetailTable[model_number];\n\t\t\t} else if (Z > DRAW_LOD_DIST_LOW) {\n\t\t\t\tif (Low2LowerDetailTable[model_number] != 0xffff) _t3d_mid = Low2LowerDetailTable[model_number];\n\t\t\t}\n\t\t\tif (d2_t3d_has_model(_t3d_mid)) {\n\t\t\t\tD2_OPROF_SCOPE(_op_t3dg, OPROF_T3D_GRD);\n\t\t\t\td2_t3d_queue_tile(_t3d_mid, yang, Z, C2_TRX, C2_TRY, C2_TRZ);\n\t\t\t\tcontinue;\n\t\t\t}\n\t\t}\n#endif\n\t\tD2_OPROF_OBJ(OPROF_GROUND);\n\t\tif (Z <= DRAW_LOD_DIST_HIGH)\n\t\t{\n\t\t\tif (Low2HighDetailTable[model_number] != 0xffff)\n\t\t\t\tmodel_number = Low2HighDetailTable[model_number];\n\n\t\t\tpModel = modelpointers[model_number];\n\n\t\t\tif (Z < 2000)\n\t\t\t{\n#ifdef D2_ORIGIN_PROF\n\t\t\t\tg_d2_oprof.ground_sub4++;\n#endif\n\t\t\t\tTileNxN(pModel, 4, 75);\n\t\t\t}\n\t\t\telse\n\t\t\t{\n#ifdef D2_ORIGIN_PROF\n\t\t\t\tg_d2_oprof.ground_sub2++;\n#endif\n\t\t\t\tTileNxN(pModel, 2, 35);\n\t\t\t}\n\t\t}\n\t\telse\n\t\t{\n#ifdef D2_ORIGIN_PROF\n\t\t\tg_d2_oprof.ground_1x1++;\n#endif\n\t\t\tpModel = Z > DRAW_LOD_DIST_LOW ? pLodModels[model_number] : modelpointers[model_number];")
+  "#ifdef D2_T3D_WORLD\n\t\t{\n\t\t\tint _t3d_mid = model_number;\n\t\t\tif (Z <= DRAW_LOD_DIST_HIGH) {\n\t\t\t\tif (Low2HighDetailTable[model_number] != 0xffff) _t3d_mid = Low2HighDetailTable[model_number];\n\t\t\t} else if (Z > DRAW_LOD_DIST_LOW) {\n\t\t\t\tif (Low2LowerDetailTable[model_number] != 0xffff) _t3d_mid = Low2LowerDetailTable[model_number];\n\t\t\t}\n\t\t\tif (d2_t3d_has_model(_t3d_mid)) {\n\t\t\t\tD2_OPROF_SCOPE(_op_t3dg, OPROF_T3D_GRD);\n\t\t\t\td2_t3d_queue_tile(_t3d_mid, yang, Z, d2xf.tr[0], d2xf.tr[1], d2xf.tr[2]);\n\t\t\t\tcontinue;\n\t\t\t}\n\t\t}\n#endif\n\t\tD2_OPROF_OBJ(OPROF_GROUND);\n\t\tif (Z <= DRAW_LOD_DIST_HIGH)\n\t\t{\n\t\t\tif (Low2HighDetailTable[model_number] != 0xffff)\n\t\t\t\tmodel_number = Low2HighDetailTable[model_number];\n\n\t\t\tpModel = modelpointers[model_number];\n\n\t\t\tif (Z < 2000)\n\t\t\t{\n#ifdef D2_ORIGIN_PROF\n\t\t\t\tg_d2_oprof.ground_sub4++;\n#endif\n\t\t\t\tTileNxN(pModel, 4, 75);\n\t\t\t}\n\t\t\telse\n\t\t\t{\n#ifdef D2_ORIGIN_PROF\n\t\t\t\tg_d2_oprof.ground_sub2++;\n#endif\n\t\t\t\tTileNxN(pModel, 2, 35);\n\t\t\t}\n\t\t}\n\t\telse\n\t\t{\n#ifdef D2_ORIGIN_PROF\n\t\t\tg_d2_oprof.ground_1x1++;\n#endif\n\t\t\tpModel = Z > DRAW_LOD_DIST_LOW ? pLodModels[model_number] : modelpointers[model_number];")
 
 P('Game/C/shadow.c',
   "\tdrawMesh((MVERTEX(*)[5][5])subdivVerts, subdiv, subdiv, &plotContext);\n\n\tcurrent->primptr = plotContext.primptr;\n}",
@@ -1123,6 +1123,23 @@ P('Game/C/sky.c',
   "#ifdef PSX\n\t// FIXME: use frustrum angle instead?",
   "#if defined(PSX) || defined(D2_PSX_FIDELITY)\n\t// FIXME: use frustrum angle instead?")
 
+# ---- remocao do GTE (tools/patch_gte_removal.py) ----
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import patch_gte_removal
+patch_gte_removal.register(P, R)
+import patch_ot_native
+patch_ot_native.register(P, R)
+import patch_cd_native
+patch_cd_native.register(P, R)
+import patch_audio_native
+patch_audio_native.register(P, R)
+import patch_gpu_native
+patch_gpu_native.register(P, R)
+PATCHES[:] = [x for x in PATCHES if not patch_gpu_native.is_old_rename(x)]
+PATCHES[:] = [x for x in PATCHES if not (x[0].endswith('LIBGPU.C') and "initialize a linked list with it's previous items" in x[1])]
+PATCHES[:] = [x for x in PATCHES if x[0] not in patch_gte_removal.GONE]
+REGEX[:] = [x for x in REGEX if x[0] not in patch_gte_removal.GONE]
+
 def main():
     ok = skipped = missing = 0
     cache = {}
@@ -1134,7 +1151,7 @@ def main():
         if s is None: s = open(fp, encoding='latin-1', newline='').read()
         crlf = '\r\n' in s
         o, n = (old.replace('\n', '\r\n'), new.replace('\n', '\r\n')) if crlf else (old, new)
-        if n in s:
+        if n in s or (path in patch_gte_removal.RENAME_FILES and patch_gte_removal.rename(n) in s):
             skipped += 1
         elif o in s:
             s = s.replace(o, n, 1); ok += 1
@@ -1160,6 +1177,12 @@ def main():
             s, cnt = rx.subn(repl, s)
         ok += 1 if cnt else 0
         cache[fp] = s
+    for rf in patch_gte_removal.RENAME_FILES:
+        fp = os.path.join(ROOT, rf)
+        if not os.path.exists(fp): print('patch_engine.py: arquivo ausente', rf); missing += 1; continue
+        s = cache.get(fp)
+        if s is None: s = open(fp, encoding='latin-1', newline='').read()
+        cache[fp] = patch_gte_removal.rename(s)
     for fp, s in cache.items():
         open(fp, 'w', encoding='latin-1', newline='').write(s)
     print('patch_engine.py: %d aplicados, %d ja aplicados, %d faltando' % (ok, skipped, missing))

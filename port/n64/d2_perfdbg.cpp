@@ -137,13 +137,6 @@ void perf_frame_end(void)
     ACC(ped_transform_ticks);
     ACC(ped_assembly_ticks);
 
-    ACC(gte_peds_rtps_cnt); ACC(gte_peds_rtps_ticks);
-    ACC(gte_peds_rtpt_cnt); ACC(gte_peds_rtpt_ticks);
-    ACC(gte_peds_nclip_cnt); ACC(gte_peds_nclip_ticks);
-    ACC(gte_peds_avsz3_cnt); ACC(gte_peds_avsz3_ticks);
-    ACC(gte_peds_avsz4_cnt); ACC(gte_peds_avsz4_ticks);
-    ACC(gte_peds_mvmva_cnt); ACC(gte_peds_mvmva_ticks);
-    ACC(gte_peds_emul_cnt); ACC(gte_peds_emul_ticks);
 
     ACC(audio_pump_ticks);
     ACC(audio_pump_calls);
@@ -226,14 +219,6 @@ void perf_frame_end(void)
         int32_t ped_unacc = (int32_t)d_ped - (int32_t)(p_anim + p_trans + p_assem);
         uint32_t avg_ped = c_peds_tot ? (g_perf_acc.draw_pedestrians_ticks / c_peds_tot) : 0;
 
-        uint32_t g_rtps_c = g_perf_acc.gte_peds_rtps_cnt / n, g_rtps_t = g_perf_acc.gte_peds_rtps_ticks / n;
-        uint32_t g_rtpt_c = g_perf_acc.gte_peds_rtpt_cnt / n, g_rtpt_t = g_perf_acc.gte_peds_rtpt_ticks / n;
-        uint32_t g_nclip_c = g_perf_acc.gte_peds_nclip_cnt / n, g_nclip_t = g_perf_acc.gte_peds_nclip_ticks / n;
-        uint32_t g_avsz3_c = g_perf_acc.gte_peds_avsz3_cnt / n, g_avsz3_t = g_perf_acc.gte_peds_avsz3_ticks / n;
-        uint32_t g_avsz4_c = g_perf_acc.gte_peds_avsz4_cnt / n, g_avsz4_t = g_perf_acc.gte_peds_avsz4_ticks / n;
-        uint32_t g_mvmva_c = g_perf_acc.gte_peds_mvmva_cnt / n, g_mvmva_t = g_perf_acc.gte_peds_mvmva_ticks / n;
-        uint32_t g_emul_c = g_perf_acc.gte_peds_emul_cnt / n, g_emul_t = g_perf_acc.gte_peds_emul_ticks / n;
-
         // Audio
         uint32_t a_ticks = g_perf_acc.audio_pump_ticks / n;
         uint32_t a_calls = g_perf_acc.audio_pump_calls / n;
@@ -279,12 +264,6 @@ void perf_frame_end(void)
         debugf("[PERF-DIAG3] peds_cnt=%lu avg_ped_ticks=%lu anim=%lu trans=%lu assem=%lu unacc=%ld\n",
                (unsigned long)c_peds, (unsigned long)avg_ped,
                (unsigned long)p_anim, (unsigned long)p_trans, (unsigned long)p_assem, (long)ped_unacc);
-
-        debugf("[PERF-DIAG3-GTE] rtps(cnt=%lu t=%lu) rtpt(cnt=%lu t=%lu) nclip(cnt=%lu t=%lu) avsz3(cnt=%lu t=%lu) avsz4(cnt=%lu t=%lu) mvmva(cnt=%lu t=%lu) emul(cnt=%lu t=%lu)\n",
-               (unsigned long)g_rtps_c, (unsigned long)g_rtps_t, (unsigned long)g_rtpt_c, (unsigned long)g_rtpt_t,
-               (unsigned long)g_nclip_c, (unsigned long)g_nclip_t, (unsigned long)g_avsz3_c, (unsigned long)g_avsz3_t,
-               (unsigned long)g_avsz4_c, (unsigned long)g_avsz4_t, (unsigned long)g_mvmva_c, (unsigned long)g_mvmva_t,
-               (unsigned long)g_emul_c, (unsigned long)g_emul_t);
 
         memset(&g_perf_acc, 0, sizeof(g_perf_acc));
         g_perf_acc_frames = 0;

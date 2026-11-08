@@ -8,6 +8,7 @@
 #include "PsyX/PsyX_globals.h"
 #include "PsyX/PsyX_render.h"
 #include "../redriver2/src_rebuild/PsyCross/src/audio/PsyX_SPUAL.h"
+#include "d2_vram.h"
 #include <libdragon.h>
 #include <wav64.h>
 #include "d2_perfdbg.h"
@@ -53,10 +54,20 @@ void PsyX_GetPSXWidescreenMappedViewport(struct _RECT16 *r) { r->x = 0; r->y = 0
 void PsyX_SetCursorPosition(int x, int y) { (void)x; (void)y; }
 void PsyX_SetCursorRelative(int enable) { (void)enable; }
 
-// --- VRAM do PS1: 1024x512 de 16 bits (1 MB) em RDRAM
+// --- VRAM de textura (ver d2_vram.h): metade esquerda no formato do PS1, metade direita ja no formato do RDP
 #define VRAM_W 1024
 #define VRAM_H 512
-unsigned short vram[VRAM_W * VRAM_H];
+unsigned short d2_vramL[512 * 512] __attribute__((aligned(64)));
+unsigned short d2_vramR[512 * 512] __attribute__((aligned(64)));
+
+// o RDP le a metade direita por DMA: depois de escrever, leva as linhas de cache para a RDRAM
+static void d2_vram_r_flush(int x, int y, int w, int h)
+{
+    if (x + w <= 512) return;
+    const int x0 = x < 512 ? 512 : x;
+    for (int i = 0; i < h; i++)
+        data_cache_hit_writeback(&d2_vramR[(((y + i) & 511) << 9) + (x0 - 512)], (size_t)(x + w - x0) * 2);
+}
 
 void GR_ClearVRAM(int x, int y, int w, int h, unsigned char r, unsigned char g, unsigned char b)
 {
@@ -66,15 +77,16 @@ void GR_ClearVRAM(int x, int y, int w, int h, unsigned char r, unsigned char g, 
     if (y + h > VRAM_H) h = VRAM_H - y;
     if (w <= 0 || h <= 0) return;
     d2_vram_touch(x, y, w, h);
-    unsigned short *dst = vram + x + y * VRAM_W;
-    for (int i = 0; i < h; i++, dst += VRAM_W)
-        for (int j = 0; j < w; j++) dst[j] = r | (g << 5) | (b << 11);
+    if (x + w > 512) d2_vram_r_barrier();
+    const unsigned short v = r | (g << 5) | (b << 11);
+    for (int i = 0; i < h; i++)
+        for (int j = 0; j < w; j++) d2_vram_wr(x + j, y + i, v);
+    d2_vram_r_flush(x, y, w, h);
 }
 void GR_CopyVRAM(unsigned short *src, int x, int y, int w, int h, int dst_x, int dst_y)
 {
-    int stride = w;
-    bool ext = src != 0;
-    if (!src) { src = vram; stride = VRAM_W; }
+    const int stride = w;
+    const bool ext = src != 0;
     // recorta o destino em VRAM; ajusta a origem junto
     if (dst_x < 0) { x -= dst_x; w += dst_x; dst_x = 0; }
     if (dst_y < 0) { y -= dst_y; h += dst_y; dst_y = 0; }
@@ -82,48 +94,43 @@ void GR_CopyVRAM(unsigned short *src, int x, int y, int w, int h, int dst_x, int
     if (dst_y + h > VRAM_H) h = VRAM_H - dst_y;
     if (w <= 0 || h <= 0) return;
     d2_vram_touch(dst_x, dst_y, w, h);
-    src += x + y * stride;
-    unsigned short *dst = vram + dst_x + dst_y * VRAM_W;
+    if (dst_x + w > 512) d2_vram_r_barrier();
     if (ext) {
         // dados vindos da memoria do jogo estao no formato do PS1 (bytes little-endian): troca os bytes de cada palavra de 16 bits
-        for (int i = 0; i < h; i++, dst += VRAM_W, src += stride)
-            for (int j = 0; j < w; j++) { unsigned short v = src[j]; dst[j] = (unsigned short)((v >> 8) | (v << 8)); }
-    } else
-        for (int i = 0; i < h; i++, dst += VRAM_W, src += stride) memmove(dst, src, w * sizeof(short));
+        const unsigned short *s = src + x + y * stride;
+        for (int i = 0; i < h; i++, s += stride)
+            for (int j = 0; j < w; j++) { unsigned short v = s[j]; d2_vram_wr(dst_x + j, dst_y + i, (unsigned short)((v >> 8) | (v << 8))); }
+    } else {
+        // VRAM -> VRAM (MoveImage): uma linha por vez, via buffer (as regioes podem se sobrepor)
+        unsigned short tmp[VRAM_W];
+        for (int i = 0; i < h; i++) {
+            for (int j = 0; j < w; j++) tmp[j] = d2_vram_rd(x + j, y + i);
+            for (int j = 0; j < w; j++) d2_vram_wr(dst_x + j, dst_y + i, tmp[j]);
+        }
+    }
+    d2_vram_r_flush(dst_x, dst_y, w, h);
 }
 void GR_ReadVRAM(unsigned short *dst, int x, int y, int dst_w, int dst_h)
 {
     if (x < 0 || y < 0 || x >= VRAM_W || y >= VRAM_H) return;
     int w = dst_w; if (x + w > VRAM_W) w = VRAM_W - x;
-    unsigned short *src = vram + x + VRAM_W * y;
-    for (int i = 0; i < dst_h && y + i < VRAM_H; i++, dst += dst_w, src += VRAM_W)
-        for (int j = 0; j < w; j++) { unsigned short v = src[j]; dst[j] = (unsigned short)((v >> 8) | (v << 8)); }
+    for (int i = 0; i < dst_h && y + i < VRAM_H; i++, dst += dst_w)
+        for (int j = 0; j < w; j++) { unsigned short v = d2_vram_rd(x + j, y + i); dst[j] = (unsigned short)((v >> 8) | (v << 8)); }
 }
-void d2_vram_touch(int x, int y, int w, int h);
 
-// --- audio (SPU) : memoria e vozes ADPCM do PS1 sobre o mixer RSP do libdragon
-#if D2_VADPCM
+
+// --- audio (SPU): vozes nativas (wav64 VADPCM) sobre o mixer RSP do libdragon; sem SPU RAM nem ADPCM PS1
 #define D2_SPU_RAM_SIZE (128 * 1024)
-#else
-#define D2_SPU_RAM_SIZE (512 * 1024)
-#endif
 #define D2_SPU_VOICES 24
 #define D2_SFX_TAG 0x40000000u
-static u_char s_spuRam[D2_SPU_RAM_SIZE] __attribute__((aligned(16)));
+#define D2_MUS_TAG 0x20000000u
 static u_int s_spuTransfer, s_spuTop = 0x1000;
 static bool s_spuInited, s_spuMute;
 
 struct D2SpuVoice {
-    waveform_t wave;
     u_int addr, loopAddr;
     short volL, volR;
     u_short pitch;
-};
-struct D2SpuDecode {
-    u_int start, block, loopBlock;
-    int next, s1, s2, nib;
-    int ch;
-    short pcm[28];
 };
 static D2SpuVoice s_spuVoice[D2_SPU_VOICES];
 
@@ -137,8 +144,28 @@ struct D2NativeSfx {
     u_int orig_sr;
 };
 
-#if D2_VADPCM
 static D2NativeSfx s_native_sfx[72][35];
+static D2NativeSfx s_native_mus[8][64];
+static int s_current_song = 0;
+
+// endereco de voz -> wav64 nativo (SFX: lump/idx; musica: song/idx; os 16 bits baixos sao o offset de amostra do XM, ignorado)
+static inline wav64_t *d2_native_wave(u_int addr, u_int *orig_sr)
+{
+    if (addr & D2_SFX_TAG) {
+        u_int lump = (addr >> 8) & 0xFF, idx = addr & 0xFF;
+        if (lump < 72 && idx < 35) { *orig_sr = s_native_sfx[lump][idx].orig_sr; return s_native_sfx[lump][idx].wav; }
+    } else if (addr & D2_MUS_TAG) {
+        u_int song = (addr >> 24) & 0xF, idx = (addr >> 16) & 0xFF;
+        if (song < 8 && idx < 64) { *orig_sr = s_native_mus[song][idx].orig_sr; return s_native_mus[song][idx].wav; }
+    }
+    *orig_sr = 0;
+    return NULL;
+}
+
+extern "C" void d2_vadpcm_set_current_song(int song)
+{
+    s_current_song = song;
+}
 static int s_current_lump = -1;
 
 extern "C" void d2_vadpcm_set_current_lump(int lump)
@@ -162,7 +189,49 @@ extern "C" void d2_vadpcm_reset(void)
             }
         }
     }
+    for (int m = 0; m < 8; m++) {
+        for (int s = 0; s < 64; s++) {
+            if (s_native_mus[m][s].wav) {
+                wav64_close(s_native_mus[m][s].wav);
+                s_native_mus[m][s].wav = NULL;
+                s_native_mus[m][s].orig_sr = 0;
+            }
+        }
+    }
     s_current_lump = -1;
+}
+
+extern "C" int d2_vadpcm_process_music(int num_samples, void *samps_ptr)
+{
+    struct SampleDataEntry { u_int address, length, loop, samplerate; };
+    SampleDataEntry *samps = (SampleDataEntry *)samps_ptr;
+    int song = s_current_song;
+    if (song < 0 || song >= 8) return 0;
+    // troca de faixa: libera as amostras da faixa anterior
+    for (int m = 0; m < 8; m++) {
+        if (m == song) continue;
+        for (int i = 0; i < 64; i++) if (s_native_mus[m][i].wav) {
+            wav64_close(s_native_mus[m][i].wav); s_native_mus[m][i].wav = NULL; s_native_mus[m][i].orig_sr = 0;
+        }
+    }
+    wav64_loadparms_t parms;
+    memset(&parms, 0, sizeof(parms));
+    parms.streaming_mode = WAV64_STREAMING_NONE;
+    int loaded = 0;
+    for (int i = 0; i < num_samples && i < 64; i++) {
+        if (!s_native_mus[song][i].wav) {
+            char fn[64];
+            snprintf(fn, sizeof(fn), "rom:/MUS64/M%02d_S%03d.wav64", song, i);
+            wav64_t *w = wav64_load(fn, &parms);
+            if (!w) { debugf("[VADPCM] WARN: failed to load %s\n", fn); continue; }
+            s_native_mus[song][i].wav = w;
+            s_native_mus[song][i].orig_sr = samps[i].samplerate ? samps[i].samplerate : 22050;
+        }
+        samps[i].address = D2_MUS_TAG | ((u_int)song << 24) | ((u_int)i << 16);
+        loaded++;
+    }
+    debugf("[VADPCM] music=%d loaded=%d/%d\n", song, loaded, num_samples);
+    return loaded > 0;
 }
 
 extern "C" int d2_vadpcm_process_lump(int dbank, int start_idx, int num_samples, void *samps_ptr)
@@ -201,94 +270,6 @@ extern "C" int d2_vadpcm_process_lump(int dbank, int start_idx, int num_samples,
     s_current_lump = -1;
     return (loaded_count > 0) ? 1 : 0;
 }
-#endif
-
-static inline void d2_spu_decode_28(const u_char *p, short * __restrict out, int &s1, int &s2)
-{
-    static const int f0[5] = { 0, 60, 115, 98, 122 };
-    static const int f1[5] = { 0, 0, -52, -55, -60 };
-    int shift = p[0] & 15, filter = p[0] >> 4;
-    if (shift > 12) shift = 12;
-    if (filter > 4) filter = 0;
-    const int k0 = f0[filter], k1 = f1[filter];
-    const int sh = 12 - shift;
-    int prev1 = s1, prev2 = s2;
-    for (int b = 2; b < 16; b++)
-    {
-        int byte = p[b];
-        int n0 = byte & 15; if (n0 & 8) n0 -= 16;
-        int v0 = (n0 << sh) + ((prev1 * k0 + prev2 * k1 + 32) >> 6);
-        if (v0 > 32767) v0 = 32767; else if (v0 < -32768) v0 = -32768;
-        *out++ = (short)v0;
-
-        int n1 = byte >> 4; if (n1 & 8) n1 -= 16;
-        int v1 = (n1 << sh) + ((v0 * k0 + prev1 * k1 + 32) >> 6);
-        if (v1 > 32767) v1 = 32767; else if (v1 < -32768) v1 = -32768;
-        *out++ = (short)v1;
-
-        prev2 = v0; prev1 = v1;
-    }
-    s1 = prev1; s2 = prev2;
-}
-
-static void d2_spu_decode_block(D2SpuDecode *d)
-{
-    if (d->block + 16 > D2_SPU_RAM_SIZE) { memset(d->pcm, 0, sizeof d->pcm); return; }
-#ifdef D2_ORIGIN_PROF
-    if (d->ch < 16) g_d2_aud_adpcm_sfx_blocks++;
-    else g_d2_aud_adpcm_xm_blocks++;
-#endif
-    d2_spu_decode_28(s_spuRam + d->block, d->pcm, d->s1, d->s2);
-}
-
-static void d2_spu_seek(D2SpuDecode *d, int pos)
-{
-    if (pos < 0) pos = 0;
-    u_int targetBlk = (u_int)(pos / 28);
-    if (pos == 0) {
-        d->s1 = d->s2 = 0;
-    } else if (targetBlk != d->loopBlock) {
-        // Aquecimento O(1) do filtro IIR no bloco imediatamente anterior
-        d->s1 = d->s2 = 0;
-        if (targetBlk > 0) {
-            u_int warmAddr = d->start + (targetBlk - 1) * 16;
-            if (warmAddr + 16 <= D2_SPU_RAM_SIZE)
-                d2_spu_decode_28(s_spuRam + warmAddr, d->pcm, d->s1, d->s2);
-        }
-    }
-    // Se targetBlk == d->loopBlock, preserva s1/s2 do fim da iteracao anterior (comportamento real do SPU do PS1)
-    d->block = d->start + targetBlk * 16;
-    d->next = (int)(targetBlk * 28);
-    d2_spu_decode_block(d);
-    d->nib = pos - d->next;
-}
-
-static void d2_spu_read(void *ctx, samplebuffer_t *sbuf, int wpos, int wlen, bool seeking)
-{
-    D2SpuDecode *d = (D2SpuDecode *)ctx;
-    if (seeking || wpos != d->next + d->nib) d2_spu_seek(d, wpos);
-    short *out = (short *)samplebuffer_append(sbuf, wlen);
-    int rem = wlen;
-    while (rem > 0)
-    {
-        if (d->nib >= 28 && rem >= 28 && d->block + 32 <= D2_SPU_RAM_SIZE)
-        {
-            d->block += 16; d->next += 28;
-#ifdef D2_ORIGIN_PROF
-            if (d->ch < 16) g_d2_aud_adpcm_sfx_blocks++;
-            else g_d2_aud_adpcm_xm_blocks++;
-#endif
-            d2_spu_decode_28(s_spuRam + d->block, out, d->s1, d->s2);
-            out += 28; rem -= 28; d->nib = 28;
-            continue;
-        }
-        if (d->nib >= 28) { d->block += 16; d->next += 28; d->nib = 0; d2_spu_decode_block(d); }
-        int avail = 28 - d->nib;
-        int take = rem < avail ? rem : avail;
-        memcpy(out, d->pcm + d->nib, (size_t)take * sizeof(short));
-        out += take; d->nib += take; rem -= take;
-    }
-}
 
 static constexpr float D2_SPU_MASTER_VOL = 0.35f;
 static constexpr float D2_SPU_MAX_FREQ   = 44100.0f;
@@ -309,12 +290,9 @@ static void d2_spu_apply_voice(const D2SpuVoice *v, int ch)
     if (vl < -1.0f) vl = -1.0f; else if (vl > 1.0f) vl = 1.0f;
     if (vr < -1.0f) vr = -1.0f; else if (vr > 1.0f) vr = 1.0f;
     mixer_ch_set_vol(ch, vl, vr);
-#if D2_VADPCM
-    if (v->addr & D2_SFX_TAG) {
-        int lump = (v->addr >> 8) & 0xFF;
-        int idx  = v->addr & 0xFF;
-        wav64_t *wav = (lump < 72 && idx < 35) ? s_native_sfx[lump][idx].wav : NULL;
-        u_int orig_sr = (lump < 72 && idx < 35) ? s_native_sfx[lump][idx].orig_sr : 0;
+    if (v->addr & (D2_SFX_TAG | D2_MUS_TAG)) {
+        u_int orig_sr;
+        wav64_t *wav = d2_native_wave(v->addr, &orig_sr);
         if (wav && orig_sr > 0) {
             float freq = 44100.0f * ((float)v->pitch / 4096.0f) * ((float)wav->wave.frequency / (float)orig_sr);
             if (freq < 100.0f) freq = 100.0f;
@@ -323,50 +301,21 @@ static void d2_spu_apply_voice(const D2SpuVoice *v, int ch)
             return;
         }
     }
-#endif
     mixer_ch_set_freq(ch, d2_spu_calc_freq(v->pitch));
 }
 
 static void d2_spu_shape(D2SpuVoice *v, int ch)
 {
     mixer_ch_stop(ch);
-#if D2_VADPCM
-    if (v->addr & D2_SFX_TAG) {
-        int lump = (v->addr >> 8) & 0xFF;
-        int idx  = v->addr & 0xFF;
-        wav64_t *wav = (lump < 72 && idx < 35) ? s_native_sfx[lump][idx].wav : NULL;
+    if (v->addr & (D2_SFX_TAG | D2_MUS_TAG)) {
+        u_int osr;
+        wav64_t *wav = d2_native_wave(v->addr, &osr);
         if (wav) {
             mixer_ch_play(ch, &wav->wave);
             d2_spu_apply_voice(v, ch);
             return;
         }
     }
-#endif
-    int blocks = 0, loopBlock = -1; bool repeat = false;
-    for (u_int a = v->addr; a + 16 <= D2_SPU_RAM_SIZE && blocks < 8192; a += 16, blocks++)
-    {
-        int flags = s_spuRam[a + 1];
-        if (flags & 4) loopBlock = blocks;
-        if (flags & 1) { repeat = (flags & 2) != 0; blocks++; break; }
-    }
-    if (blocks <= 0) blocks = 1;
-    if (loopBlock < 0 && v->loopAddr >= v->addr) {
-        int lb = (int)((v->loopAddr - v->addr) >> 4);
-        if (lb < blocks) loopBlock = lb;
-    }
-    int loopStart = (loopBlock >= 0 && loopBlock < blocks) ? loopBlock : 0;
-    D2SpuDecode *d = (D2SpuDecode *)v->wave.ctx;
-    memset(d, 0, sizeof *d);
-    d->ch = ch;
-    d->start = v->addr;
-    d->loopBlock = (u_int)loopStart;
-    d2_spu_seek(d, 0);
-    v->wave.__uuid = 0;
-    v->wave.frequency = d2_spu_calc_freq(v->pitch);
-    v->wave.len = blocks * 28;
-    v->wave.loop_len = repeat ? (blocks - loopStart) * 28 : 0;
-    mixer_ch_play(ch, &v->wave);
-    d2_spu_apply_voice(v, ch);
 }
 
 int PsyX_SPUAL_InitSound()
@@ -377,28 +326,20 @@ int PsyX_SPUAL_InitSound()
     {
         mixer_ch_set_limits(i, 16, D2_SPU_MAX_FREQ, 0);
         D2SpuVoice *v = &s_spuVoice[i]; memset(v, 0, sizeof *v);
-        v->pitch = 4096; v->wave.name = "psx-adpcm"; v->wave.bits = 16; v->wave.channels = 1;
-        v->wave.frequency = 32000.0f; v->wave.read = d2_spu_read; v->wave.append_units = 28;
-        D2SpuDecode *d = (D2SpuDecode *)malloc(sizeof(D2SpuDecode));
-        memset(d, 0, sizeof(D2SpuDecode));
-        d->ch = i;
-        v->wave.ctx = d;
-    }
+        v->pitch = 4096;     }
     s_spuInited = true; return 1;
 }
 void PsyX_SPUAL_ShutdownSound() {
     if (s_spuInited) {
-#if D2_VADPCM
         d2_vadpcm_reset();
-#endif
         mixer_close(); audio_close(); s_spuInited = false;
     }
 }
 int PsyX_SPUAL_Alloc(int size) { int a = (s_spuTop + 15) & ~15; if (a + size > D2_SPU_RAM_SIZE) return -1; s_spuTop = a + size; return a; }
 int PsyX_SPUAL_InitAlloc(int, char *) { s_spuTop = 0x1000; return 0; }
 void PsyX_SPUAL_Free(u_int) {}
-u_int PsyX_SPUAL_Write(u_char *src, u_int size) { if (s_spuTransfer >= D2_SPU_RAM_SIZE) return 0; if (size > D2_SPU_RAM_SIZE - s_spuTransfer) size = D2_SPU_RAM_SIZE - s_spuTransfer; memcpy(s_spuRam + s_spuTransfer, src, size); s_spuTransfer += size; return size; }
-u_int PsyX_SPUAL_Read(u_char *dst, u_int size) { if (s_spuTransfer >= D2_SPU_RAM_SIZE) return 0; if (size > D2_SPU_RAM_SIZE - s_spuTransfer) size = D2_SPU_RAM_SIZE - s_spuTransfer; memcpy(dst, s_spuRam + s_spuTransfer, size); s_spuTransfer += size; return size; }
+u_int PsyX_SPUAL_Write(u_char *, u_int size) { return size; }
+u_int PsyX_SPUAL_Read(u_char *, u_int) { return 0; }
 u_int PsyX_SPUAL_SetTransferStartAddr(u_int addr) { s_spuTransfer = addr; return addr; }
 void PsyX_SPUAL_GetVoiceVolume(int n, short *l, short *r) { if (n < 0 || n >= D2_SPU_VOICES) { *l = *r = 0; } else { *l = s_spuVoice[n].volL; *r = s_spuVoice[n].volR; } }
 void PsyX_SPUAL_GetVoicePitch(int n, u_short *p) { *p = n >= 0 && n < D2_SPU_VOICES ? s_spuVoice[n].pitch : 0; }

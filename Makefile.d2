@@ -3,10 +3,7 @@
 BUILD_DIR = build_d2
 OBJ_DIR   = $(BUILD_DIR)/o
 N64_ROM_SAVETYPE = none
-D2_VADPCM ?= 0
-ifeq ($(D2_VADPCM),1)
 LIBDRAGON_PREVIEW = 2
-endif
 N64_INST ?= /opt/libdragon
 include $(N64_INST)/include/n64.mk
 N64_CXXFLAGS ?= $(N64_CFLAGS)
@@ -20,12 +17,12 @@ GAME_OPT ?= -Os
 GAME_SRCS := $(filter-out $(SRC)/Game/C/xaplay.c,$(wildcard $(SRC)/Game/C/*.c)) \
              $(wildcard $(SRC)/Game/ASM/*.c) $(wildcard $(SRC)/Game/Frontend/*.c) $(wildcard $(SRC)/Game/*.c)
 GAME_OBJS := $(patsubst %.c,$(OBJ_DIR)/%.o,$(GAME_SRCS))
-# Partes do PsyCross (emulacao das bibliotecas do PS1) que ja servem no N64 sem mudanca: matematica 3D (GTE) e utilitarios.
-PSYX_C   := $(addprefix $(SRC)/PsyCross/src/psx/,ABS.C INLINE_C.C LIBGTE.C LIBAPI.C LIBGPU.C LIBPAD.C LIBSN.C LIBMCRD.C LIBSPU.C)
-PSYX_CPP := $(addprefix $(SRC)/PsyCross/src/gte/,PsyX_GTE.cpp half_float.cpp) $(SRC)/PsyCross/src/gpu/PsyX_GPU.cpp
+# Partes do PsyCross que ainda entram no build. O GTE saiu por completo: a transformacao 3D e nativa (port/compat/d2_xf.h, port/n64/xf_native.cpp).
+PSYX_C   := $(addprefix $(SRC)/PsyCross/src/psx/,ABS.C LIBGTE.C LIBAPI.C LIBGPU.C LIBPAD.C LIBSN.C LIBMCRD.C LIBSPU.C)
+PSYX_CPP := $(addprefix $(SRC)/PsyCross/src/gte/,half_float.cpp)
 PSYX_OBJS := $(patsubst %.C,$(OBJ_DIR)/%.o,$(PSYX_C)) $(patsubst %.cpp,$(OBJ_DIR)/%.o,$(PSYX_CPP))
-PLAT_C    := port/n64/main_n64.c port/n64/gen_stubs.c port/n64/psyx_n64.c port/n64/sys_n64.c
-PLAT_CXX  := port/n64/d2_entry.cpp port/n64/psyx_backend.cpp port/n64/libetc_n64.cpp port/n64/libcd_n64.cpp port/n64/fs_n64.cpp port/n64/psyx_rdp.cpp port/n64/n64_gpu_api.cpp port/n64/stubs_n64.cpp port/n64/gte_native.cpp port/n64/d2_vtxcache.cpp port/n64/d2_origin.cpp port/n64/d2_perfdbg.cpp
+PLAT_C    := port/n64/main_n64.c port/n64/psyx_n64.c port/n64/sys_n64.c
+PLAT_CXX  := port/n64/d2_entry.cpp port/n64/psyx_backend.cpp port/n64/libetc_n64.cpp port/n64/libcd_n64.cpp port/n64/fs_n64.cpp port/n64/psyx_rdp.cpp port/n64/n64_gpu_api.cpp port/n64/d2_gpu_state.cpp port/n64/stubs_n64.cpp port/n64/xf_native.cpp port/n64/d2_vtxcache.cpp port/n64/d2_origin.cpp port/n64/d2_perfdbg.cpp
 PLAT_OBJS := $(patsubst %.c,$(OBJ_DIR)/%.o,$(PLAT_C)) $(patsubst %.cpp,$(OBJ_DIR)/%.o,$(PLAT_CXX))
 OBJS := $(GAME_OBJS) $(PSYX_OBJS) $(PLAT_OBJS)
 
@@ -37,7 +34,7 @@ ifneq ($(wildcard $(HOT_LD)),)
 N64_LDFLAGS += --section-ordering-file=$(HOT_LD)
 endif
 # Otimizacoes de desempenho (ver docs/OTIMIZACAO_N64.md). Para medir sem elas: make ... D2_OPT=
-D2_OPT ?= -DD2_DIRECT -DD2_NATIVE_OT -DD2_NOSUBQ -DD2_GTE_NATIVE -DD2_VTXCACHE -DD2_LEANLOAD -DD2_FASTOT -DD2_N64_PERF -DD2_PSX_FIDELITY
+D2_OPT ?= -DD2_DIRECT -DD2_NATIVE_OT -DD2_NOSUBQ -DD2_XF_NATIVE -DD2_VTXCACHE -DD2_LEANLOAD -DD2_FASTOT -DD2_N64_PERF -DD2_PSX_FIDELITY
 
 D2_NO_TANNER_SHADOW ?= 1
 ifeq ($(D2_NO_TANNER_SHADOW),1)
@@ -92,7 +89,7 @@ D2_RSP_GPU := 1
 D2_OPT += -DD2_RSP_TEX=1
 endif
 
-D2_RSP_GPU ?= 0
+D2_RSP_GPU ?= 1
 ifeq ($(D2_RSP_GPU),1)
 D2_OPT += -DD2_RSP_GPU=1
 PLAT_OBJS += $(BUILD_DIR)/port/n64/rsp_d2gpu.o
@@ -125,9 +122,7 @@ PLAT_OBJS += $(OBJ_DIR)/port/n64/d2_t3d_world.o
 OBJS += $(OBJ_DIR)/port/n64/d2_t3d_world.o
 endif
 
-ifeq ($(D2_VADPCM),1)
 D2_OPT += -DD2_VADPCM=1
-endif
 FLAGS_FILE = $(BUILD_DIR)/.d2_flags
 .PHONY: FORCE
 $(FLAGS_FILE): FORCE
@@ -182,21 +177,18 @@ stage-data:
 	@mkdir -p $(FS_DIR)
 	@if [ -f "$(CD1)" ] || [ ! -d $(FS_DIR)/DRIVER2 ]; then python3 tools/extract_cd.py --cd1 "$(CD1)" --out $(FS_DIR) --cities "$(CITIES)" --lang-from "$(LANGDIR)"; fi
 
-ifeq ($(D2_VADPCM),1)
 FS_STAGE = $(BUILD_DIR)/fs
 $(BUILD_DIR)/d2_n64.dfs: stage-data
 	@mkdir -p $(dir $@) $(FS_STAGE)
 	@echo "    [DFS STAGE VADPCM] $(FS_STAGE)"
 	@cp -al $(FS_DIR)/* $(FS_STAGE)/ 2>/dev/null || cp -r $(FS_DIR)/* $(FS_STAGE)/
-	@cp -al filesystem_vadpcm/* $(FS_STAGE)/ 2>/dev/null || cp -r filesystem_vadpcm/* $(FS_STAGE)/
+	@if [ -d filesystem_vadpcm ]; then cp -al filesystem_vadpcm/* $(FS_STAGE)/ 2>/dev/null || cp -r filesystem_vadpcm/* $(FS_STAGE)/; fi
+	@echo "    [SFX64] $(FS_STAGE)/SFX64"
+	@python3 tools/convert_sfx_wav64.py --blk $(FS_DIR)/DRIVER2/SOUND/VOICES2.BLK --out $(FS_STAGE)/SFX64
+	@echo "    [MUS64] $(FS_STAGE)/MUS64"
+	@python3 tools/convert_music_wav64.py --bin $(FS_DIR)/DRIVER2/SOUND/MUSIC.BIN --out $(FS_STAGE)/MUS64
 	@echo "    [DFS] $@"
 	$(N64_MKDFS) $@ $(FS_STAGE)
-else
-$(BUILD_DIR)/d2_n64.dfs: stage-data
-	@mkdir -p $(dir $@)
-	@echo "    [DFS] $@"
-	$(N64_MKDFS) $@ $(FS_DIR)
-endif
 
 $(BUILD_DIR)/d2_n64.elf: $(OBJS)
 

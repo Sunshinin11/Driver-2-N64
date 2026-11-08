@@ -34,4 +34,3 @@ Todos os scripts em `tools/nuvem/` e na raiz respeitam essas variáveis de ambie
 - `bench.sh a b` (2 em paralelo, BF=quadros) e depois `cc.sh a b`: media de ticks/quadro no mesmo trecho do jogo (CameraCnt CC0..CC1).
 - `pgo.sh nome "flags"`: perfil -> hot.ld desta versao -> rebuild (nomep.z64). `layout.sh`: varios orcamentos de hot.ld.
 - Perfil por funcao: rodar com D2_PROF=1 D2_PROF_FROM=2100 e `python3 tools/profsum.py <map>`.
-- Teste da GTE nativa no PC: compilar gte_test.cpp com PsyX_GTE.cpp e port/n64/gte_native.cpp (-DD2_GTE_NATIVE), ver cabecalho do arquivo.

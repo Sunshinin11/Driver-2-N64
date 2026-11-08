@@ -207,7 +207,7 @@ void d2_origin_log_hud(const void *prim, int code, int semi, unsigned int col, c
 
 #ifdef D2_TRANSDBG
 
-extern unsigned short vram[];
+#include "d2_vram.h"
 
 enum TransEffectCat {
     CAT_TAILLIGHT = 0,    // ShowCarlight / ShowLight / ShowFlare / BrakeLight / NightLights
@@ -322,21 +322,20 @@ void d2_transdbg_inspect(const void *prim, int code, int semi, int bm, int tpage
         int num_samples = 0;
 
         for (int v = vmin; v <= vmax; v++) {
-            const unsigned short *row = vram + (((py + v) & 511) << 10);
             for (int u = umin; u <= umax; u++) {
                 count_total++;
                 unsigned short raw = 0;
                 int idx = -1;
                 if (fmt == 0) {
-                    unsigned int word = row[(px + (u >> 2)) & 1023];
+                    unsigned int word = d2_vram_rd(px + (u >> 2), py + v);
                     idx = (word >> ((u & 3) * 4)) & 15;
-                    raw = vram[((cy & 511) << 10) + ((cx + idx) & 1023)];
+                    raw = d2_vram_rd(cx + idx, cy);
                 } else if (fmt == 1) {
-                    unsigned int word = row[(px + (u >> 1)) & 1023];
+                    unsigned int word = d2_vram_rd(px + (u >> 1), py + v);
                     idx = (word >> ((u & 1) * 8)) & 255;
-                    raw = vram[((cy & 511) << 10) + ((cx + idx) & 1023)];
+                    raw = d2_vram_rd(cx + idx, cy);
                 } else {
-                    raw = row[(px + u) & 1023];
+                    raw = d2_vram_rd(px + u, py + v);
                 }
 
                 if (raw == 0x0000) {
@@ -368,7 +367,7 @@ void d2_transdbg_inspect(const void *prim, int code, int semi, int bm, int tpage
         if (fmt == 0) {
             debugf("  clut_palette (16 entries at cx=%d, cy=%d):\n", cx, cy);
             for (int i = 0; i < 16; i++) {
-                unsigned short pal_v = vram[((cy & 511) << 10) + ((cx + i) & 1023)];
+                unsigned short pal_v = d2_vram_rd(cx + i, cy);
                 int stp = (pal_v >> 15) & 1;
                 int r5 = pal_v & 31, g5 = (pal_v >> 5) & 31, b5 = (pal_v >> 10) & 31;
                 int r8 = (r5 << 3) | (r5 >> 2), g8 = (g5 << 3) | (g5 >> 2), b8 = (b5 << 3) | (b5 >> 2);

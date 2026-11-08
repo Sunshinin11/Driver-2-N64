@@ -12,5 +12,10 @@ sed -i 's|^#define MAX_VERTEX_BUFFER_SIZE.*$|#define MAX_VERTEX_BUFFER_SIZE D2_M
 sed -i 's|^#define MAX_DRAW_SPLITS[[:space:]]*4096|#define MAX_DRAW_SPLITS 1024|' "$D/PsyCross/src/gpu/PsyX_GPU.cpp"
 sed -i 's|^char g_allocatedMem\[0x200000\];|char g_allocatedMem[0x140000];|' "$D/Game/C/system.c"
 
+# GTE: cabecalhos de macros/registradores substituidos pela transformacao nativa (port/compat/d2_xf.h)
+for _h in inline_c gtemac gtereg; do
+  printf '#pragma once\n#include "d2_xf.h"\n' > "$D/PsyCross/include/psx/$_h.h"
+done
+
 # patches de fonte (endianness etc.)
 python3 tools/patch_engine.py

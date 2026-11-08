@@ -15,7 +15,7 @@ O código do jogo original roda na CPU VR4300 do N64 (requer **Expansion Pak / 8
 | `port/n64/` | Camada de plataforma do N64: renderizador RDP direto (`psyx_rdp.cpp`), entrada (`psyx_backend.cpp`), stubs/runtime, cache de vértices (`d2_vtxcache.cpp`) e GTE nativa (`gte_native.cpp`). |
 | `port/compat/` | Cabeçalhos de compatibilidade (endianness, wrappers de tipos PSX/SDL, `d2_gte_inline.h`). |
 | `port/redriver2/` | Código do motor descompactado e modificado (gerado por `setup_engine.sh`, ignorado no Git). |
-| `tools/` | Utilitários de build: gerador de stubs (`gen_stubs.py`), extrator de dados de CD (`extract_cd.py`), patches do motor (`patch_engine.py`), ordenação de funções no icache (`hot.py`). |
+| `tools/` | Utilitários de build: extrator de dados de CD (`extract_cd.py`), patches do motor (`patch_engine.py`), ordenação de funções no icache (`hot.py`). |
 | `tools/ares_headless/` | Harness em C++ para executar a ROM no emulador ares sem interface gráfica, injetar botões e coletar métricas. |
 | `tools/nuvem/` | Scripts de medição e benchmark automatizados (`bench.sh`, `cc.sh`, `mk.sh`, `run.sh`, `pgo.sh`, `layout.sh`). |
 | `data/` | Imagem do disco original (`Driver2CD1.bin`) rastreada via **Git LFS**. |

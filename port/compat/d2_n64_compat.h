@@ -13,18 +13,18 @@ extern "C" {
 #endif
 FILE *d2_fopen(const char *path, const char *mode); /* port/n64/sys_n64.c: redireciona para rom:/ (DragonFS) */
 void d2_audio_pump(void);
-#if D2_VADPCM
 void d2_vadpcm_set_current_lump(int lump);
 void d2_vadpcm_reset(void);
+void d2_vadpcm_set_current_song(int song);
+int d2_vadpcm_process_music(int num_samples, void *samps_ptr);
 int d2_vadpcm_process_lump(int dbank, int start_idx, int num_samples, void *samps_ptr);
-#endif
 #ifdef __cplusplus
 }
 #endif
 #define fopen(p, m) d2_fopen((p), (m))
 
 /* Fase 1.1 (port/n64/d2_vtxcache.cpp): as versoes originais destas funcoes de desenho ficam com o sufixo _orig */
-#if defined(D2_VTXCACHE) && defined(D2_GTE_NATIVE)
+#if defined(D2_VTXCACHE) && defined(D2_XF_NATIVE)
 #define D2_VC_ORIG(f) f##_orig
 #else
 #define D2_VC_ORIG(f) f

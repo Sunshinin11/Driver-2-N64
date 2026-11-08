@@ -2,7 +2,7 @@
 // No original (PS1), Tile1x1/PlotBuildingModel/drawMesh transformam os 4 vertices de cada poligono; numa malha cada vertice e
 // compartilhado por ate 4 poligonos, entao a mesma conta era repetida 3 a 4 vezes. Aqui a projecao de cada vertice e guardada
 // num cache por modelo (preenchido sob demanda, na primeira vez que um poligono usa o vertice) e os poligonos so leem o cache.
-// A conta e a mesma do GTE nativo (d2n_proj em port/compat/d2_gte_inline.h): mesmos SXY/SZ/OTZ que o RTPT/RTPS dariam.
+// A conta e a mesma da projecao nativa (d2x_proj em port/compat/d2_xf.h): mesmos SXY/SZ/OTZ que o RTPT/RTPS dariam.
 // As versoes originais continuam no motor com o sufixo _orig (macro D2_VC_ORIG em d2_n64_compat.h) e sao descartadas no link.
 #include "driver2.h"
 #include "C/draw.h"
@@ -18,7 +18,7 @@
 #include "d2_perfdbg.h"
 #endif
 
-#if defined(D2_VTXCACHE) && defined(D2_GTE_NATIVE)
+#if defined(D2_VTXCACHE) && defined(D2_XF_NATIVE)
 
 // definidos em draw.c (sem declaracao em header)
 struct MVERTEX5x5 { MVERTEX verts[5][5]; };
@@ -26,26 +26,27 @@ void ConvertPolygonTypes(MODEL *model, _pct *pc);
 extern int combointensity;
 
 // ---------------------------------------------------------------- cache de projecao (indices de vertice de modelo sao u_char)
-// uma entrada de 8 bytes por vertice (um acesso de cache de dados): SXY empacotado como o registrador do GTE, SZ e a geracao
+// uma entrada de 8 bytes por vertice (um acesso de cache de dados): SXY empacotado (x baixo, y alto), SZ e a geracao
 struct VCEnt { unsigned int xy; unsigned short z, gen; };
 static VCEnt s_vc[256] __attribute__((aligned(16)));
 static short s_vcCam[256][3];        // IR1..IR3 (posicao na camera): so as versoes com luz dinamica usam
 static unsigned short s_vcCur = 1;
-static D2nCam s_vcCam0;
+static D2XCam s_vcCam0;
 static const SVECTOR *s_vcSrc;
 
 static inline void vc_begin(const SVECTOR *src)
 {
 	s_vcSrc = src;
-	d2n_cam(&s_vcCam0);
+	d2x_cam(&s_vcCam0);
 	if (++s_vcCur == 0) { for (int i = 0; i < 256; i++) s_vc[i].gen = 0; s_vcCur = 1; }
 }
 static __attribute__((noinline)) void vc_proj(const SVECTOR *v, unsigned int *xy, unsigned int *z, short *cam)
 {
-	unsigned int sz, h; int a1, a2, a3;
-	*xy = d2n_proj(&s_vcCam0, v->vx, v->vy, v->vz, &sz, &h, &a1, &a2, &a3);
+	unsigned int sz, h; int sx, sy, a1, a2, a3;
+	d2x_proj(&s_vcCam0, v->vx, v->vy, v->vz, &sx, &sy, &sz, &h, &a1, &a2, &a3);
+	*xy = ((unsigned int)(unsigned short)sy << 16) | (unsigned short)sx;
 	*z = sz;
-	if (cam) { cam[0] = (short)d2n_clamp(a1, -0x8000, 0x7fff); cam[1] = (short)d2n_clamp(a2, -0x8000, 0x7fff); cam[2] = (short)d2n_clamp(a3, -0x8000, 0x7fff); }
+	if (cam) { cam[0] = (short)d2x_clamp(a1, -0x8000, 0x7fff); cam[1] = (short)d2x_clamp(a2, -0x8000, 0x7fff); cam[2] = (short)d2x_clamp(a3, -0x8000, 0x7fff); }
 }
 // projeta o vertice i do modelo (uma vez por modelo); devolve a entrada
 static inline const VCEnt *vc_get(int i)
@@ -73,22 +74,22 @@ static inline const VCEnt *vc_get_lit(int i)
 }
 static inline short vc_sx(unsigned int xy) { return (short)(xy & 0xffff); }
 static inline short vc_sy(unsigned int xy) { return (short)(xy >> 16); }
-// NCLIP do GTE com os tres SXY
+// NCLIP com os tres SXY
 static inline int vc_nclip(unsigned int a, unsigned int b, unsigned int c)
 {
 	const int x0 = vc_sx(a), y0 = vc_sy(a), x1 = vc_sx(b), y1 = vc_sy(b), x2 = vc_sx(c), y2 = vc_sy(c);
 	return x0 * y1 + x1 * y2 + x2 * y0 - x0 * y2 - x1 * y0 - x2 * y1;
 }
-// AVSZ3/AVSZ4 do GTE (OTZ)
+// AVSZ3/AVSZ4 (OTZ)
 static inline int vc_avsz3(unsigned int z1, unsigned int z2, unsigned int z3)
 {
-	const long long m = (long long)C2_ZSF3 * (int)(z1 + z2 + z3);
-	return d2n_clamp((int)(m >> 12), 0, 0xffff);
+	const long long m = (long long)d2xf.zsf3 * (int)(z1 + z2 + z3);
+	return d2x_clamp((int)(m >> 12), 0, 0xffff);
 }
 static inline int vc_avsz4(unsigned int z0, unsigned int z1, unsigned int z2, unsigned int z3)
 {
-	const long long m = (long long)C2_ZSF4 * (int)(z0 + z1 + z2 + z3);
-	return d2n_clamp((int)(m >> 12), 0, 0xffff);
+	const long long m = (long long)d2xf.zsf4 * (int)(z0 + z1 + z2 + z3);
+	return d2x_clamp((int)(m >> 12), 0, 0xffff);
 }
 static inline bool vc_saturated4(unsigned int z0, unsigned int z1, unsigned int z2, unsigned int z3, unsigned int h)
 {
@@ -246,7 +247,7 @@ void Tile1x1Lit(MODEL *model)
 static const unsigned char s_meshMap[4][4] = { { 0, 1, 2, 3 }, { 1, 4, 3, 5 }, { 3, 5, 6, 7 }, { 2, 3, 8, 6 } };
 static inline void mesh_project(MVERTEX (*VSP)[5][5], int numPolys, unsigned int *xy, unsigned int *z, short (*cam)[3], const MVERTEX **src)
 {
-	d2n_cam(&s_vcCam0);
+	d2x_cam(&s_vcCam0);
 	if (numPolys == 1)
 	{
 		for (int k = 0; k < 4; k++) { src[k] = &(*VSP)[0][k]; vc_proj((const SVECTOR *)src[k], &xy[k], &z[k], cam ? cam[k] : 0); }
@@ -592,4 +593,4 @@ void PlotBuildingModelSubdivNxN(MODEL *model, int rot, _pct *pc, int n)
 	}
 }
 
-#endif // D2_VTXCACHE && D2_GTE_NATIVE
+#endif // D2_VTXCACHE && D2_XF_NATIVE
