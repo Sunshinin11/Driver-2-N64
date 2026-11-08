@@ -7,6 +7,7 @@
 extern "C" {
 #endif
 extern unsigned short d2_vramL[512 * 512];      // x < 512, bytes de cada palavra trocados (ordem de memoria do N64; paginas de 8 bits ficam prontas para o RDP), passo 512 palavras
+extern unsigned short d2_vramLc[512 * 512];     // copia da metade esquerda no formato do RDP (so para paginas de 4 bits lidas por DMA)
 extern unsigned short d2_vramR[512 * 512];      // x >= 512, formato RDP, passo de linha 512 palavras (x - 512)
 // Paletas (CLUT): o jogo so enxerga um handle opaco (slot + 1). Cada celula de 16 palavras de paleta vira um slot do pool (palavras do PS1, bit STP incluso);
 // a VRAM plana nao guarda mais paletas. Escritas e leituras por coordenada numa celula ja internada vao para o pool.
@@ -53,6 +54,6 @@ static inline void d2_vram_wr(int x, int y, unsigned short v)
     x &= 1023; y &= 511;
     const unsigned int s = d2_clut_map[(y << 6) | (x >> 4)];
     if (s) { d2_clut_pool[s - 1][x & 15] = v; return; }
-    if (x < 512) d2_vramL[(y << 9) + x] = d2_vswap(v); else d2_vramR[(y << 9) + x - 512] = d2_vconv(v);
+    if (x < 512) { d2_vramL[(y << 9) + x] = d2_vswap(v); d2_vramLc[(y << 9) + x] = d2_vconv(v); } else d2_vramR[(y << 9) + x - 512] = d2_vconv(v);
 }
 #endif

@@ -58,6 +58,7 @@ void PsyX_SetCursorRelative(int enable) { (void)enable; }
 #define VRAM_H 512
 unsigned short d2_vramL[512 * 512] __attribute__((aligned(64)));
 unsigned short d2_vramR[512 * 512] __attribute__((aligned(64)));
+unsigned short d2_vramLc[512 * 512] __attribute__((aligned(64)));
 
 unsigned short d2_clut_map[512 * 64];
 unsigned short d2_clut_pool[D2_CLUT_MAX][16];
@@ -79,6 +80,11 @@ unsigned short d2_clut_h(int x, int y)
 // o RDP le a metade direita por DMA: depois de escrever, leva as linhas de cache para a RDRAM
 static void d2_vram_r_flush(int x, int y, int w, int h)
 {
+    if (x < 512) {
+        const int xe = x + w < 512 ? x + w : 512;
+        for (int i = 0; i < h; i++)
+            data_cache_hit_writeback(&d2_vramLc[(((y + i) & 511) << 9) + x], (size_t)(xe - x) * 2);
+    }
     if (x + w <= 512) return;
     const int x0 = x < 512 ? 512 : x;
     for (int i = 0; i < h; i++)
@@ -93,7 +99,7 @@ void GR_ClearVRAM(int x, int y, int w, int h, unsigned char r, unsigned char g, 
     if (y + h > VRAM_H) h = VRAM_H - y;
     if (w <= 0 || h <= 0) return;
     d2_vram_touch(x, y, w, h);
-    if (x + w > 512) d2_vram_r_barrier();
+    d2_vram_r_barrier();
     const unsigned short v = r | (g << 5) | (b << 11);
     for (int i = 0; i < h; i++)
         for (int j = 0; j < w; j++) d2_vram_wr(x + j, y + i, v);
@@ -110,7 +116,7 @@ void GR_CopyVRAM(unsigned short *src, int x, int y, int w, int h, int dst_x, int
     if (dst_y + h > VRAM_H) h = VRAM_H - dst_y;
     if (w <= 0 || h <= 0) return;
     d2_vram_touch(dst_x, dst_y, w, h);
-    if (dst_x + w > 512) d2_vram_r_barrier();
+    d2_vram_r_barrier();
     if (ext) {
         // dados vindos da memoria do jogo estao no formato do PS1 (bytes little-endian): troca os bytes de cada palavra de 16 bits
         const unsigned short *s = src + x + y * stride;

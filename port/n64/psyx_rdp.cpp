@@ -651,9 +651,10 @@ static bool upload_win(int px, int py, int clut, int u0, int v0, int w, int h)
     }
     // coordenadas de carga em bytes da sombra (2 texels CI4 por byte): coluna = ((px-512)*4 + wu0)/2
     // o RDP limita coordenadas de carga a < 1024: a imagem comeca no byte 0 ou 512 da linha (troca so quando muda)
-    int bx = ((px - 512) * 4 + wu0) >> 1; const int by = py + wv0;
+    int bx = ((px & 511) * 4 + wu0) >> 1; const int by = py + wv0;
     const int base = bx >= 512 ? 512 : 0;
-    if (base != s_winBase) { track_ovl_switch(0); rdpq_set_texture_image_raw(0, PhysicalAddr((const char *)d2_vramR + base), FMT_I8, SH_W * 2, 512); s_winBase = base; }
+    { const int bkey = base + (px < 512 ? 1024 : 0);
+    if (bkey != s_winBase) { track_ovl_switch(0); rdpq_set_texture_image_raw(0, PhysicalAddr((const char *)(px < 512 ? d2_vramLc : d2_vramR) + base), FMT_I8, SH_W * 2, 512); s_winBase = bkey; } }
     bx -= base;
     track_ovl_switch(0);
     rdpq_load_tile(TILE6, bx, by, bx + 32, by + 64);
@@ -669,7 +670,7 @@ static bool upload_region(int page, int clut, int u0, int v0, int w, int h, int 
 {
     if (w <= 0 || h <= 0) return false;
     const int px = (page & 15) * 64, py = ((page >> 4) & 1) * 256;
-    if (!s_curRgbaMode && s_texFormat == TF_4_BIT && step == 1 && px >= 512 && w <= 64 && h <= 64)
+    if (!s_curRgbaMode && s_texFormat == TF_4_BIT && step == 1 && w <= 64 && h <= 64)
     {
         return upload_win(px, py, clut, u0, v0, w, h);
     }
@@ -677,7 +678,7 @@ static bool upload_region(int page, int clut, int u0, int v0, int w, int h, int 
     int sw, sh, wpad;
     bool useShadow = false;
     int ua = 0, e0 = 0, e1 = 0;
-    if (!s_curRgbaMode && s_texFormat == TF_4_BIT && step == 1 && px >= 512)
+    if (!s_curRgbaMode && s_texFormat == TF_4_BIT && step == 1)
     {
         ua = u0 & ~15;
         e0 = (u0 - ua) & ~1; e1 = ((u0 - ua) + w + 1) & ~1;
@@ -728,8 +729,9 @@ static bool upload_region(int page, int clut, int u0, int v0, int w, int h, int 
         {
             // carga direta da sombra (como a janela): bytes [e0/2, e1/2) das linhas v0..v0+h, origem da textura em ua+e0
             const int e0 = (u0 - ua) & ~1, e1 = ((u0 - ua) + w + 1) & ~1, nb = (e1 - e0) >> 1, pitch = (nb + 7) & ~7;
-            int bx = (px - 512) * 2 + ((ua + e0) >> 1); const int by = py + v0, base = bx >= 512 ? 512 : 0;
-            if (base != s_winBase) { rdpq_set_texture_image_raw(0, PhysicalAddr((const char *)d2_vramR + base), FMT_I8, SH_W * 2, 512); s_winBase = base; }
+            int bx = (px & 511) * 2 + ((ua + e0) >> 1); const int by = py + v0, base = bx >= 512 ? 512 : 0;
+            { const int bkey = base + (px < 512 ? 1024 : 0);
+            if (bkey != s_winBase) { rdpq_set_texture_image_raw(0, PhysicalAddr((const char *)(px < 512 ? d2_vramLc : d2_vramR) + base), FMT_I8, SH_W * 2, 512); s_winBase = bkey; } }
             bx -= base;
             rdpq_set_tile(TILE6, FMT_I8, 0, pitch, NULL);
             rdpq_load_tile(TILE6, bx, by, bx + nb, by + h);
@@ -1503,7 +1505,7 @@ int d2_direct_poly(P_TAG *tag);
 // quad texturizado de 4 bits (pagina em x >= 512): o RSP monta os dois triangulos, com 7 palavras de comando em vez de ~30 escritas pela CPU
 static bool rsp_ft4(const short *xs, const short *ys, const unsigned char *us, const unsigned char *vs, int tpage, int clut, uint32_t col, int ofx, int ofy)
 {
-    if (!s_d2gpuOvl || s_texFormat != TF_4_BIT || s_ctxSx16 != 65536 || s_ctxSy16 != 65536 || (tpage & 15) < 8) return false;
+    if (!s_d2gpuOvl || s_texFormat != TF_4_BIT || s_ctxSx16 != 65536 || s_ctxSy16 != 65536) return false;
     short minx = xs[0], maxx = xs[0], miny = ys[0], maxy = ys[0];
     int umin = us[0], umax = us[0], vmin = vs[0], vmax = vs[0];
     for (int i = 1; i < 4; i++)
@@ -1549,7 +1551,7 @@ static bool rsp_ft4(const short *xs, const short *ys, const unsigned char *us, c
 // triangulo texturizado de 4 bits com cor por vertice (gouraud), montado pelo RSP
 static bool rsp_gt3(const short *xs, const short *ys, const unsigned char *us, const unsigned char *vs, int tpage, int clut, const uint32_t *col, int ofx, int ofy)
 {
-    if (!s_d2gpuOvl || s_texFormat != TF_4_BIT || s_ctxSx16 != 65536 || s_ctxSy16 != 65536 || (tpage & 15) < 8) return false;
+    if (!s_d2gpuOvl || s_texFormat != TF_4_BIT || s_ctxSx16 != 65536 || s_ctxSy16 != 65536) return false;
     short minx = xs[0], maxx = xs[0], miny = ys[0], maxy = ys[0];
     int umin = us[0], umax = us[0], vmin = vs[0], vmax = vs[0];
     for (int i = 1; i < 3; i++)
