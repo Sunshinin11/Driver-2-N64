@@ -11,6 +11,8 @@ else:
     ares_exe = "C:/Users/georg/Downloads/ares-v148/ares.exe"
     rom = os.path.join(root, "d2_n64.z64")
 
+if len(sys.argv) > 3:
+    rom = os.path.join(os.path.dirname(rom), sys.argv[3]) if "\\" not in rom else rom.rsplit("\\", 1)[0] + "\\" + sys.argv[3]
 print("Starting Ares with ROM:", rom)
 out_log = sys.argv[1] if len(sys.argv) > 1 else "test_bench_stdout.log"
 timeout_s = int(sys.argv[2]) if len(sys.argv) > 2 else 100
