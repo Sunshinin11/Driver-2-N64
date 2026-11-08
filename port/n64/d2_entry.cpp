@@ -10,9 +10,9 @@ int redriver2_main(int argc, char **argv);
 // _frontend_buffer compartilhava o mesmo endereco de _other_buffer (_otag1_org).
 // _sbank_buffer era usado apenas durante o carregamento de som para transferir
 // amostras ao SPU e residia dentro de mallocTab.
-// Reaproveitamos g_Other_buffer para ambos, recuperando 704 KB de RAM (384 KB + 320 KB).
+// O som nativo so le a tabela de amostras de cada lump (g_SBank_buffer de 4 KB, sem o corpo ADPCM do PS1).
 static char g_Overlay_buffer[0x50000];
-static char g_SBank_buffer[0x50000];
+static char g_SBank_buffer[0x1000];
 static char g_Other_buffer[0x50000];
 static char g_Other_buffer2[0x50000];
 static OTTYPE g_OT1[OTSIZE];

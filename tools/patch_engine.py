@@ -64,7 +64,7 @@ P('Game/C/gamesnd.c',
   "\t\t{ LoadfileSeg(name, (char*)blockLimit, 0, sizeof(blockLimit)); d2_swap32_array(blockLimit, 73); }\n")
 P('Game/C/gamesnd.c',
   "\tLoadfileSeg(name, (char*)_sbank_buffer, blockLimit[lump], size);\n\tif (size > 0 && blockLimit[lump] && blockLimit[lump + 1]) // [A]\n\t{\n\t\tLoadSoundBankDynamic((char*)_sbank_buffer, size, bank);\n\t}",
-  "\tLoadfileSeg(name, (char*)_sbank_buffer, blockLimit[lump], size);\n\tif (size > 0 && blockLimit[lump] && blockLimit[lump + 1]) // [A]\n\t{\n#if D2_VADPCM\n\t\td2_vadpcm_set_current_lump(lump);\n#endif\n\t\tLoadSoundBankDynamic((char*)_sbank_buffer, size, bank);\n\t}")
+  "\t// so a tabela de amostras do lump e lida: o audio nativo nao usa o corpo ADPCM (buffer de 4 KB)\n\tLoadfileSeg(name, (char*)_sbank_buffer, blockLimit[lump], size > 0x1000 ? 0x1000 : size);\n\tif (size > 0 && blockLimit[lump] && blockLimit[lump + 1]) // [A]\n\t{\n#if D2_VADPCM\n\t\td2_vadpcm_set_current_lump(lump);\n#endif\n\t\tLoadSoundBankDynamic((char*)_sbank_buffer, size, bank);\n\t}")
 P('Game/C/gamesnd.c',
   "\tLoadfileSeg(name, (char*)musicpos, musicnum * 8, sizeof(musicpos));\n",
   "\tLoadfileSeg(name, (char*)musicpos, musicnum * 8, sizeof(musicpos));\n\td2_swap32_array(musicpos, 3);\n")

@@ -1515,6 +1515,60 @@ int d2_native_ft4(POLY_FT4 *p)
     const int ofy = activeDrawEnv.ofs[1] - activeDispEnv.disp.y;
 
     s_ft4Total++;
+    // quad texturizado de 4 bits: o RSP monta os dois triangulos (caminho curto de comandos, sem os 30 words de CPU por triangulo)
+    if (s_d2gpuOvl && s_texFormat == TF_4_BIT && s_ctxSx16 == 65536 && s_ctxSy16 == 65536 && (p->tpage & 15) >= 8)
+    {
+        short minx = p->x0, maxx = p->x0, miny = p->y0, maxy = p->y0;
+        if (p->x1 < minx) minx = p->x1; if (p->x1 > maxx) maxx = p->x1;
+        if (p->x2 < minx) minx = p->x2; if (p->x2 > maxx) maxx = p->x2;
+        if (p->x3 < minx) minx = p->x3; if (p->x3 > maxx) maxx = p->x3;
+        if (p->y1 < miny) miny = p->y1; if (p->y1 > maxy) maxy = p->y1;
+        if (p->y2 < miny) miny = p->y2; if (p->y2 > maxy) maxy = p->y2;
+        if (p->y3 < miny) miny = p->y3; if (p->y3 > maxy) maxy = p->y3;
+        const int sx0 = (minx + ofx) << 2, sx1 = (maxx + ofx) << 2, sy0 = (miny + ofy) << 2, sy1 = (maxy + ofy) << 2;
+        if (sx1 < s_ctxCx0 || sx0 >= s_ctxCx1 || sy1 < s_ctxCy0 || sy0 >= s_ctxCy1) return 9;
+        if (sx0 >= -4096 && sx1 <= 4095 && sy0 >= -4096 && sy1 <= 4095 && sx1 - sx0 <= 16000 && sy1 - sy0 <= 16000)
+        {
+            int umin = p->u0, umax = p->u0, vmin = p->v0, vmax = p->v0;
+            if (p->u1 < umin) umin = p->u1; if (p->u1 > umax) umax = p->u1;
+            if (p->u2 < umin) umin = p->u2; if (p->u2 > umax) umax = p->u2;
+            if (p->u3 < umin) umin = p->u3; if (p->u3 > umax) umax = p->u3;
+            if (p->v1 < vmin) vmin = p->v1; if (p->v1 > vmax) vmax = p->v1;
+            if (p->v2 < vmin) vmin = p->v2; if (p->v2 > vmax) vmax = p->v2;
+            if (p->v3 < vmin) vmin = p->v3; if (p->v3 > vmax) vmax = p->v3;
+            const int uw = (umax > umin) ? (umax - umin) : 1, vh = (vmax > vmin) ? (vmax - vmin) : 1;
+            if (uw <= 64 && vh <= 64 && upload_win(((p->tpage & 15) * 64), ((p->tpage >> 4) & 1) * 256, p->clut, umin, vmin, uw, vh))
+            {
+                if (s_rspOfx != ofx || s_rspOfy != ofy)
+                {
+                    s_rspOfx = ofx; s_rspOfy = ofy;
+                    track_ovl_switch(s_d2gpuOvl);
+                    rspq_write(s_d2gpuOvl, D2G_CMD_SET_OFFSET, 0, ((uint32_t)(int16_t)ofx << 16) | ((uint32_t)(int16_t)ofy & 0xFFFF));
+                }
+                if (s_rspTexOu != s_upOu || s_rspTexOv != s_upOv)
+                {
+                    s_rspTexOu = s_upOu; s_rspTexOv = s_upOv;
+                    track_ovl_switch(s_d2gpuOvl);
+                    rspq_write(s_d2gpuOvl, D2G_CMD_SET_TEX_ORIGIN, 0, ((uint32_t)(uint16_t)s_upOu << 16) | ((uint32_t)(uint16_t)s_upOv & 0xFFFF));
+                }
+                if (s_tmemDirty)
+                {
+                    __rdpq_autosync_use(AUTOSYNC_PIPE | AUTOSYNC_TILE(0) | AUTOSYNC_TMEM(0));
+                    s_tmemDirty = false;
+                }
+                const uint32_t col = ((uint32_t)s_shadeLut[p->r0] << 16) | ((uint32_t)s_shadeLut[p->g0] << 8) | s_shadeLut[p->b0];
+                const uint32_t xy0 = *(const uint32_t*)&p->x0, xy1 = *(const uint32_t*)&p->x1, xy2 = *(const uint32_t*)&p->x2, xy3 = *(const uint32_t*)&p->x3;
+                const uint32_t uv01 = (*(const uint16_t*)&p->u0 << 16) | *(const uint16_t*)&p->u1;
+                const uint32_t uv23 = (*(const uint16_t*)&p->u2 << 16) | *(const uint16_t*)&p->u3;
+                track_ovl_switch(s_d2gpuOvl);
+                rspq_write(s_d2gpuOvl, D2G_CMD_POLY_FT4, col, xy0, xy1, xy2, xy3, uv01, uv23);
+                s_rspFT4Count++;
+                s_triCount += 2;
+                s_texTriCount += 2;
+                return 9;
+            }
+        }
+    }
     const short *xy[4] = { &p->x0, &p->x1, &p->x2, &p->x3 };
     const unsigned char *uv[4] = { &p->u0, &p->u1, &p->u2, &p->u3 };
     const uint32_t col = calc_vertex_color(p->r0, p->g0, p->b0, BM_NONE, true);
