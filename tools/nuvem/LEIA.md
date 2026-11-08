@@ -34,3 +34,9 @@ Todos os scripts em `tools/nuvem/` e na raiz respeitam essas variáveis de ambie
 - `bench.sh a b` (2 em paralelo, BF=quadros) e depois `cc.sh a b`: media de ticks/quadro no mesmo trecho do jogo (CameraCnt CC0..CC1).
 - `pgo.sh nome "flags"`: perfil -> hot.ld desta versao -> rebuild (nomep.z64). `layout.sh`: varios orcamentos de hot.ld.
 - Perfil por funcao: rodar com D2_PROF=1 D2_PROF_FROM=2100 e `python3 tools/profsum.py <map>`.
+
+## Regras de medicao (fase 2 do roteiro de otimizacao)
+- Compare sempre pelas janelas `[bench] cc=` (CameraCnt, mesmo estado do jogo), nunca por "ultimos N quadros": `bench.sh` + `cc.sh`, mesma entrada (`in_bench.txt`), mesma cena.
+- O Ares do harness e determinista: repetir a mesma ROM da exatamente o mesmo numero. A incerteza vem de mudar o layout do codigo (hot.ld, tamanho das funcoes), que desloca o resultado por alguns por cento; so aceite ganho do quadro inteiro acima de 3% ou confirmado por timer de regiao.
+- Log do jogador x harness: as janelas iniciais (cc 32..96, mesma rua parada) dao 3,4M x 3,3M ticks (+2%); as diferencas maiores aparecem so depois, quando o jogador dirige para outra area com mais transito. Nao compare cenas diferentes.
+- Em medidas de nova versao, rode tambem a versao anterior no mesmo instante; nao reutilize numeros de outra sessao.
