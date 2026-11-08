@@ -202,8 +202,8 @@ static uint32_t sample_poly_color(int tset, int tid,
 
     const int px = (tpage_val & 15) * 64;
     const int py = ((tpage_val >> 4) & 1) * 256;
-    const int cx = (clut_val & 63) * 16;
-    const int cy = (clut_val >> 6) & 511;
+    int cx, cy;
+    d2_clut_xy(clut_val, &cx, &cy);
 
     uint32_t sum_r = 0, sum_g = 0, sum_b = 0, cnt = 0;
 

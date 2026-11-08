@@ -8,8 +8,14 @@ extern "C" {
 #endif
 extern unsigned short d2_vramL[512 * 512];      // x < 512, bytes de cada palavra trocados (ordem de memoria do N64; paginas de 8 bits ficam prontas para o RDP), passo 512 palavras
 extern unsigned short d2_vramR[512 * 512];      // x >= 512, formato RDP, passo de linha 512 palavras (x - 512)
-extern unsigned char d2_vcol[(1024 * 512) / 8]; // 1 bit por palavra: 1 = guarda cor ja no formato do RDP (RGBA5551), enviada por d2_LoadColor
-extern unsigned char d2_vstp[(1024 * 512) / 8]; // 1 bit por palavra de cor: bit de transparencia (STP, bit 15) do PS1, que o RGBA5551 nao comporta
+// Paletas (CLUT): o jogo so enxerga um handle opaco (slot + 1). Cada celula de 16 palavras de paleta vira um slot do pool (palavras do PS1, bit STP incluso);
+// a VRAM plana nao guarda mais paletas. Escritas e leituras por coordenada numa celula ja internada vao para o pool.
+#define D2_CLUT_MAX 1024
+extern unsigned short d2_clut_map[512 * 64];          // celula (y * 64 + x / 16) -> slot + 1 (0 = nao e paleta)
+extern unsigned short d2_clut_pool[D2_CLUT_MAX][16];  // palavras do PS1 de cada slot
+extern unsigned short d2_clut_cell[D2_CLUT_MAX];      // slot -> celula
+extern int d2_clut_n, d2_clut_bad;
+unsigned short d2_clut_h(int x, int y);               // handle da paleta que comeca em (x, y); interna a celula se preciso
 void d2_vram_r_barrier(void);                   // espera o RDP terminar de ler a metade direita antes de reescreve-la
 #ifdef __cplusplus
 }
@@ -25,34 +31,28 @@ static inline unsigned short d2_ps1_to_rdp(unsigned short v)
 {
     return (unsigned short)(((v & 31) << 11) | (((v >> 5) & 31) << 6) | (((v >> 10) & 31) << 1) | (v != 0));
 }
-static inline int d2_vbit(const unsigned char *m, int x, int y) { const int i = (y << 10) | x; return (m[i >> 3] >> (i & 7)) & 1; }
-static inline void d2_vbit_set(unsigned char *m, int x, int y, int on)
-{
-    const int i = (y << 10) | x;
-    if (on) m[i >> 3] |= (unsigned char)(1u << (i & 7)); else m[i >> 3] &= (unsigned char)~(1u << (i & 7));
-}
-static inline unsigned short d2_rdp_to_ps1(unsigned short n, int stp)
-{
-    return (unsigned short)(((n >> 11) & 31) | (((n >> 6) & 31) << 5) | (((n >> 1) & 31) << 10) | (stp ? 0x8000 : 0));
-}
 static inline unsigned short d2_vswap(unsigned short w) { return (unsigned short)((w << 8) | (w >> 8)); }
+// handle -> coordenada da primeira palavra da paleta
+static inline void d2_clut_xy(unsigned int h, int *x, int *y)
+{
+    if (h == 0 || h > (unsigned int)d2_clut_n) { d2_clut_bad++; *x = 0; *y = 0; return; }
+    const unsigned int c = d2_clut_cell[h - 1];
+    *x = (int)(c & 63) * 16; *y = (int)(c >> 6);
+}
 static inline unsigned short d2_vram_rd(int x, int y)
 {
     x &= 1023; y &= 511;
-    if (d2_vbit(d2_vcol, x, y)) return d2_rdp_to_ps1(x < 512 ? d2_vramL[(y << 9) + x] : d2_vramR[(y << 9) + x - 512], d2_vbit(d2_vstp, x, y));
+    const unsigned int s = d2_clut_map[(y << 6) | (x >> 4)];
+    if (s) return d2_clut_pool[s - 1][x & 15];
     return x < 512 ? d2_vswap(d2_vramL[(y << 9) + x]) : d2_vconv(d2_vramR[(y << 9) + x - 512]);
 }
-// cor no formato do RDP (paletas e imagens de 16 bits): direto quando a celula veio de d2_LoadColor
-static inline unsigned short d2_vram_rdn(int x, int y)
-{
-    x &= 1023; y &= 511;
-    if (d2_vbit(d2_vcol, x, y)) return x < 512 ? d2_vramL[(y << 9) + x] : d2_vramR[(y << 9) + x - 512];
-    return d2_ps1_to_rdp(d2_vram_rd(x, y));
-}
+// cor no formato do RDP (paletas e imagens de 16 bits)
+static inline unsigned short d2_vram_rdn(int x, int y) { return d2_ps1_to_rdp(d2_vram_rd(x, y)); }
 static inline void d2_vram_wr(int x, int y, unsigned short v)
 {
     x &= 1023; y &= 511;
-    if (d2_vbit(d2_vcol, x, y)) { d2_vbit_set(d2_vcol, x, y, 0); d2_vbit_set(d2_vstp, x, y, 0); }
+    const unsigned int s = d2_clut_map[(y << 6) | (x >> 4)];
+    if (s) { d2_clut_pool[s - 1][x & 15] = v; return; }
     if (x < 512) d2_vramL[(y << 9) + x] = d2_vswap(v); else d2_vramR[(y << 9) + x - 512] = d2_vconv(v);
 }
 #endif

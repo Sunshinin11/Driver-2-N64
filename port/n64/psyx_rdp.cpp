@@ -259,7 +259,7 @@ static TexSlot *get_region(int px, int py, int fmt, int u0, int v0, int w, int h
     unsigned int sig = cell_signature(wx, py + v0, ww, h);
     if (is_rgba32 && fmt != TF_16_BIT)
     {
-        const int cx = (clut & 63) * 16, cy = clut >> 6;
+        int cx, cy; d2_clut_xy((unsigned)clut & 0xFFFF, &cx, &cy);
         sig ^= cell_signature(cx, cy, fmt == TF_4_BIT ? 16 : 256, 1);
     }
 
@@ -286,7 +286,7 @@ static TexSlot *get_region(int px, int py, int fmt, int u0, int v0, int w, int h
     if (is_rgba32)
     {
         uint32_t *d32 = (uint32_t *)dst;
-        const int cx = (clut & 63) * 16, cy = clut >> 6;
+        int cx, cy; d2_clut_xy((unsigned)clut & 0xFFFF, &cx, &cy);
         for (int y = 0; y < sh; y++)
         {
             const int vy = py + v0 + y * step;
@@ -535,7 +535,7 @@ static void upload_pal_bank(int clut)
     if (pkey == s_pbClut && s_pbVw == s_vramWrites && s_curBank > 0 && s_bank[s_curBank].clut == pkey) { s_bank[s_curBank].lru = ++s_bankLru; return; }
     s_pbClut = pkey; s_pbVw = s_vramWrites;
     PalEnt *e = &s_palCache[(pkey ^ (pkey >> 8)) & (PAL_CACHE - 1)];
-    const int cx = (clut & 63) * 16, cy = (clut & 0xFFFF) >> 6;
+    int cx, cy; d2_clut_xy((unsigned)clut & 0xFFFF, &cx, &cy);
     bool ok = e->valid && e->clut == pkey;
     if (ok && e->vw != s_vramWrites)
     {
@@ -703,7 +703,7 @@ static bool upload_region(int page, int clut, int u0, int v0, int w, int h, int 
         if (false) {}
         else if (paletted && (s_lastUp.clut != pkey || s_lastUp.fmt != s_texFormat || s_lastUp.palVer != s_vramWrites || s_lastUp.slot == 0))
         {
-            const int cx = (clut & 63) * 16, cy = (clut & 0xFFFF) >> 6;
+            int cx, cy; d2_clut_xy((unsigned)clut & 0xFFFF, &cx, &cy);
             const int n = s_texFormat == TF_4_BIT ? 16 : 256;
             s_palIdx = (s_palIdx + 1) % PAL_RING;
             if (s_palUse[s_palIdx] > s_doneCounter) rdp_wait_idle();
@@ -796,7 +796,7 @@ static bool upload_pal(int clut)
 {
     const int pkey = clut;
     if (s_lastUp.clut == pkey && s_lastUp.fmt == s_texFormat && s_lastUp.palVer == s_vramWrites && s_lastUp.slot != 0) return false;
-    const int cx = (clut & 63) * 16, cy = (clut & 0xFFFF) >> 6;
+    int cx, cy; d2_clut_xy((unsigned)clut & 0xFFFF, &cx, &cy);
     const int n = s_texFormat == TF_4_BIT ? 16 : 256;
     s_palIdx = (s_palIdx + 1) % PAL_RING;
     if (s_palUse[s_palIdx] > s_doneCounter) rdp_wait_idle();

@@ -59,8 +59,22 @@ void PsyX_SetCursorRelative(int enable) { (void)enable; }
 unsigned short d2_vramL[512 * 512] __attribute__((aligned(64)));
 unsigned short d2_vramR[512 * 512] __attribute__((aligned(64)));
 
-unsigned char d2_vcol[(1024 * 512) / 8];
-unsigned char d2_vstp[(1024 * 512) / 8];
+unsigned short d2_clut_map[512 * 64];
+unsigned short d2_clut_pool[D2_CLUT_MAX][16];
+unsigned short d2_clut_cell[D2_CLUT_MAX];
+int d2_clut_n, d2_clut_bad;
+extern "C" void d2_clut_pos(unsigned int h, int *x, int *y) { d2_clut_xy(h, x, y); }
+unsigned short d2_clut_h(int x, int y)
+{
+    const unsigned int cell = (unsigned int)(((y & 511) << 6) | ((x & 1023) >> 4));
+    if (d2_clut_map[cell]) return d2_clut_map[cell];
+    if (d2_clut_n >= D2_CLUT_MAX) { d2_clut_bad++; return (unsigned short)D2_CLUT_MAX; }
+    const int cx = (int)(cell & 63) * 16, cy = (int)(cell >> 6);
+    for (int i = 0; i < 16; i++) d2_clut_pool[d2_clut_n][i] = d2_vram_rd(cx + i, cy);   // o que ja estava na VRAM antes de virar paleta
+    d2_clut_cell[d2_clut_n] = (unsigned short)cell;
+    d2_clut_map[cell] = (unsigned short)(++d2_clut_n);
+    return d2_clut_map[cell];
+}
 
 // o RDP le a metade direita por DMA: depois de escrever, leva as linhas de cache para a RDRAM
 static void d2_vram_r_flush(int x, int y, int w, int h)
@@ -118,20 +132,16 @@ int GR_LoadColor(const unsigned short *src, int dst_x, int dst_y, int w, int h)
 {
     if (dst_x < 0 || dst_y < 0 || dst_x + w > VRAM_W || dst_y + h > VRAM_H) return 0;
     d2_vram_touch(dst_x, dst_y, w, h);
-    if (dst_x + w > 512) d2_vram_r_barrier();
     for (int i = 0; i < h; i++, src += w)
     {
         const int y = dst_y + i;
         for (int j = 0; j < w; j++)
         {
-            const unsigned short v = (unsigned short)((src[j] >> 8) | (src[j] << 8));   // palavra do PS1 (bytes little-endian)
             const int x = dst_x + j;
-            const unsigned short n = d2_ps1_to_rdp(v);
-            if (x < 512) d2_vramL[(y << 9) + x] = n; else d2_vramR[(y << 9) + x - 512] = n;
-            d2_vbit_set(d2_vcol, x, y, 1); d2_vbit_set(d2_vstp, x, y, v >> 15);
+            if (j == 0 || (x & 15) == 0) d2_clut_h(x, y);
+            d2_vram_wr(x, y, (unsigned short)((src[j] >> 8) | (src[j] << 8)));   // palavra do PS1 (bytes little-endian)
         }
     }
-    d2_vram_r_flush(dst_x, dst_y, w, h);
     return 1;
 }
 void GR_ReadVRAM(unsigned short *dst, int x, int y, int dst_w, int dst_h)
