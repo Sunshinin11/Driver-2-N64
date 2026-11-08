@@ -9,3 +9,6 @@ def register(P, R):
     R('Game/C/spool.c', r'LoadImage2\(&specCluts, ', 'd2_LoadColor(&specCluts, ')
     R('Game/C/overmap.c', r'LoadImage\(&mapclutpos, ', 'd2_LoadColor(&mapclutpos, ')
     R('Game/C/pres.c', r'LoadImage\(&fontclutpos, ', 'd2_LoadColor(&fontclutpos, ')
+    # LoadClut / LoadClut2 (carregamentos de tela, fontes): tambem sao paletas
+    R('PsyCross/src/psx/LIBGPU.C', r'LoadImage\(&rect, clut\);', 'd2_LoadColor(&rect, clut);')
+    R('PsyCross/src/psx/LIBGPU.C', r'LoadImage\(&drawArea, clut\);', 'd2_LoadColor(&drawArea, clut);')
