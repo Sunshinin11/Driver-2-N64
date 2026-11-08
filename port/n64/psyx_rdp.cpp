@@ -1821,6 +1821,7 @@ static inline void d2_ot_node(P_TAG *base)
         }
 }
 
+extern "C" void d2_audio_mix(void);
 extern "C" void d2_native_draw_ot(u_long *ot)
 {
     if (!ot) return;
@@ -1836,6 +1837,7 @@ extern "C" void d2_native_draw_ot(u_long *ot)
         const int top = (int)(((uintptr_t)ot - rg->base) / sizeof(OT_TAG));
         const OT_TAG *slots = (const OT_TAG*)rg->base;
         for (int sl = top; sl >= 0; --sl) {
+            if (!(sl & 63)) d2_audio_mix();      // o quadro leva ~90 ms: sem isso o buffer de audio esvazia no meio do desenho
             {
                 const int bucket = 0x107F - (top - sl);
                 if (t3d_ordered) {

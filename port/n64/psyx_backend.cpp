@@ -301,7 +301,7 @@ extern "C" int d2_vadpcm_process_lump(int dbank, int start_idx, int num_samples,
     return (loaded_count > 0) ? 1 : 0;
 }
 
-static constexpr float D2_SPU_MASTER_VOL = 0.35f;
+static constexpr float D2_SPU_MASTER_VOL = 0.22f;   // varias vozes somam: volume menor evita estourar (clipping) o mixer
 static constexpr float D2_SPU_MAX_FREQ   = 44100.0f;
 
 static float d2_spu_calc_freq(u_short pitch)
@@ -394,6 +394,8 @@ void d2_audio_pump() {
     d2_sys_pump_vbl_cb();
     if (s_spuInited) mixer_try_play();
 }
+// so alimenta o mixer (sem os callbacks de VBL): chamada dentro de laços longos, como o desenho da OT
+void d2_audio_mix() { if (s_spuInited) mixer_try_play(); }
 int PsyX_SPUAL_SetReverb(int) { return 0; }
 int PsyX_SPUAL_GetReverbState() { return 0; }
 u_int PsyX_SPUAL_SetReverbVoice(int, u_int) { return 0; }

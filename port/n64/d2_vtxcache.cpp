@@ -96,10 +96,6 @@ static inline int vc_avsz4(unsigned int z0, unsigned int z1, unsigned int z2, un
 	const long long m = (long long)d2xf.zsf4 * (int)(z0 + z1 + z2 + z3);
 	return d2x_clamp((int)(m >> 12), 0, 0xffff);
 }
-static inline bool vc_saturated4(unsigned int z0, unsigned int z1, unsigned int z2, unsigned int z3, unsigned int h)
-{
-	return (2 * z0 <= h) || (2 * z1 <= h) || (2 * z2 <= h) || (2 * z3 <= h);
-}
 static inline void vc_campos(int i, SVECTOR *out) { out->vx = s_vcCam[i][0]; out->vy = s_vcCam[i][1]; out->vz = s_vcCam[i][2]; out->pad = 0; }
 
 // Pacote próprio do N64. Mantém o tamanho/layout compacto do FT4 para caber na
@@ -131,11 +127,6 @@ void Tile1x1(MODEL *model)
 		if (opz > 0)
 		{
 			const VCEnt *D = vc_get(polys->v2);
-			if (vc_saturated4(A->z, B->z, C->z, D->z, s_vcCam0.h))
-			{
-				polys = (PL_POLYFT4 *)((char *)polys + plotContext.polySizes[ptype]);
-				continue;
-			}
 			prims = (POLY_FT4 *)plotContext.primptr;
 
 			d2_st_b4(&prims->r0, plotContext.colour);
@@ -189,11 +180,6 @@ void Tile1x1Lit(MODEL *model)
 		if (opz > 0)
 		{
 			const VCEnt *D = vc_get_lit(polys->v2);
-			if (vc_saturated4(A->z, B->z, C->z, D->z, s_vcCam0.h))
-			{
-				polys = (PL_POLYFT4 *)((char *)polys + plotContext.polySizes[ptype]);
-				continue;
-			}
 			prims = (POLY_GT4 *)plotContext.primptr;
 
 			d2_st_b4(&prims->r0, plotContext.colour);
@@ -268,10 +254,6 @@ void drawMesh(MVERTEX (*VSP)[5][5], int m, int n, _pct *pc)
 		}
 		if (opz > 0 && zz > 5)
 		{
-			if (vc_saturated4(z[mp[0]], z[mp[1]], z[mp[2]], z[mp[3]], s_vcCam0.h))
-			{
-				continue;
-			}
 
 			d2_st_ss(&prim->x0, xy[mp[0]]);
 			d2_st_ss(&prim->x1, xy[mp[1]]);
@@ -314,10 +296,6 @@ void drawMeshLit(MVERTEX (*VSP)[5][5], int m, int n, _pct *pc)
 		}
 		if (opz > 0 && zz > 5)
 		{
-			if (vc_saturated4(z[mp[0]], z[mp[1]], z[mp[2]], z[mp[3]], s_vcCam0.h))
-			{
-				continue;
-			}
 
 			d2_st_ss(&prim->x0, xy[mp[0]]);
 			d2_st_ss(&prim->x1, xy[mp[1]]);
@@ -388,11 +366,6 @@ void PlotBuildingModel(MODEL *model, int rot, _pct *pc)
 		if (opz > 0)
 		{
 			const VCEnt *D = vc_get(polys->v2);
-			if (vc_saturated4(A->z, B->z, C->z, D->z, s_vcCam0.h))
-			{
-				polys = (PL_POLYFT4 *)((char *)polys + pc->polySizes[ptype]);
-				continue;
-			}
 			pc->tpage = (*pc->ptexture_pages)[polys->texture_set];
 			pc->clut = (*pc->ptexture_cluts)[polys->texture_set][polys->texture_id];
 
@@ -498,11 +471,6 @@ void PlotBuildingModelSubdivNxN(MODEL *model, int rot, _pct *pc, int n)
 			if (n == 0 || diff << 2 <= minZ - 350)
 			{
 				const VCEnt *D = vc_get(polys->v2);
-				if (vc_saturated4(A->z, B->z, C->z, D->z, s_vcCam0.h))
-				{
-					polys = (PL_POLYFT4 *)((char *)polys + pc->polySizes[ptype]);
-					continue;
-				}
 				prims = (POLY_FT4 *)pc->primptr;
 				d2n_set_ft4(prims);
 				d2_st_b4(&prims->r0, pc->colour);
