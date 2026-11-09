@@ -98,6 +98,11 @@ int d2_t3d_begin_ordered_world(void)
 #endif
 }
 
+int d2_t3d_order_peek_bucket(void)
+{
+    return (s_order_active && s_order_cursor<s_order_count) ? (int)s_order_faces[s_order_cursor].bucket : -1;
+}
+
 void d2_t3d_draw_world_until(int bucket)
 {
     if(!s_order_active || s_order_cursor>=s_order_count || s_order_faces[s_order_cursor].bucket<bucket) return;

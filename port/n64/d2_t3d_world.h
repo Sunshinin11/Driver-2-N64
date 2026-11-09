@@ -15,6 +15,7 @@ void d2_t3d_queue_building(int model_idx, int yang, int z, int tx, int ty, int t
 void d2_t3d_draw_queued_buildings(void);
 int d2_t3d_begin_ordered_world(void);
 void d2_t3d_draw_world_until(int bucket);
+int d2_t3d_order_peek_bucket(void);
 void d2_t3d_end_ordered_world(void);
 int  d2_t3d_get_queued_count(void);
 void d2_t3d_get_stats(int* vtx_total, int* vtx_used, int* models_converted);

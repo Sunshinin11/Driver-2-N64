@@ -1900,12 +1900,13 @@ extern "C" void d2_native_draw_ot(u_long *ot)
     if (rg) {
         const int top = (int)(((uintptr_t)ot - rg->base) / sizeof(OT_TAG));
         const OT_TAG *slots = (const OT_TAG*)rg->base;
+        int nextOrd = t3d_ordered ? d2_t3d_order_peek_bucket() : -1;
         for (int sl = top; sl >= 0; --sl) {
             if (!(sl & 63)) d2_audio_mix();      // o quadro leva ~90 ms: sem isso o buffer de audio esvazia no meio do desenho
             {
                 const int bucket = 0x107F - (top - sl);
                 if (t3d_ordered) {
-                    if (bucket >= 0 && bucket <= 0x107F) d2_t3d_draw_world_until(bucket);
+                    if (nextOrd >= bucket && bucket >= 0 && bucket <= 0x107F) { d2_t3d_draw_world_until(bucket); nextOrd = d2_t3d_order_peek_bucket(); }
                 } else if (!t3d_drawn && bucket >= 0 && bucket < 0x1070) {
                     t3d_drawn = true;
                     d2_t3d_draw_queued_buildings();
