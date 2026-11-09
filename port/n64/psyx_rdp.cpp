@@ -89,6 +89,7 @@ enum {
     D2G_CMD_DRAW_END       = 6,
     D2G_CMD_SET_TILE_PAL   = 7,
     D2G_CMD_POLY_GT3       = 8,
+    D2G_CMD_LOAD_WIN       = 9,
 };
 
 static void rdp_init_once(void)
@@ -656,8 +657,19 @@ static bool upload_win(int px, int py, int clut, int u0, int v0, int w, int h)
     { const int bkey = base + (px < 512 ? 1024 : 0);
     if (bkey != s_winBase) { track_ovl_switch(0); rdpq_set_texture_image_raw(0, PhysicalAddr((const char *)(px < 512 ? d2_vramLc : d2_vramR) + base), FMT_I8, SH_W * 2, 512); s_winBase = bkey; } }
     bx -= base;
-    track_ovl_switch(0);
-    rdpq_load_tile(TILE6, bx, by, bx + 32, by + 64);
+    if (s_d2gpuOvl)
+    {
+        // LOAD_TILE do RDP escrito pelo proprio overlay (sem trocar de overlay do RSP)
+        track_ovl_switch(s_d2gpuOvl);
+        rspq_write(s_d2gpuOvl, D2G_CMD_LOAD_WIN, 0,
+            (0x34u << 24) | (((uint32_t)(bx * 4) & 0xFFF) << 12) | ((uint32_t)(by * 4) & 0xFFF),
+            (6u << 24) | (((uint32_t)((bx + 32) * 4 - 4) & 0xFFF) << 12) | ((uint32_t)((by + 64) * 4 - 4) & 0xFFF));
+    }
+    else
+    {
+        track_ovl_switch(0);
+        rdpq_load_tile(TILE6, bx, by, bx + 32, by + 64);
+    }
     s_cLdWin++;
     s_tmemWin = true;
     s_tmemDirty = true;

@@ -12,6 +12,7 @@
         RSPQ_DefineCommand D2G_Cmd_DrawEnd,      4   # 6
         RSPQ_DefineCommand D2G_Cmd_SetTilePal,   8   # 7
         RSPQ_DefineCommand D2G_Cmd_PolyGT3,      32  # 8
+        RSPQ_DefineCommand D2G_Cmd_LoadWin,      12  # 9
     RSPQ_EndOverlayHeader
 
     RSPQ_BeginSavedState
@@ -109,6 +110,38 @@ D2G_Cmd_SetTilePal:
     sll a1, a1, 20
 
     jal RDPQ_Write8
+    nop
+
+    j RDPQ_Finalize
+    nop
+    .endfunc
+
+    #############################################################
+    # D2G_Cmd_LoadWin (Command 9, size 12)
+    #
+    # SYNC_LOAD + LOAD_TILE sem trocar de overlay (a troca custava mais que a carga).
+    # a0: [31..24: CMD]
+    # a1: palavra 0 do LOAD_TILE   a2: palavra 1 do LOAD_TILE
+    #############################################################
+    .func D2G_Cmd_LoadWin
+D2G_Cmd_LoadWin:
+    mfc0 t0, COP0_DMA_BUSY
+1:  bnez t0, 1b
+    mfc0 t0, COP0_DMA_BUSY
+
+    sb zero, %lo(D2G_OUTPUT_OFFSET)
+
+    move t8, a1
+    move t9, a2
+    lw a0, %lo(RDPQ_CURRENT)
+    jal RSPQCmd_RdpAppendBuffer
+    nop
+
+    lui a0, 0x2600
+    li a1, 0
+    move a2, t8
+    move a3, t9
+    jal RDPQ_Write16
     nop
 
     j RDPQ_Finalize
