@@ -972,6 +972,37 @@ void PsyX_EndScene(void)
         track_ovl_switch(s_d2gpuOvl);
         rspq_write(s_d2gpuOvl, D2G_CMD_DRAW_END);
     }
+    {   // contador de FPS (media de 8 quadros) em sete segmentos com retangulos de preenchimento (texto da rdpq custava ~6% do quadro)
+        static unsigned t0f, nf, fps10; static bool fpsOn = true, comboPrev;
+        {   // L + R + Start liga/desliga o contador (ligado por padrao; desligado nao custa nada)
+            const joypad_buttons_t bt = joypad_get_buttons_held(JOYPAD_PORT_1);
+            const bool combo = bt.l && bt.r && bt.start;
+            if (combo && !comboPrev) fpsOn = !fpsOn;
+            comboPrev = combo;
+        }
+        if (nf == 0) t0f = t0f ? t0f : get_ticks();
+        if (++nf == 8) { const unsigned t = get_ticks(); fps10 = (unsigned)((8ull * 46875000ull * 10ull) / (unsigned)(t - t0f)); t0f = t; nf = 0; }
+        static const unsigned char seg[10] = { 0x3F, 0x06, 0x5B, 0x4F, 0x66, 0x6D, 0x7D, 0x07, 0x7F, 0x6F };   // bits a..g
+        static const signed char sr[7][4] = { {1,0,7,2}, {6,1,8,7}, {6,7,8,13}, {1,12,7,14}, {0,7,2,13}, {0,1,2,7}, {1,6,7,8} };
+        const unsigned v = fps10 > 999 ? 999 : fps10;
+        const int x0 = 24, y0 = 24;
+        if (fpsOn) {
+        track_ovl_switch(0);
+        rdpq_set_mode_fill(RGBA32(0, 0, 0, 255));
+        rdpq_fill_rectangle(x0 - 2, y0 - 2, x0 + 40, y0 + 16);
+        rdpq_set_fill_color(RGBA32(255, 255, 255, 255));
+        int dx = x0;
+        const int digs[3] = { (int)(v / 100), (int)((v / 10) % 10), (int)(v % 10) };
+        for (int d = 0; d < 3; d++)
+        {
+            if (d == 2) { rdpq_fill_rectangle(dx, y0 + 12, dx + 2, y0 + 14); dx += 4; }
+            if (d == 0 && digs[0] == 0) continue;
+            for (int k = 0; k < 7; k++)
+                if (seg[digs[d]] & (1 << k)) rdpq_fill_rectangle(dx + sr[k][0], y0 + sr[k][1], dx + sr[k][2], y0 + sr[k][3]);
+            dx += 11;
+        }
+        }
+    }
     track_ovl_switch(0);
     rdpq_detach_show();
     d2_audio_pump();
