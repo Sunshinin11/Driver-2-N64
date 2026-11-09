@@ -555,7 +555,7 @@ P('PsyCross/src/gte/PsyX_GTE.cpp', _RTPS_OLD, _RTPS_NEW)
 
 # ---- N64: perfil visual do PS1: mesmos limites de objetos e distancias de LOD, sem ativar o scratchpad do PS1 ----
 P('Game/C/draw.h', "#else\n\n#define MAX_DRAWN_BUILDINGS\t\t384\n#define MAX_DRAWN_TILES\t\t\t750\n#define MAX_DRAWN_ANIMATING\t\t48\n#define MAX_DRAWN_SPRITES\t\t128\n\n#define DRAW_LOD_DIST_HIGH\t\t7000\n#define DRAW_LOD_DIST_LOW\t\t10000\n\nextern _pct& plotContext;",
-  "#elif defined(D2_N64_PERF)\n\n#define MAX_DRAWN_BUILDINGS\t\t192\n#define MAX_DRAWN_TILES\t\t\t320\n#define MAX_DRAWN_ANIMATING\t\t20\n#define MAX_DRAWN_SPRITES\t\t75\n\n#define DRAW_LOD_DIST_HIGH\t\t2200\n#define DRAW_LOD_DIST_LOW\t\t3800\n\nextern _pct& plotContext;\n\n#else\n\n#define MAX_DRAWN_BUILDINGS\t\t384\n#define MAX_DRAWN_TILES\t\t\t750\n#define MAX_DRAWN_ANIMATING\t\t48\n#define MAX_DRAWN_SPRITES\t\t128\n\n#define DRAW_LOD_DIST_HIGH\t\t7000\n#define DRAW_LOD_DIST_LOW\t\t10000\n\nextern _pct& plotContext;")
+  "#elif defined(D2_N64_PERF)\n\n#define MAX_DRAWN_BUILDINGS\t\t192\n#define MAX_DRAWN_TILES\t\t\t320\n#define MAX_DRAWN_ANIMATING\t\t20\n#define MAX_DRAWN_SPRITES\t\t75\n\n#define DRAW_LOD_DIST_HIGH\t\t4000\n#define DRAW_LOD_DIST_LOW\t\t7000\n\nextern _pct& plotContext;\n\n#else\n\n#define MAX_DRAWN_BUILDINGS\t\t384\n#define MAX_DRAWN_TILES\t\t\t750\n#define MAX_DRAWN_ANIMATING\t\t48\n#define MAX_DRAWN_SPRITES\t\t128\n\n#define DRAW_LOD_DIST_HIGH\t\t7000\n#define DRAW_LOD_DIST_LOW\t\t10000\n\nextern _pct& plotContext;")
 P('Game/C/draw.h', "#elif defined(D2_N64_PERF)\n\n#define MAX_DRAWN_BUILDINGS",
   "#elif defined(D2_N64_LOW)\n\n#define MAX_DRAWN_BUILDINGS\t\t128\n#define MAX_DRAWN_TILES\t\t\t192\n#define MAX_DRAWN_ANIMATING\t\t12\n#define MAX_DRAWN_SPRITES\t\t48\n\n#define DRAW_LOD_DIST_HIGH\t\t2500\n#define DRAW_LOD_DIST_LOW\t\t4500\n\nextern _pct& plotContext;\n\n#elif defined(D2_N64_PERF)\n\n#define MAX_DRAWN_BUILDINGS")
 P('Game/C/draw.c', "int goFaster = 0;\t// [A] was 1", "int goFaster = 1;\t// N64: como no PS1 (metade das celulas visiveis)")
@@ -563,7 +563,7 @@ P('Game/C/draw.c', "\tdrawData.farClipLimit = 125000;", "\tdrawData.farClipLimit
 
 # ---- Fidelidade PS1 no N64: remove expansoes de limites/efeitos/conteudo feitas para PC, sem ativar caminhos de plataforma PSX ----
 R('Game/dr2limits.h', r'#ifndef PSX', '#if !defined(PSX) && !defined(D2_PSX_FIDELITY)')
-P('Game/C/camera.h', "#ifdef PSX\n#define VIEW_DRAW_DISTANCE 16000", "#if defined(PSX) || defined(D2_PSX_FIDELITY)\n#define VIEW_DRAW_DISTANCE 5500\t// N64: alvo de 25 FPS (PS1: 16000)")
+P('Game/C/camera.h', "#ifdef PSX\n#define VIEW_DRAW_DISTANCE 16000", "#if defined(PSX) || defined(D2_PSX_FIDELITY)\n#define VIEW_DRAW_DISTANCE 16000")
 P('Game/C/draw.c', "#ifdef PSX\n#define MAX_TREE_SHADOW_DISTANCE 7000", "#if defined(PSX) || defined(D2_PSX_FIDELITY)\n#define MAX_TREE_SHADOW_DISTANCE 7000")
 # ---- Evita wrap-around de 16 bits no FrustrumCheck16 em DrawMapPSX (explosao de sprites distantes) ----
 P('Game/C/draw.c',
