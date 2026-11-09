@@ -72,6 +72,7 @@ DEFINE_RSP_UCODE(rsp_d2gpu);
 static uint32_t s_d2gpuOvl = 0;
 static int s_rspOfx = 0x7FFFFFFF;
 static int s_rspOfy = 0x7FFFFFFF;
+static int s_rspAlpha = 255;
 static int s_rspTexOu = 0x7FFFFFFF;
 static int s_rspTexOv = 0x7FFFFFFF;
 static unsigned int s_rspF3Count = 0;
@@ -90,6 +91,7 @@ enum {
     D2G_CMD_SET_TILE_PAL   = 7,
     D2G_CMD_POLY_GT3       = 8,
     D2G_CMD_LOAD_WIN       = 9,
+    D2G_CMD_SET_ALPHA      = 10,
 };
 
 static void rdp_init_once(void)
@@ -150,6 +152,7 @@ static int s_palClut = -1, s_palFmt = -1;
 static unsigned int s_palVer;
 
 static int s_curRgbaMode = 0;
+static int s_palIA = 0;              // paleta da TMEM em formato IA16 (so o alfa = brilho do texel): quads de 4 bits no modo SUBTRACT
 static BlendMode s_curBlend = BM_NONE;
 
 static inline unsigned short conv_color(unsigned short v)
@@ -174,6 +177,11 @@ static inline uint32_t psx_to_rgba32(unsigned short v)
     if (g_norm > 255) g_norm = 255;
     if (b_norm > 255) b_norm = 255;
     return ((uint32_t)r_norm << 24) | ((uint32_t)g_norm << 16) | ((uint32_t)b_norm << 8) | (uint32_t)maxc;
+}
+static inline unsigned short pal_word(int x, int y)
+{
+    if (!s_palIA) return d2_vram_rdn(x, y);
+    return (unsigned short)(psx_to_rgba32(d2_vram_rd(x, y)) & 255);   // IA16: intensidade 0, alfa = max(r,g,b) como no RGBA32
 }
 
 struct PalEnt { int clut; unsigned int sig, gen, use, vw; int valid, bank; unsigned short pal[16] __attribute__((aligned(16))); };
@@ -418,6 +426,11 @@ static void set_mode(bool textured, int fmt, BlendMode blend)
     if (blend == BM_ADD) rgba_mode = 1;
     else if (blend == BM_ADD_QUATER_SOURCE) rgba_mode = 2;
     else if (blend == BM_SUBTRACT) rgba_mode = 3;
+    // SUBTRACT com textura de 4 bits: o combinador so usa o alfa do texel (= max(r,g,b)), entao CI4 + TLUT IA16 reproduz o RGBA32 e vai pela janela/RSP
+    const bool ciSub = textured && fmt == TF_4_BIT && blend == BM_SUBTRACT;
+    const int modeBlend = rgba_mode;
+    if (ciSub) rgba_mode = 0;
+    s_palIA = ciSub ? 1 : 0;
 
     if (rgba_mode != s_curRgbaMode)
     {
@@ -443,7 +456,7 @@ static void set_mode(bool textured, int fmt, BlendMode blend)
     rdpq_mode_dithering(DITHER_NONE_NONE);
     rdpq_mode_filter(FILTER_POINT);
 
-    const bool isRgba32 = (rgba_mode != 0);
+    const bool isRgba32 = (modeBlend != 0);
     const bool isSub = (blend == BM_SUBTRACT);
 
     int pa = 0;
@@ -458,7 +471,7 @@ static void set_mode(bool textured, int fmt, BlendMode blend)
             else
                 rdpq_mode_combiner(RDPQ_COMBINER1((TEX0, ZERO, SHADE, ZERO), (TEX0, ZERO, SHADE, ZERO)));
             rdpq_mode_alphacompare(1);
-            rdpq_mode_tlut(TLUT_NONE);
+            rdpq_mode_tlut(ciSub ? TLUT_IA16 : TLUT_NONE);
             rdpq_mode_blender(RDPQ_BLENDER((IN_RGB, IN_ALPHA, MEMORY_RGB, INV_MUX_ALPHA)));
         }
         else
@@ -532,7 +545,7 @@ extern "C" void d2_rdp_invalidate_backend_cache(void)
 
 static void upload_pal_bank(int clut)
 {
-    const int pkey = clut;
+    const int pkey = clut | (s_palIA ? 0x10000 : 0);
     if (pkey == s_pbClut && s_pbVw == s_vramWrites && s_curBank > 0 && s_bank[s_curBank].clut == pkey) { s_bank[s_curBank].lru = ++s_bankLru; return; }
     s_pbClut = pkey; s_pbVw = s_vramWrites;
     PalEnt *e = &s_palCache[(pkey ^ (pkey >> 8)) & (PAL_CACHE - 1)];
@@ -546,7 +559,7 @@ static void upload_pal_bank(int clut)
     if (!ok)
     {
         if (e->valid && e->use > s_doneCounter) rdp_wait_idle();      // o RDP ainda pode estar lendo esta paleta
-        for (int i = 0; i < 16; i++) e->pal[i] = d2_vram_rdn(cx + i, cy);
+        for (int i = 0; i < 16; i++) e->pal[i] = pal_word(cx + i, cy);
         data_cache_hit_writeback(e->pal, 32);
         e->clut = pkey; e->sig = cell_signature(cx, cy, 16, 1); e->vw = s_vramWrites; e->valid = 1; e->gen = ++s_genCounter;
     }
@@ -712,7 +725,7 @@ static bool upload_region(int page, int clut, int u0, int v0, int w, int h, int 
     if (!s_curRgbaMode)
     {
         const bool paletted = s_texFormat != TF_16_BIT;
-        const int pkey = clut;
+        const int pkey = clut | (s_palIA ? 0x10000 : 0);
         if (false) {}
         else if (paletted && (s_lastUp.clut != pkey || s_lastUp.fmt != s_texFormat || s_lastUp.palVer != s_vramWrites || s_lastUp.slot == 0))
         {
@@ -721,7 +734,7 @@ static bool upload_region(int page, int clut, int u0, int v0, int w, int h, int 
             s_palIdx = (s_palIdx + 1) % PAL_RING;
             if (s_palUse[s_palIdx] > s_doneCounter) rdp_wait_idle();
             unsigned short *pal = s_palRing[s_palIdx];
-            for (int i = 0; i < n; i++) pal[i] = d2_vram_rdn(cx + i, cy);
+            for (int i = 0; i < n; i++) pal[i] = pal_word(cx + i, cy);
             data_cache_hit_writeback(pal, n * 2);
             rdpq_tex_upload_tlut(pal, 0, n); s_cTlut++; s_winBase = -1; if (n > 16) banks_invalidate(); else s_bank[0].clut = -1;
             if (n > 16) banks_invalidate();
@@ -808,14 +821,14 @@ extern "C" int d2_rdp_t3d_texture(int page, int clut, int u, int v, int w, int h
 // paleta de 16 ou 256 cores (recarrega se mudou CLUT, formato, VRAM ou modo)
 static bool upload_pal(int clut)
 {
-    const int pkey = clut;
+    const int pkey = clut | (s_palIA ? 0x10000 : 0);
     if (s_lastUp.clut == pkey && s_lastUp.fmt == s_texFormat && s_lastUp.palVer == s_vramWrites && s_lastUp.slot != 0) return false;
     int cx, cy; d2_clut_xy((unsigned)clut & 0xFFFF, &cx, &cy);
     const int n = s_texFormat == TF_4_BIT ? 16 : 256;
     s_palIdx = (s_palIdx + 1) % PAL_RING;
     if (s_palUse[s_palIdx] > s_doneCounter) rdp_wait_idle();
     unsigned short *pal = s_palRing[s_palIdx];
-    for (int i = 0; i < n; i++) pal[i] = d2_vram_rdn(cx + i, cy);
+    for (int i = 0; i < n; i++) pal[i] = pal_word(cx + i, cy);
     data_cache_hit_writeback(pal, n * 2);
     rdpq_tex_upload_tlut(pal, 0, n); s_cTlut++; s_winBase = -1; if (n > 16) banks_invalidate(); else s_bank[0].clut = -1;
     if (n > 16) banks_invalidate();
@@ -1515,7 +1528,7 @@ static unsigned int s_dCnt;
 int d2_direct_poly_i(P_TAG *tag);
 int d2_direct_poly(P_TAG *tag);
 // quad texturizado de 4 bits (pagina em x >= 512): o RSP monta os dois triangulos, com 7 palavras de comando em vez de ~30 escritas pela CPU
-static bool rsp_ft4(const short *xs, const short *ys, const unsigned char *us, const unsigned char *vs, int tpage, int clut, uint32_t col, int ofx, int ofy)
+static bool rsp_ft4(const short *xs, const short *ys, const unsigned char *us, const unsigned char *vs, int tpage, int clut, uint32_t col, int ofx, int ofy, int alpha = 255)
 {
     if (!s_d2gpuOvl || s_texFormat != TF_4_BIT || s_ctxSx16 != 65536 || s_ctxSy16 != 65536) return false;
     short minx = xs[0], maxx = xs[0], miny = ys[0], maxy = ys[0];
@@ -1553,6 +1566,12 @@ static bool rsp_ft4(const short *xs, const short *ys, const unsigned char *us, c
     const uint32_t xy2 = ((uint32_t)(uint16_t)xs[2] << 16) | (uint16_t)ys[2], xy3 = ((uint32_t)(uint16_t)xs[3] << 16) | (uint16_t)ys[3];
     const uint32_t uv01 = ((uint32_t)us[0] << 24) | ((uint32_t)vs[0] << 16) | ((uint32_t)us[1] << 8) | vs[1];
     const uint32_t uv23 = ((uint32_t)us[2] << 24) | ((uint32_t)vs[2] << 16) | ((uint32_t)us[3] << 8) | vs[3];
+    if (alpha != s_rspAlpha)
+    {
+        s_rspAlpha = alpha;
+        track_ovl_switch(s_d2gpuOvl);
+        rspq_write(s_d2gpuOvl, D2G_CMD_SET_ALPHA, 0, (uint32_t)alpha);
+    }
     track_ovl_switch(s_d2gpuOvl);
     rspq_write(s_d2gpuOvl, D2G_CMD_POLY_FT4, col, xy0, xy1, xy2, xy3, uv01, uv23);
     s_rspFT4Count++;
@@ -1957,6 +1976,12 @@ int d2_direct_poly(P_TAG *tag)
         const uint32_t col = shadeOn ? ((uint32_t)s_shadeLut[cr[0]] << 16) | ((uint32_t)s_shadeLut[cg[0]] << 8) | s_shadeLut[cb[0]]
                                      : ((uint32_t)s_shadeLut[128] << 16) | ((uint32_t)s_shadeLut[128] << 8) | s_shadeLut[128];
         if (rsp_ft4(xs, ys, us, vs, tpage, clut, col, ofx, ofy)) return len;
+    }
+    if (tex && quad && !gour && bm == BM_SUBTRACT && texOk)
+    {
+        uint32_t rg0;
+        calc_primitive_colors(&rg0, 1, shadeOn ? cr : NULL, shadeOn ? cg : NULL, shadeOn ? cb : NULL, bm, true);
+        if (rsp_ft4(xs, ys, us, vs, tpage, clut, rg0 >> 8, ofx, ofy, (int)(rg0 & 255))) return len;
     }
     if (tex && !quad && gour && bm == BM_NONE && texOk)
     {

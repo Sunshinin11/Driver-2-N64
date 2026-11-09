@@ -13,10 +13,12 @@
         RSPQ_DefineCommand D2G_Cmd_SetTilePal,   8   # 7
         RSPQ_DefineCommand D2G_Cmd_PolyGT3,      32  # 8
         RSPQ_DefineCommand D2G_Cmd_LoadWin,      12  # 9
+        RSPQ_DefineCommand D2G_Cmd_SetAlpha,     8   # 10
     RSPQ_EndOverlayHeader
 
     RSPQ_BeginSavedState
 D2G_OUTPUT_OFFSET:  .byte 0
+D2G_ALPHA:          .byte 0xFF
                     .align 1
 D2G_OFX:            .short 0
 D2G_OFY:            .short 0
@@ -113,6 +115,17 @@ D2G_Cmd_SetTilePal:
     nop
 
     j RDPQ_Finalize
+    nop
+    .endfunc
+
+    #############################################################
+    # D2G_Cmd_SetAlpha (Command 10, size 8)
+    # a1: alfa (0..255) usado pelos proximos quads FT4
+    #############################################################
+    .func D2G_Cmd_SetAlpha
+D2G_Cmd_SetAlpha:
+    sb a1, %lo(D2G_ALPHA)
+    jr ra
     nop
     .endfunc
 
@@ -370,9 +383,10 @@ D2G_Cmd_PolyFT4:
     lw t5, CMD_ADDR(20, 28)    # uv0, uv1
     lw t4, CMD_ADDR(24, 28)    # uv2, uv3
 
-    # RGBA32
+    # RGBA32 (alfa vem do estado D2G_ALPHA: 0xFF para quads opacos)
     sll t0, a0, 8
-    ori t0, t0, 0xFF
+    lbu t1, %lo(D2G_ALPHA)
+    or t0, t0, t1
 
     lh t1, %lo(D2G_OFX)
     lh t2, %lo(D2G_OFY)
