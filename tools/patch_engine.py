@@ -561,6 +561,12 @@ P('Game/C/draw.h', "#elif defined(D2_N64_PERF)\n\n#define MAX_DRAWN_BUILDINGS",
 P('Game/C/draw.c', "int goFaster = 0;\t// [A] was 1", "int goFaster = 1;\t// N64: como no PS1 (metade das celulas visiveis)")
 P('Game/C/draw.c', "\tdrawData.farClipLimit = 125000;", "\tdrawData.farClipLimit = 60000;\t// N64: como no PS1")
 
+# ---- N64: carga por quadro (sem encurtar a visao da estrada nem dos carros) ----
+P('Game/C/mission.c', "\tmaxCivCars = 14;\n\tmaxParkedCars = 7;", "\tmaxCivCars = 7;\t// N64: 50% do transito\n\tmaxParkedCars = 4;")
+P('Game/C/mission.c', "\t\tmaxCivCars = 10;\n\t\tmaxParkedCars = 5;", "\t\tmaxCivCars = 5;\n\t\tmaxParkedCars = 3;")
+P('Game/C/tile.c', "if (Z <= DRAW_LOD_DIST_HIGH)\n\t\t{\n\t\t\tif (Low2HighDetailTable", "if (Z <= 2500)\n\t\t{\n\t\t\tif (Low2HighDetailTable")
+P('Game/C/tile.c', "\t\t\tif (Z < 2000)\n\t\t\t\tTileNxN(pModel, 4, 75);", "\t\t\tif (Z < 2000)\n\t\t\t\tTileNxN(pModel, 2, 35);")
+
 # ---- Fidelidade PS1 no N64: remove expansoes de limites/efeitos/conteudo feitas para PC, sem ativar caminhos de plataforma PSX ----
 R('Game/dr2limits.h', r'#ifndef PSX', '#if !defined(PSX) && !defined(D2_PSX_FIDELITY)')
 P('Game/C/camera.h', "#ifdef PSX\n#define VIEW_DRAW_DISTANCE 16000", "#if defined(PSX) || defined(D2_PSX_FIDELITY)\n#define VIEW_DRAW_DISTANCE 16000")
@@ -568,7 +574,7 @@ P('Game/C/draw.c', "#ifdef PSX\n#define MAX_TREE_SHADOW_DISTANCE 7000", "#if def
 # ---- Evita wrap-around de 16 bits no FrustrumCheck16 em DrawMapPSX (explosao de sprites distantes) ----
 P('Game/C/draw.c',
   "model = modelpointers[(ppco->value >> 6) | ((ppco->pos).vy & 1) << 10];\n\n\t\t\t\t\tif (FrustrumCheck16(ppco, model->bounding_sphere) != -1)",
-  "model = modelpointers[(ppco->value >> 6) | ((ppco->pos).vy & 1) << 10];\n\n\t\t\t\t\t{\n\t\t\t\t\t\tint _dx = (ci.nearCell.x + (short)(ppco->pos.vx - ci.nearCell.x)) - camera_position.vx;\n\t\t\t\t\t\tint _dz = (ci.nearCell.z + (short)(ppco->pos.vz - ci.nearCell.z)) - camera_position.vz;\n\t\t\t\t\t\tif (ABS(_dx) > VIEW_DRAW_DISTANCE || ABS(_dz) > VIEW_DRAW_DISTANCE) continue;   // evita wrap-around de 16 bits no FrustrumCheck16\n\t\t\t\t\t}\n\n\t\t\t\t\tif (FrustrumCheck16(ppco, model->bounding_sphere) != -1)")
+  "model = modelpointers[(ppco->value >> 6) | ((ppco->pos).vy & 1) << 10];\n\n\t\t\t\t\t{\n\t\t\t\t\t\tint _dx = (ci.nearCell.x + (short)(ppco->pos.vx - ci.nearCell.x)) - camera_position.vx;\n\t\t\t\t\t\tint _dz = (ci.nearCell.z + (short)(ppco->pos.vz - ci.nearCell.z)) - camera_position.vz;\n\t\t\t\t\t\tif (ABS(_dx) > 10000 || ABS(_dz) > 10000) continue;   // N64: predios/arvores/postes mais perto (estrada e carros seguem em VIEW_DRAW_DISTANCE); evita wrap-around de 16 bits no FrustrumCheck16\n\t\t\t\t\t}\n\n\t\t\t\t\tif (FrustrumCheck16(ppco, model->bounding_sphere) != -1)")
 P('Game/C/system.h', "#ifdef PSX\n#define\tOTSIZE\t0x1080", "#if defined(PSX) || defined(D2_PSX_FIDELITY)\n#define\tOTSIZE\t0x1080")
 P('Game/driver2.h', "#define ENABLE_GAME_ENCHANCEMENTS\t1\n#define ENABLE_BONUS_CONTENT\t\t1",
   "#ifdef D2_PSX_FIDELITY\n#define ENABLE_GAME_ENCHANCEMENTS\t0\n#define ENABLE_BONUS_CONTENT\t\t0\n#else\n#define ENABLE_GAME_ENCHANCEMENTS\t1\n#define ENABLE_BONUS_CONTENT\t\t1\n#endif")
