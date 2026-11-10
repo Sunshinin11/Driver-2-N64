@@ -1,0 +1,146 @@
+# Driver 2 (REDRIVER2) para Nintendo 64 - libdragon.   Uso: make -f Makefile.d2   (ou: bash build.sh)
+# E1: o jogo (Game/**/*.c, compilado como C++ - igual ao premake do projeto original) + camada N64 (port/n64).
+BUILD_DIR = build_d2
+OBJ_DIR   = $(BUILD_DIR)/o
+N64_ROM_SAVETYPE = none
+LIBDRAGON_PREVIEW = 2
+N64_INST ?= /opt/libdragon
+include $(N64_INST)/include/n64.mk
+N64_CXXFLAGS ?= $(N64_CFLAGS)
+.DEFAULT_GOAL := all
+
+SRC  = port/redriver2/src_rebuild
+FS_DIR = filesystem_d2
+GAME_OPT ?= -Os
+
+# xaplay.c precisa de OpenAL (audio de CD no PC): sera substituido por camada N64 propria.
+GAME_SRCS := $(filter-out $(SRC)/Game/C/xaplay.c,$(wildcard $(SRC)/Game/C/*.c)) \
+             $(wildcard $(SRC)/Game/ASM/*.c) $(wildcard $(SRC)/Game/Frontend/*.c) $(wildcard $(SRC)/Game/*.c)
+GAME_OBJS := $(patsubst %.c,$(OBJ_DIR)/%.o,$(GAME_SRCS))
+# Partes do PsyCross que ainda entram no build. O GTE saiu por completo: a transformacao 3D e nativa (port/compat/d2_xf.h, port/n64/xf_native.cpp).
+PSYX_C   := $(addprefix $(SRC)/PsyCross/src/psx/,ABS.C LIBGTE.C LIBAPI.C LIBGPU.C LIBSN.C LIBMCRD.C LIBSPU.C)
+PSYX_CPP := $(addprefix $(SRC)/PsyCross/src/gte/,half_float.cpp)
+PSYX_OBJS := $(patsubst %.C,$(OBJ_DIR)/%.o,$(PSYX_C)) $(patsubst %.cpp,$(OBJ_DIR)/%.o,$(PSYX_CPP))
+PLAT_C    := port/n64/main_n64.c port/n64/psyx_n64.c port/n64/sys_n64.c
+PLAT_CXX  := port/n64/d2_entry.cpp port/n64/psyx_backend.cpp port/n64/libetc_n64.cpp port/n64/fs_n64.cpp port/n64/psyx_rdp.cpp port/n64/n64_gpu_api.cpp port/n64/d2_gpu_state.cpp port/n64/stubs_n64.cpp port/n64/fmv_n64.cpp port/n64/xf_native.cpp port/n64/d2_vtxcache.cpp
+PLAT_OBJS := $(patsubst %.c,$(OBJ_DIR)/%.o,$(PLAT_C)) $(patsubst %.cpp,$(OBJ_DIR)/%.o,$(PLAT_CXX))
+OBJS := $(GAME_OBJS) $(PSYX_OBJS) $(PLAT_OBJS)
+
+D2_INC = -I$(SRC)/Game -I$(SRC)/PsyCross/include -I$(SRC)/PsyCross/include/psx -Iport/compat -Iport/n64
+N64_LDFLAGS += $(D2_LDEXTRA)
+# funcoes quentes juntas no inicio do .text (o cache de instrucoes do VR4300 tem 16 KB: espalhadas, elas se expulsam). Gerado por tools/hot.py.
+HOT_LD ?= hot.ld
+ifneq ($(wildcard $(HOT_LD)),)
+N64_LDFLAGS += --section-ordering-file=$(HOT_LD)
+endif
+# Caminhos nativos sempre ligados (o codigo do port ja foi simplificado; estes -D so afetam os arquivos do motor remendados)
+D2_OPT ?= -DD2_DIRECT -DD2_NATIVE_OT -DD2_NOSUBQ -DD2_XF_NATIVE -DD2_VTXCACHE -DD2_LEANLOAD -DD2_FASTOT -DD2_N64_PERF -DD2_PSX_FIDELITY
+
+D2_OPT += -DD2_NO_TANNER_SHADOW
+
+D2_OPT += -DD2_RSP_GPU=1
+PLAT_OBJS += $(BUILD_DIR)/port/n64/rsp_d2gpu.o
+OBJS += $(BUILD_DIR)/port/n64/rsp_d2gpu.o
+
+T3D_DIR = submodules/tiny3d
+N64_LDFLAGS := $(T3D_DIR)/build/libt3d.a $(N64_LDFLAGS)
+D2_OPT += -DD2_T3D_WORLD=1
+D2_INC += -I$(T3D_DIR)/src
+PLAT_OBJS += $(OBJ_DIR)/port/n64/d2_t3d_world.o
+OBJS += $(OBJ_DIR)/port/n64/d2_t3d_world.o
+
+D2_OPT += -DD2_VADPCM=1
+FLAGS_FILE = $(BUILD_DIR)/.d2_flags
+.PHONY: FORCE
+$(FLAGS_FILE): FORCE
+	@mkdir -p $(BUILD_DIR)
+	@printf '%s\n%s\n' '$(D2_OPT)' '$(D2_EXTRA)' > $@.tmp
+	@if ! cmp -s $@.tmp $@; then mv $@.tmp $@; else rm $@.tmp; fi
+$(OBJS): $(FLAGS_FILE)
+D2_DEFS = -DUSE_PGXP=0 -DNTSC_VERSION -DD2_N64=1 -DBUILD_CONFIGURATION_STRING=\"n64\" $(D2_OPT) $(D2_EXTRA)
+CXX_GAME = -include port/compat/d2_n64_compat.h -include stdarg.h -x c++ -std=gnu++14 -fpermissive -w -fno-exceptions -fno-rtti $(D2_DEFS) $(D2_INC) -MMD -MP
+
+# Margem de seguranca de video (pontos do VI, base 640x480). 0 = imagem inteira (emulador).
+OVERSCAN_X ?= 36
+OVERSCAN_Y ?= 28
+$(OBJ_DIR)/port/n64/main_n64.o: N64_CFLAGS += -DN64_OVERSCAN_X=$(OVERSCAN_X) -DN64_OVERSCAN_Y=$(OVERSCAN_Y)
+
+# otimizacao -O2 so para alguns arquivos (O2_LIST = nomes base separados por espaco, ex.: "draw mdraw")
+O2_LIST ?= draw mdraw map cell tile models sky shadow overlay
+O2_FLAGS ?= -O2 -fno-strict-aliasing -fwrapv -fno-delete-null-pointer-checks
+O2_OBJS := $(foreach n,$(O2_LIST),$(filter %/$(n).o,$(GAME_OBJS)))
+$(O2_OBJS): GAME_OPT := $(O2_FLAGS)
+# jogo: .c compilado como C++
+$(GAME_OBJS): $(OBJ_DIR)/%.o: %.c
+	@mkdir -p $(dir $@)
+	@echo "    [CXX] $<"
+	$(N64_CXX) $(N64_CXXFLAGS) $(GAME_OPT) $(CXX_GAME) -c $< -o $@
+
+$(filter %.o,$(patsubst %.C,$(OBJ_DIR)/%.o,$(PSYX_C))): $(OBJ_DIR)/%.o: %.C
+	@mkdir -p $(dir $@)
+	@echo "    [CXX] $<"
+	$(N64_CXX) $(N64_CXXFLAGS) $(GAME_OPT) $(CXX_GAME) -c $< -o $@
+
+$(patsubst %.cpp,$(OBJ_DIR)/%.o,$(PSYX_CPP)): $(OBJ_DIR)/%.o: %.cpp
+	@mkdir -p $(dir $@)
+	@echo "    [CXX] $<"
+	$(N64_CXX) $(N64_CXXFLAGS) -O2 $(CXX_GAME) -I$(SRC)/PsyCross/src -c $< -o $@
+
+$(OBJ_DIR)/port/n64/%.o: port/n64/%.c
+	@mkdir -p $(dir $@)
+	@echo "    [CC]  $<"
+	$(N64_CC) $(N64_CFLAGS) $(D2_DEFS) -std=gnu11 -MMD -MP -c $< -o $@
+
+$(OBJ_DIR)/port/n64/%.o: port/n64/%.cpp
+	@mkdir -p $(dir $@)
+	@echo "    [CXX] $<"
+	$(N64_CXX) $(N64_CXXFLAGS) $(D2_EXTRA) -std=gnu++14 -fpermissive -w -fno-exceptions -fno-rtti $(D2_DEFS) $(D2_INC) -I$(SRC)/PsyCross/src -include port/compat/d2_n64_compat.h -include stdarg.h -MMD -MP -c $< -o $@
+
+# DragonFS: arquivos do jogo extraidos do seu CD1 (nao entram no git). CITIES = cidades na ROM (CHICAGO,HAVANA,RIO,VEGAS).
+CD1     ?= $(or $(wildcard data/Driver2CD1.bin),$(wildcard data/install/Driver2CD1.bin),../ReDriver 2/data/install/Driver2CD1.bin)
+LANGDIR ?= $(or $(wildcard port/redriver2/data/DRIVER2/LANG),../ReDriver 2/data/DRIVER2/LANG)
+CITIES  ?= CHICAGO
+stage-data:
+	@mkdir -p $(FS_DIR)
+	@if [ -f "$(CD1)" ] || [ ! -d $(FS_DIR)/DRIVER2 ]; then python3 tools/extract_cd.py --cd1 "$(CD1)" --out $(FS_DIR) --cities "$(CITIES)" --lang-from "$(LANGDIR)"; fi
+
+FS_STAGE = $(BUILD_DIR)/fs
+XA64 ?= 1
+FMV_IDS ?= 0
+CD2 ?= $(wildcard data/Driver2CD2.bin)
+MEDIA_ARGS = $(if $(filter 1,$(XA64)),--xa-out "$(FS_STAGE)") \
+             $(if $(strip $(FMV_IDS)),--fmv-out "$(FS_STAGE)" --fmv-ids "$(FMV_IDS)") \
+             $(if $(strip $(CD2)),--cd2 "$(CD2)")
+$(BUILD_DIR)/d2_n64.dfs: stage-data
+	@mkdir -p $(dir $@) $(FS_STAGE)
+	@echo "    [DFS STAGE VADPCM] $(FS_STAGE)"
+	@cp -al $(FS_DIR)/* $(FS_STAGE)/ 2>/dev/null || cp -r $(FS_DIR)/* $(FS_STAGE)/
+	@if [ -d filesystem_vadpcm ]; then cp -al filesystem_vadpcm/* $(FS_STAGE)/ 2>/dev/null || cp -r filesystem_vadpcm/* $(FS_STAGE)/; fi
+	@echo "    [SFX64] $(FS_STAGE)/SFX64"
+	@python3 tools/convert_sfx_wav64.py --blk $(FS_DIR)/DRIVER2/SOUND/VOICES2.BLK --out $(FS_STAGE)/SFX64
+	@echo "    [MUS64] $(FS_STAGE)/MUS64"
+	@python3 tools/convert_music_wav64.py --bin $(FS_DIR)/DRIVER2/SOUND/MUSIC.BIN --out $(FS_STAGE)/MUS64
+	@python3 tools/reset_media_stage.py "$(FS_STAGE)"
+ifneq ($(strip $(MEDIA_ARGS)),)
+	@python3 tools/extract_cd.py --cd1 "$(CD1)" --out "$(FS_DIR)" --media-only $(MEDIA_ARGS)
+endif
+	@echo "    [DFS] $@"
+	$(N64_MKDFS) $@ $(FS_STAGE)
+	@if [ "$$(wc -c < "$@")" -gt 65011712 ]; then rm -f "$@"; echo "DragonFS exceeds 62 MiB. Reduce FMV_IDS or CITIES."; exit 1; fi
+
+$(T3D_DIR)/build/libt3d.a:
+	$(MAKE) -C $(T3D_DIR)
+
+$(BUILD_DIR)/d2_n64.elf: $(OBJS) | $(T3D_DIR)/build/libt3d.a
+
+-include $(OBJS:.o=.d)
+
+d2_n64.z64: N64_ROM_TITLE = "DRIVER 2 N64"
+d2_n64.z64: $(BUILD_DIR)/d2_n64.dfs
+
+all: d2_n64.z64
+
+clean:
+	rm -rf $(BUILD_DIR) d2_n64.z64   # o filesystem_d2 (extraido do CD) fica
+
+.PHONY: all clean stage-data

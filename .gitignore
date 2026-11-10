@@ -1,0 +1,48 @@
+# ---- Compilacao, ROMs e binarios gerados ----
+build_d2/
+build*/
+filesystem_d2/
+filesystem*/
+*.z64
+*.v64
+*.n64
+*.elf
+*.dfs
+*.map
+*.o
+*.d
+*.log
+*.bml
+__pycache__/
+
+# ---- Arquivos temporarios, patches locais e dumps ----
+*.ppm
+*.raw
+/*.patch
+/*.diff
+run1/
+b_*/
+prof_*/
+tmp*/
+capturas/
+*.bak*
+prompt_*.txt
+
+# ---- Motor REDRIVER2 / PsyCross (baixado/gerado via setup_engine.sh) ----
+port/redriver2/
+
+# ---- Formatos de disco e midia original PS1 ----
+*.bin
+*.cue
+*.iso
+*.img
+*.str
+*.avi
+data/*.bin
+data/*.cue
+data/*.iso
+data/*.img
+
+# ---- Submodulos locais redundantes ----
+port/tiny3d/
+submodules/silent-hill-decomp/

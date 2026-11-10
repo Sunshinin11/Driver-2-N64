@@ -1,0 +1,35 @@
+/* Incluido automaticamente (-include) em todos os arquivos do jogo no N64. Cobre o que o PC (Windows/Linux) fornecia. */
+#ifndef D2_N64_COMPAT_H
+#define D2_N64_COMPAT_H
+#include <stdio.h>
+#include "d2_endian.h"
+#define HOME_ENV "HOME"          /* nao existe pasta de usuario no N64; saves irao para Controller Pak/SRAM (etapa futura) */
+#define _mkdir(str) ((void)(str)) /* sem diretorios gravaveis no N64 */
+#ifdef __cplusplus
+extern "C" {
+#endif
+FILE *d2_fopen(const char *path, const char *mode); /* port/n64/sys_n64.c: redireciona para rom:/ (DragonFS) */
+void d2_audio_pump(void);
+void d2_vadpcm_set_current_lump(int lump);
+void d2_vadpcm_reset(void);
+int d2_LoadColor(void *rect, void *data);   /* upload de paleta / imagem de 16 bits: a VRAM guarda RGBA5551 do RDP */
+void d2_vc_car_begin(const void *vlist);      /* cache de projecao dos vertices do carro (port/n64/d2_vtxcache.cpp) */
+void d2_vc_car_rtpt3(unsigned int vindices);  /* SXY/SZ dos 3 vertices do triangulo, no lugar de LDV3+RTPT */
+void d2_vadpcm_set_current_song(int song);
+int d2_vadpcm_process_music(int num_samples, void *samps_ptr);
+int d2_vadpcm_process_lump(int dbank, int start_idx, int num_samples, void *samps_ptr);
+#ifdef __cplusplus
+}
+#endif
+#define fopen(p, m) d2_fopen((p), (m))
+
+/* Fase 1.1 (port/n64/d2_vtxcache.cpp): as versoes originais destas funcoes de desenho ficam com o sufixo _orig */
+#define D2_VC_ORIG(f) f##_orig
+
+/* buffer de vertices do PsyX (GrVertex, 20 bytes cada): com o backend nativo (d2_native_*),
+   todas as primitivas (poligonos, retangulos, linhas, sprites) sao despachadas diretamente ao RDP.
+   O buffer legado do PsyX e mantido em 64 vertices apenas por seguranca (economiza mais ~162 KB de RAM). */
+#ifndef D2_MAX_VERTS
+#define D2_MAX_VERTS 64
+#endif
+#endif

@@ -1,0 +1,1119 @@
+#!/usr/bin/env python3
+"""Patches de fonte no motor copiado (port/redriver2): conversao little-endian (PS1) -> big-endian (N64) e outros ajustes.
+Idempotente: cada patch so e aplicado se o trecho antigo existir; trechos ja trocados sao ignorados."""
+import sys, os
+ROOT = os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', 'port', 'redriver2', 'src_rebuild')
+PATCHES = []
+def P(path, old, new): PATCHES.append((path, old, new))
+import re
+REGEX = []   # (path, compiled regex, repl)  -- idempotentes se o resultado nao casar de novo com o padrao
+def R(path, pattern, repl, flags=0): REGEX.append((path, re.compile(pattern, flags), repl))
+def PM(path, macros, pattern, repl):
+    """aplica um regex apenas dentro das definicoes '#define <macro>' (ate a proxima linha em branco)"""
+    REGEX.append((path, ('macro', set(macros), re.compile(pattern), repl), None))
+
+# ---- fontes ----
+for _old, _new in (
+    ('int ClearImage(RECT16* rect, u_char r, u_char g, u_char b)', 'int PsyX_compat_ClearImage(RECT16* rect, u_char r, u_char g, u_char b)'),
+    ('int ClearImage2(RECT16* rect, u_char r, u_char g, u_char b)', 'int PsyX_compat_ClearImage2(RECT16* rect, u_char r, u_char g, u_char b)'),
+    ('int DrawSync(int mode)', 'int PsyX_compat_DrawSync(int mode)'),
+    ('int LoadImage(RECT16* rect, u_long* p)', 'int PsyX_compat_LoadImage(RECT16* rect, u_long* p)'),
+    ('int LoadImage2(RECT16* rect, u_long* p)', 'int PsyX_compat_LoadImage2(RECT16* rect, u_long* p)'),
+    ('int MoveImage(RECT16* rect, int x, int y)', 'int PsyX_compat_MoveImage(RECT16* rect, int x, int y)'),
+    ('void DrawOTagEnv(u_long* p, DRAWENV* env)', 'void PsyX_compat_DrawOTagEnv(u_long* p, DRAWENV* env)'),
+    ('void DrawOTag(u_long* p)', 'void PsyX_compat_DrawOTag(u_long* p)'),
+    ('void DrawPrim(void* p)', 'void PsyX_compat_DrawPrim(void* p)'),
+): P('PsyCross/src/psx/LIBGPU.C', _old, _new)
+
+P('Game/C/pres.c',
+  "\tnchars = *(int *)file;\n\tfile += sizeof(int);\n\n\t// copy character info",
+  "\tnchars = (int)d2_rd32(file);\n\tfile += sizeof(int);\n\n\t// copy character info")
+P('Game/C/pres.c',
+  "\tfor (i = 0; i < 16; i++)\n\t\t*pclut++ &= ~0x8000;\n\n\tclut[1] |= 0x8000;\n\tclut[2] |= 0x8000;\n",
+  "\td2_swap16_array(clut, 16);\t// N64: os bytes do CLUT vem little-endian\n\tfor (i = 0; i < 16; i++)\n\t\t*pclut++ &= ~0x8000;\n\n\tclut[1] |= 0x8000;\n\tclut[2] |= 0x8000;\n\td2_swap16_array(clut, 16);\t// LoadImage troca de novo\n")
+P('Game/dr2locale.c',
+  "\t\tnchars = *(int *)file;\n\t\tfile += sizeof(int);\n\n\t\t// skip character info",
+  "\t\tnchars = (int)d2_rd32(file);\n\t\tfile += sizeof(int);\n\n\t\t// skip character info")
+
+# ---- Loadfile/LoadfileSeg: sem retorno quando o arquivo nao existe (UB em C++) ----
+P('Game/C/system.c',
+  "#if USE_CD_FILESYSTEM\n\treturn LoadfileSeg(name, addr, 0, -1);\n#endif\n}",
+  "#if USE_CD_FILESYSTEM\n\treturn LoadfileSeg(name, addr, 0, -1);\n#endif\n\treturn 0;\n}")
+P('Game/C/system.c',
+  "\tSDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_ERROR, \"ERROR\", errPrint, NULL);\n\treturn 0;",
+  "\tprintWarning(\"Cannot open '%s'\\n\", namebuffer);\n\treturn 0;")
+# ---- som ----
+P('Game/C/sound.c',
+  "int banksize[2] = { 88064, 412672 };\n",
+  "#if D2_VADPCM\nint banksize[2] = { 88064, 1024 };\n#else\nint banksize[2] = { 88064, 412672 };\n#endif\n")
+P('Game/C/sound.c',
+  "\tnum_samples = *(int *)address;\n\tslength = num_samples * sizeof(SAMPLE_DATA) + sizeof(int);\n\n\t// copy sample info\n\tmemcpy((u_char*)samples[bank], (u_char*)(address + sizeof(int)), num_samples * sizeof(SAMPLE_DATA));\n",
+  "\tnum_samples = (int)d2_rd32(address);\n\tslength = num_samples * sizeof(SAMPLE_DATA) + sizeof(int);\n\n\t// copy sample info\n\tmemcpy((u_char*)samples[bank], (u_char*)(address + sizeof(int)), num_samples * sizeof(SAMPLE_DATA));\n\td2_swap32_array(samples[bank], num_samples * 4);\n")
+P('Game/C/sound.c',
+  "\tnum_samples = *(int *)address;\n\tslength = num_samples * sizeof(SAMPLE_DATA) + sizeof(int);\n\n\tmemcpy((u_char*)(samples[dbank] + lsbTabs.count[dbank]), (u_char*)(address + sizeof(int)), num_samples * sizeof(SAMPLE_DATA));\n",
+  "\tnum_samples = (int)d2_rd32(address);\n\tslength = num_samples * sizeof(SAMPLE_DATA) + sizeof(int);\n\n\tmemcpy((u_char*)(samples[dbank] + lsbTabs.count[dbank]), (u_char*)(address + sizeof(int)), num_samples * sizeof(SAMPLE_DATA));\n\td2_swap32_array(samples[dbank] + lsbTabs.count[dbank], num_samples * 4);\n")
+P('Game/C/sound.c',
+  "\t\t\tcase 0:\n\t\t\t\tif (dbank == 0)\n\t\t\t\t{\n\t\t\t\t\tlsbTabs.append = 0;\n\t\t\t\t\tprintInfo(\"*---LSBD(): successful init---*\\n\");\n\t\t\t\t}\n\t\t\t\tbreak;",
+  "\t\t\tcase 0:\n\t\t\t\tif (dbank == 0)\n\t\t\t\t{\n\t\t\t\t\tlsbTabs.append = 0;\n\t\t\t\t\tprintInfo(\"*---LSBD(): successful init---*\\n\");\n#if D2_VADPCM\n\t\t\t\t\td2_vadpcm_reset();\n#endif\n\t\t\t\t}\n\t\t\t\tbreak;")
+P('Game/C/sound.c',
+  "\td2_swap32_array(samples[dbank] + lsbTabs.count[dbank], num_samples * 4);\n\n\tSpuSetTransferMode(SPU_TRANSFER_BY_DMA);",
+  "\td2_swap32_array(samples[dbank] + lsbTabs.count[dbank], num_samples * 4);\n#if D2_VADPCM\n\tif (d2_vadpcm_process_lump(dbank, lsbTabs.count[dbank], num_samples, samples[dbank] + lsbTabs.count[dbank]))\n\t{\n\t\tlsbTabs.count[dbank] += num_samples;\n\t\treturn num_samples;\n\t}\n#endif\n\n\tSpuSetTransferMode(SPU_TRANSFER_BY_DMA);")
+
+P('Game/C/gamesnd.c',
+  "\t\tLoadfileSeg(name, (char*)blockLimit, 0, sizeof(blockLimit));\n",
+  "\t\t{ LoadfileSeg(name, (char*)blockLimit, 0, sizeof(blockLimit)); d2_swap32_array(blockLimit, 73); }\n")
+P('Game/C/gamesnd.c',
+  "\tLoadfileSeg(name, (char*)_sbank_buffer, blockLimit[lump], size);\n\tif (size > 0 && blockLimit[lump] && blockLimit[lump + 1]) // [A]\n\t{\n\t\tLoadSoundBankDynamic((char*)_sbank_buffer, size, bank);\n\t}",
+  "\t// so a tabela de amostras do lump e lida: o audio nativo nao usa o corpo ADPCM (buffer de 4 KB)\n\tLoadfileSeg(name, (char*)_sbank_buffer, blockLimit[lump], size > 0x1000 ? 0x1000 : size);\n\tif (size > 0 && blockLimit[lump] && blockLimit[lump + 1]) // [A]\n\t{\n#if D2_VADPCM\n\t\td2_vadpcm_set_current_lump(lump);\n#endif\n\t\tLoadSoundBankDynamic((char*)_sbank_buffer, size, bank);\n\t}")
+P('Game/C/gamesnd.c',
+  "\tLoadfileSeg(name, (char*)musicpos, musicnum * 8, sizeof(musicpos));\n",
+  "\tLoadfileSeg(name, (char*)musicpos, musicnum * 8, sizeof(musicpos));\n\td2_swap32_array(musicpos, 3);\n")
+# ---- frontend ----
+P('Game/Frontend/FEmain.c',
+  "\t\t\t\tmemcpy((u_char*)&PsxScreens[i].buttons[j], (u_char*)ptr, sizeof(PSXBUTTON));\n",
+  "\t\t\t\tmemcpy((u_char*)&PsxScreens[i].buttons[j], (u_char*)ptr, sizeof(PSXBUTTON));\n\t\t\t\t{ PSXBUTTON* pb = &PsxScreens[i].buttons[j];\n\t\t\t\t  pb->x = d2_bs16(pb->x); pb->y = d2_bs16(pb->y); pb->w = d2_bs16(pb->w); pb->h = d2_bs16(pb->h);\n\t\t\t\t  pb->userDrawFunctionNum = d2_bs32(pb->userDrawFunctionNum); pb->s_x = d2_bs16(pb->s_x); pb->s_y = d2_bs16(pb->s_y);\n\t\t\t\t  pb->action = d2_bs32(pb->action); pb->var = d2_bs32(pb->var); }\n")
+P('Game/Frontend/FEmain.c',
+  "\t\tmemcpy((u_char*)&feFont, (u_char*)_other_buffer, sizeof(feFont));\n",
+  "\t\tmemcpy((u_char*)&feFont, (u_char*)_other_buffer, sizeof(feFont));\n\t\tfeFont.NumFonts = d2_bs32(feFont.NumFonts);\n")
+
+# ---- missoes (MISSIONS.BLK / .D2MS): cabecalho, alvos, script e rota em little-endian ----
+P('Game/C/mission.c',
+  "// [D] [T]\nvoid LoadMission(int missionnum)\n{",
+  """static void d2_swap_mission_header(MS_MISSION* m)
+{
+	d2_swap32_array(m, offsetof(MS_MISSION, timer) / 4);	// id..type
+	m->timer = d2_bs16(m->timer);
+	m->timerFlags = d2_bs16(m->timerFlags);
+	d2_swap32_array(&m->strings, (sizeof(MS_MISSION) - offsetof(MS_MISSION, strings)) / 4);
+}
+
+static void d2_swap_mission_body(MS_MISSION* m)
+{
+	int i, j;
+	MS_TARGET* t = (MS_TARGET*)((char*)m + m->size);
+	u_int* script = (u_int*)(t + MAX_MISSION_TARGETS);
+	for (i = 0; i < MAX_MISSION_TARGETS; i++, t++)
+	{
+		t->type = d2_bs32(t->type);
+		if (t->type == Target_MultiCar)
+		{
+			for (j = 0; j < 5; j++)
+			{
+				t->multiCar[j].x = d2_bs32(t->multiCar[j].x);
+				t->multiCar[j].z = d2_bs32(t->multiCar[j].z);
+				t->multiCar[j].rot = d2_bs16(t->multiCar[j].rot);
+			}
+		}
+		else
+			d2_swap32_array((int*)t + 1, 15);
+	}
+	d2_swap32_array(script, m->strings);
+}
+
+// [D] [T]
+void LoadMission(int missionnum)
+{""")
+P('Game/C/mission.c',
+  "		LoadfileSeg(filename, (char*)&header, missionnum * 4, sizeof(int));\n\t\toffset = header & 0x7ffff;",
+  "		LoadfileSeg(filename, (char*)&header, missionnum * 4, sizeof(int));\n\t\theader = d2_bs32(header);\n\t\toffset = header & 0x7ffff;")
+P('Game/C/mission.c',
+  "\tLoadfileSeg(filename, (char *)MissionLoadAddress, offset, sizeof(MS_MISSION));\n\n\tMissionHeader = MissionLoadAddress;",
+  "\tLoadfileSeg(filename, (char *)MissionLoadAddress, offset, sizeof(MS_MISSION));\n\td2_swap_mission_header(MissionLoadAddress);\n\n\tMissionHeader = MissionLoadAddress;")
+P('Game/C/mission.c',
+  "\tmissionSize = LoadfileSeg(filename, (char *)MissionLoadAddress, offset, loadsize);\n",
+  "\tmissionSize = LoadfileSeg(filename, (char *)MissionLoadAddress, offset, loadsize);\n\td2_swap_mission_header(MissionLoadAddress);\n\td2_swap_mission_body(MissionLoadAddress);\n")
+P('Game/C/mission.c',
+  "\t\t\trinfo = (ROUTE_INFO *)(MissionStrings + MissionHeader->route);\n",
+  "\t\t\trinfo = (ROUTE_INFO *)(MissionStrings + MissionHeader->route);\n\t\t\trinfo->nJunctions = d2_bs32(rinfo->nJunctions);\n\t\t\td2_swap32_array(&rinfo->parameters, sizeof(LEAD_PARAMETERS) / 4);\n")
+
+# ---- cosmeticos de carros (LCF): ponteiros int + struct de shorts ----
+P('Game/C/cosmetic.c',
+  "\t\t\toffset = *(int*)(lump_ptr + model * sizeof(int));\n\t\t\tcar_cosmetics[i] = *(CAR_COSMETICS*)((u_char*)lump_ptr + offset);\n",
+  "\t\t\toffset = (int)d2_rd32(lump_ptr + model * sizeof(int));\n\t\t\tcar_cosmetics[i] = *(CAR_COSMETICS*)((u_char*)lump_ptr + offset);\n\t\t\td2_swap16_array(&car_cosmetics[i], sizeof(CAR_COSMETICS) / 2);\n")
+P('Game/C/cosmetic.c',
+  "\t\toffset = *(int*)(lump_ptr + model * sizeof(int));\n\t\tlevelSpecCosmetics[i] = *(CAR_COSMETICS*)((u_char*)lump_ptr + offset);\n",
+  "\t\toffset = (int)d2_rd32(lump_ptr + model * sizeof(int));\n\t\tlevelSpecCosmetics[i] = *(CAR_COSMETICS*)((u_char*)lump_ptr + offset);\n\t\td2_swap16_array(&levelSpecCosmetics[i], sizeof(CAR_COSMETICS) / 2);\n")
+
+# ---- nivel: citylumps, cabecalhos de cutscene ----
+P('Game/C/system.c',
+  "\t\tfread(citylumps[GameLevel], 1, sizeof(citylumps[GameLevel]), levFp);\n",
+  "\t\tfread(citylumps[GameLevel], 1, sizeof(citylumps[GameLevel]), levFp);\n\t\td2_swap32_array(citylumps[GameLevel], sizeof(citylumps[GameLevel]) / 4);\n")
+P('Game/C/cutscene.c',
+  "\t\t\tLoadfileSeg(filename, (char*)&CutsceneHeader, 0, sizeof(CUTSCENE_HEADER));\n",
+  "\t\t\t{ LoadfileSeg(filename, (char*)&CutsceneHeader, 0, sizeof(CUTSCENE_HEADER)); d2_swap_cuthdr(&CutsceneHeader); }\n")
+P('Game/C/cutscene.c',
+  "\t\t\tLoadfileSeg(filename, (char*)&ChaseHeader, 0, sizeof(CUTSCENE_HEADER));\n",
+  "\t\t\t{ LoadfileSeg(filename, (char*)&ChaseHeader, 0, sizeof(CUTSCENE_HEADER)); d2_swap_cuthdr(&ChaseHeader); }\n")
+P('Game/C/cutscene.c',
+  "\t\tLoadfileSeg(filename, (char *)&header, 0, sizeof(CUTSCENE_HEADER));\n",
+  "\t\tLoadfileSeg(filename, (char *)&header, 0, sizeof(CUTSCENE_HEADER));\n\t\td2_swap_cuthdr(&header);\n")
+P('Game/C/cutrecorder.c',
+  "\t\tLoadfileSeg(filename, (char*)&header, 0, sizeof(CUTSCENE_HEADER));\n",
+  "\t\tLoadfileSeg(filename, (char*)&header, 0, sizeof(CUTSCENE_HEADER));\n\t\td2_swap_cuthdr(&header);\n")
+
+# ---- lumps do nivel (LEV): cabecalhos, texturas, paletas ----
+P('Game/C/main.c',
+  "\t\tlump_type = *(int*)lump_ptr;\n\t\tseg_size = *(int*)(lump_ptr + 4);\n",
+  "\t\tlump_type = (int)d2_rd32(lump_ptr);\n\t\tseg_size = (int)d2_rd32(lump_ptr + 4);\n")
+P('Game/C/texture.c',
+  "\ttpage_amount =  *(int *)lump_ptr;\n\ttexamount = *(int *)(lump_ptr + 4);\n\ttpage_position = (TP *)(lump_ptr + 8);\n",
+  "\ttpage_amount =  (int)d2_rd32(lump_ptr);\n\ttexamount = (int)d2_rd32(lump_ptr + 4);\n\ttpage_position = (TP *)(lump_ptr + 8);\n\td2_swap32_array(tpage_position, (tpage_amount + 1) * 2);\n")
+P('Game/C/texture.c',
+  "\t\ttexamount = *(int *)ptr;\n\t\tptr += 4;\n\n#ifndef PSX\n\t\ttpage_ids[i] = (TEXINF *)D_MALLOC(sizeof(TEXINF) * texamount);\n\t\tmemcpy(tpage_ids[i], ptr, sizeof(TEXINF) * texamount);\n",
+  "\t\ttexamount = (int)d2_rd32(ptr);\n\t\tptr += 4;\n\n#ifndef PSX\n\t\ttpage_ids[i] = (TEXINF *)D_MALLOC(sizeof(TEXINF) * texamount);\n\t\tmemcpy(tpage_ids[i], ptr, sizeof(TEXINF) * texamount);\n\t\t{ int k; for (k = 0; k < texamount; k++) { tpage_ids[i][k].id = d2_bs16(tpage_ids[i][k].id); tpage_ids[i][k].nameoffset = d2_bs16(tpage_ids[i][k].nameoffset); } }\n")
+P('Game/C/texture.c',
+  "\tnperms = *(int *)ptr;\n\tpermlist = (XYPAIR *)(ptr + 4);\n\n\tptr = (char *)&permlist[16];\n\n\tnspecpages = *(int *)ptr;\n\tspeclist = (XYPAIR *)(ptr + 4);\n",
+  "\tnperms = (int)d2_rd32(ptr);\n\tpermlist = (XYPAIR *)(ptr + 4);\n\td2_swap32_array(permlist, 32);\n\n\tptr = (char *)&permlist[16];\n\n\tnspecpages = (int)d2_rd32(ptr);\n\tspeclist = (XYPAIR *)(ptr + 4);\n\td2_swap32_array(speclist, nspecpages * 2);\n")
+P('Game/C/texture.c',
+  "\tnpalettes = *(int *)tpageaddress;\n\ttpageaddress += 4;\n",
+  "\tnpalettes = (int)d2_rd32(tpageaddress);\n\ttpageaddress += 4;\n")
+P('Game/C/texture.c',
+  "\t\t\tnpalettes = *(int *)tpagebuffer;\n",
+  "\t\t\tnpalettes = (int)d2_rd32(tpagebuffer);\n")
+P('Game/C/cars.c',
+  "\ttotal_cluts = *(int*)lump_ptr;\n",
+  "\ttotal_cluts = (int)d2_rd32(lump_ptr);\n")
+P('Game/C/cars.c',
+  "\twhile (*buffPtr != -1)\n\t{\n\t\tpalette = buffPtr[0];\n\t\ttexnum = buffPtr[1];\n\t\ttpageindex = buffPtr[2];\n\t\tclut_number = buffPtr[3];\n",
+  "\twhile ((int)d2_rd32(buffPtr) != -1)\n\t{\n\t\tpalette = (int)d2_rd32(&buffPtr[0]);\n\t\ttexnum = (int)d2_rd32(&buffPtr[1]);\n\t\ttpageindex = (int)d2_rd32(&buffPtr[2]);\n\t\tclut_number = (int)d2_rd32(&buffPtr[3]);\n")
+
+# ---- GTE: palavras empacotadas (dois shorts / quatro bytes) com semantica LE ----
+_INL = 'PsyCross/include/psx/inline_c.h'
+PM(_INL, ['gte_ldv0','gte_ldv1','gte_ldv2','gte_ldv3','gte_ldsxy3','gte_ldsxy3c','gte_SetLightMatrix','gte_SetColorMatrix','gte_SetRotMatrix'],
+   r'\*\(uint\*\)(\(\(char\*\)\(r\d\)(?:\+\d+)?\)|\(r\d\))', r'd2_ld_ss(\1)')
+PM(_INL, ['gte_ldrgb','gte_ldrgb3'], r'\*\(uint\*\)\(\(char\*\)\(r(\d)\)\)', r'd2_rd32((char*)(r\1))')
+PM(_INL, ['gte_stsxy','gte_stsxy3','gte_stsxy1','gte_stsxy0'],
+   r'\*\(uint\*\)\(\(char\*\)\(r(\d)\)\) = (MFC2\(\d+\));', r'd2_st_ss((char*)(r\1), \2);')
+PM(_INL, ['gte_strgb','gte_strgb3'], r'\*\(uint\*\)\(\(char\*\)\(r(\d)\)\) = (MFC2\(\d+\));', r'd2_st_b4((char*)(r\1), \2);')
+PM(_INL, ['gte_ReadRotMatrix','gte_ReadColorMatrix','gte_ReadLightMatrix'],
+   r'\*\(uint\*\)\(\(char\*\)\(r0\)((?:\+(?:0|4|8|12|16))?)\) = (CFC2\(\d+\));', r'd2_st_ss((char*)(r0)\1, \2);')
+
+# ---- modelos: swap + helpers ----
+P('Game/C/models.c',
+  "// [D] [T]\nvoid ProcessMDSLump(char *lump_file, int lump_size)\n{",
+  """static int d2_force_geo = 0;
+void d2_swap_model(void *mp, int size)
+{
+	MODEL* m = (MODEL*)mp;
+	unsigned char* b = (unsigned char*)mp;
+	int offs[5], k, end, o;
+	d2_swap16_array(b, 3);
+	d2_swap16_array(b + 8, 4);
+	d2_swap32_array(b + 16, 5);
+	if (m->instance_number != -1 && !d2_force_geo)
+		return;		// geometria vem do modelo pai
+
+	offs[0] = m->vertices; offs[1] = m->poly_block; offs[2] = m->normals; offs[3] = m->point_normals; offs[4] = m->collision_block;
+	if (m->vertices && m->num_vertices)
+		d2_swap16_array(b + m->vertices, m->num_vertices * 4);
+	if (m->point_normals && m->num_point_normals)
+		d2_swap16_array(b + m->point_normals, m->num_point_normals * 4);
+	if (m->normals)
+	{
+		end = size;
+		for (k = 0; k < 5; k++)
+			if (k != 2 && offs[k] >= m->normals && offs[k] < end)
+				end = offs[k];
+		if (end > m->normals)
+			d2_swap16_array(b + m->normals, (end - m->normals) / 2);
+	}
+	if (m->collision_block)
+	{
+		o = m->collision_block;
+		d2_swap32_array(b + o, 1);
+		k = *(int*)(b + o);
+		if (k > 0 && k < 1000)
+			d2_swap16_array(b + o + 4, k * 10);   // COLLISION_PACKET = 10 shorts (20 bytes)
+	}
+}
+
+void d2_swap_car_models(char *lump, int lump_size)
+{
+	int i, j, next;
+	int* offs = (int*)(lump + 4);
+	char* base = lump + 4 + 160;
+	d2_swap32_array(lump, 41);
+	d2_force_geo = 1;	// modelos de carro: instance_number != -1 no arquivo, mas a geometria e propria
+	for (i = 0; i < 39; i++)
+	{
+		if (offs[i] == -1)
+			continue;
+		next = lump_size - 164;
+		for (j = 0; j < 39; j++)
+			if (offs[j] > offs[i] && offs[j] < next)
+				next = offs[j];
+		d2_swap_model(base + offs[i], next - offs[i]);
+	}
+	d2_force_geo = 0;
+}
+
+// [D] [T]
+void ProcessMDSLump(char *lump_file, int lump_size)
+{""")
+P('Game/C/models.c',
+  "\tmodelAmts = *(int *)lump_file;\n",
+  "\tmodelAmts = (int)d2_rd32(lump_file);\n")
+P('Game/C/main.c',
+  '#include "draw.h"\n',
+  '#include "draw.h"\n#include "d2_t3d_world.h"\n')
+P('Game/C/main.c',
+  "\t\tLoadPermanentTPagesFromTIM();\n\t}\n#endif\n\t\n\tReportMode(1);\n}",
+  "\t\tLoadPermanentTPagesFromTIM();\n\t}\n#endif\n#ifdef D2_T3D_WORLD\n\td2_t3d_on_models_loaded();\n#endif\n\t\n\tReportMode(1);\n}")
+P('Game/C/tile.c',
+  '#include "tile.h"\n',
+  '#include "tile.h"\n#include "d2_t3d_world.h"\n#include "d2_ground.h"\n#include "psx/gtereg.h"\n')
+P('Game/C/models.c',
+  "\t\tsize = *(int*)mdsfile;\n\t\tmdsfile += sizeof(int);\n\n\t\tif (size)\n\t\t{\n\t\t\t// add the usage bit\n\t\t\tpermanentModelSlotBitfield[i >> 5] |= 1 << (i & 31);\n\t\t\t\n\t\t\tmodel = (MODEL*)mdsfile;\n",
+  "\t\tsize = (int)d2_rd32(mdsfile);\n\t\tmdsfile += sizeof(int);\n\n\t\tif (size)\n\t\t{\n\t\t\t// add the usage bit\n\t\t\tpermanentModelSlotBitfield[i >> 5] |= 1 << (i & 31);\n\t\t\t\n\t\t\tmodel = (MODEL*)mdsfile;\n\t\t\td2_swap_model(model, size);\n")
+P('Game/C/main.c',
+  "\t\t\tcar_models_lump = (char*)ptr;\n",
+  "\t\t\tcar_models_lump = (char*)ptr;\n\t\t\td2_swap_car_models((char*)ptr, seg_size);\n")
+# captura de movimento (Tanner/pedestres): lump inteiro e int16 little-endian
+P('Game/C/motion_c.c',
+  "\t\tmemcpy((u_char*)MotionCaptureData[ThisMotion], (u_char*)lump_ptr, size);\n",
+  "\t\tmemcpy((u_char*)MotionCaptureData[ThisMotion], (u_char*)lump_ptr, size);\n\t\td2_swap16_array(MotionCaptureData[ThisMotion], size / 2);\n")
+# overmap: tabela de offsets (u16 little-endian) dos mapas RNC
+P('Game/C/overmap.c',
+  "UnpackRNC(MapBitMaps + *((ushort*)MapBitMaps + idx), MapBuffer);",
+  "UnpackRNC(MapBitMaps + d2_rd16(MapBitMaps + idx * 2), MapBuffer);")
+# carros: pacote de UVs e escrita nas primitivas
+R('Game/C/cars.c', r'\*\(ushort ?\*\)&((?:pft3|pft4|pgt3|pgt4))->(uv\d)', r'd2_rd16(&\1->\2)')
+R('Game/C/cars.c', r'\.pad = \*\(short ?\*\)&(c\d);', r'.pad = (short)d2_rd16(&\1);')
+R('Game/C/cars.c', r'\*\(u_int ?\*\)&(\w+)->r(\d) = ([^;]+);', r'd2_st_b4(&\1->r\2, \3);')
+R('Game/C/cars.c', r'\*\(u_int ?\*\)&(\w+)->u(\d) = ([^;]+);', r'd2_put_uvw(&\1->u\2, \3);')
+
+# ---- spool info / mapa ----
+P('Game/C/spool.c',
+  "\tint value = *(int*)*ptr;\n\t*ptr += 4;",
+  "\tint value = (int)d2_rd32(*ptr);\n\t*ptr += 4;")
+P('Game/C/spool.c',
+  "\tAreaData = (AreaDataStr *)ptr; \n\tptr += sizeof(AreaDataStr) * NumAreas;\n",
+  "\tAreaData = (AreaDataStr *)ptr; \n\tfor (i = 0; i < NumAreas; i++) d2_swap16_array(&AreaData[i], 4);\n\tptr += sizeof(AreaDataStr) * NumAreas;\n")
+P('Game/C/spool.c',
+  "\tint* pvsSizes = (int *)ptr;\n\tptr += sizeof(int) * 4;\n",
+  "\tint* pvsSizes = (int *)ptr;\n\tptr += sizeof(int) * 4;\n\td2_swap32_array(slots_add, 12);\n")
+P('Game/C/spool.c',
+  "\tspoolinfo_offsets = (ushort*)ptr;\n\tptr += sizeof(ushort) * num_of_regions;\n\n\tint spoolinfo_size = getIntAdv(ptr);\n\tRegionSpoolInfo = ptr;\n",
+  "\tspoolinfo_offsets = (ushort*)ptr;\n\td2_swap16_array(spoolinfo_offsets, num_of_regions);\n\tptr += sizeof(ushort) * num_of_regions;\n\n\tint spoolinfo_size = getIntAdv(ptr);\n\tRegionSpoolInfo = ptr;\n\t{\n\t\tint a, b;\n\t\tfor (a = 0; a < num_of_regions; a++)\n\t\t{\n\t\t\tint dup = 0;\n\t\t\tif (spoolinfo_offsets[a] == 0xffff) continue;\n\t\t\tfor (b = 0; b < a; b++) if (spoolinfo_offsets[b] == spoolinfo_offsets[a]) { dup = 1; break; }\n\t\t\tif (!dup) d2_swap16_array(RegionSpoolInfo + spoolinfo_offsets[a], 1);\n\t\t}\n\t}\n")
+P('Game/C/map.c',
+  "\tmemcpy((u_char*)&cell_header, (u_char*)lump_ptr, sizeof(OUT_CELL_FILE_HEADER));\n",
+  "\tmemcpy((u_char*)&cell_header, (u_char*)lump_ptr, sizeof(OUT_CELL_FILE_HEADER));\n\td2_swap32_array(&cell_header, sizeof(OUT_CELL_FILE_HEADER) / 4);\n")
+P('Game/C/map.c',
+  "\tnum_straddlers = *(int*)lump_ptr;\n\n\tInitCellData();\n\tmemcpy((u_char*)cell_objects, (u_char*)lump_ptr + 4, num_straddlers * sizeof(PACKED_CELL_OBJECT));\n",
+  "\tnum_straddlers = (int)d2_rd32(lump_ptr);\n\n\tInitCellData();\n\tmemcpy((u_char*)cell_objects, (u_char*)lump_ptr + 4, num_straddlers * sizeof(PACKED_CELL_OBJECT));\n\td2_swap16_array(cell_objects, num_straddlers * 4);\n")
+
+# ---- estradas, denting, detalhe baixo ----
+P('Game/C/convert.c',
+  "\t*dest = *source;\n\tdest[1] = source[1];\n\tdest[2] = source[2];\n\tdest[3] = source[3];\n",
+  "\t*dest = source[3];\n\tdest[1] = source[2];\n\tdest[2] = source[1];\n\tdest[3] = source[0];\n")
+P('Game/C/dr2roads.h',
+  "((*(ushort*)&(rd)->NumLanes & 0xFFFF) == 0xFF01)",
+  "(((rd)->NumLanes == 1) && ((u_char)(rd)->LaneDirs == 0xFF))")
+P('Game/C/dr2roads.c',
+  "\tDriver2StraightsPtr = (DRIVER2_STRAIGHT *)(lump_file + 4);\n",
+  "\tDriver2StraightsPtr = (DRIVER2_STRAIGHT *)(lump_file + 4);\n\t{ int k; for (k = 0; k < NumDriver2Straights; k++) { d2_swap32_array(&Driver2StraightsPtr[k], 2); d2_swap16_array((char*)&Driver2StraightsPtr[k] + 8, 7); } }\n")
+P('Game/C/dr2roads.c',
+  "\tDriver2CurvesPtr = (DRIVER2_CURVE *)(lump_file + 4);\n",
+  "\tDriver2CurvesPtr = (DRIVER2_CURVE *)(lump_file + 4);\n\t{ int k; for (k = 0; k < NumDriver2Curves; k++) { d2_swap32_array(&Driver2CurvesPtr[k], 2); d2_swap16_array((char*)&Driver2CurvesPtr[k] + 8, 8); } }\n")
+P('Game/C/dr2roads.c',
+  "\t\tfor (loop = 0; loop < NumDriver2Junctions; loop++)\n\t\t{\n\t\t\tp->flags = old->flags;\n",
+  "\t\tfor (loop = 0; loop < NumDriver2Junctions; loop++)\n\t\t{\n\t\t\td2_swap32_array(old, 2); d2_swap16_array((char*)old + 8, 8);\n\t\t\tp->flags = old->flags;\n")
+P('Game/C/dr2roads.c',
+  "\t// [A] patch Vegas roads\n\tif (GameLevel == 2)\n\t{\n\t\tDriver2JunctionsPtr[8244 & 0x1fff].ExitIdx[1] = 348;",
+  "\tif (!fix)\n\t{\n\t\tfor (loop = 0; loop < NumDriver2Junctions; loop++)\n\t\t{\n\t\t\td2_swap16_array(&Driver2JunctionsPtr[loop], 4);\n\t\t\td2_swap32_array((char*)&Driver2JunctionsPtr[loop] + 8, 1);\n\t\t}\n\t}\n\n\t// [A] patch Vegas roads\n\tif (GameLevel == 2)\n\t{\n\t\tDriver2JunctionsPtr[8244 & 0x1fff].ExitIdx[1] = 348;")
+P('Game/C/tile.c',
+  "\tLow2HighDetailTable = (ushort *)lump_ptr;\n",
+  "\tLow2HighDetailTable = (ushort *)lump_ptr;\n\td2_swap16_array(lump_ptr, lump_size / 2);\n")
+P('Game/C/tile.c',
+  "tileTypes = *(u_int *)(model + 1) >> 2;",
+  "tileTypes = d2_rd32(model + 1) >> 2;")
+P('Game/C/event.c',
+  "\t\tevent = (EVENT*)mallocptr;\n",
+  "\t\tevent = (EVENT*)mallocptr;\n\t\tmemset(event, 0, sizeof(EVENT) * 128);\t// no PS1 a RAM comeca zerada; aqui o heap tem lixo\n")
+P('Game/C/pedest.c',
+  "void ProcessChairLump(char* lump_file, int lump_size)\n{\n\tseated_pedestrian = (SEATEDPTR)lump_file;\n}",
+  "void ProcessChairLump(char* lump_file, int lump_size)\n{\n\t{ unsigned char* cp = (unsigned char*)lump_file; int cn = 0;\n\t\twhile (cn < lump_size / 12) { short crot = (short)d2_rd16(cp + 8); d2_swap32_array(cp, 2); d2_swap16_array(cp + 8, 1); if (crot == 9999) break; cp += 12; cn++; } }\n\tseated_pedestrian = (SEATEDPTR)lump_file;\n}")
+P('Game/C/denting.c',
+  "\t\t\toffset = *(int *)(lump_ptr + model * 4);\n",
+  "\t\t\toffset = (int)d2_rd32(lump_ptr + model * 4);\n")
+P('Game/C/mission.c',
+  "\t\t\tLeadValues = rinfo->parameters;\n",
+  "\t\t\td2_swap32_array(Driver2TempJunctionsPtr, NumTempJunctions);\n\t\t\tLeadValues = rinfo->parameters;\n")
+
+# ---- spool (regioes, areas, tpages): leitura sob demanda do .LEV na ROM + conversao LE->BE ----
+R('Game/C/spool.c', r'\t// read entire spool data\r?\n\tif \(g_CurrentLevelSpoolData == NULL\)\r?\n\t\{.*?\r?\n\t\}\r?\n', '', re.S)
+R('Game/C/spool.c', r'\t\tchar\* spoolDataPtr;\r?\n', '\t\tint spoolSector;\n')
+R('Game/C/spool.c', r'\t\t\tint readSize = \(nsectors\)\*CDSECTOR_SIZE; \\\r?\n\t\t\tmemcpy\(dest, spoolDataPtr, readSize\); \\\r?\n\t\t\tspoolDataPtr \+= readSize; \\\r?\n',
+  '\t\t\tint ns_ = (nsectors); \\\n\t\t\td2_read_sectors((char*)(dest), spoolSector, ns_); \\\n\t\t\tspoolSector += ns_; \\\n')
+R('Game/C/spool.c', r'\t\tspoolDataPtr = g_CurrentLevelSpoolData - SpoolLumpOffset \+ current->sector \* CDSECTOR_SIZE;',
+  '\t\tspoolSector = current->sector;')
+P('Game/C/spool.c',
+  "#if defined(SIMPLE_SPOOL)\nextern char g_CurrentLevelFileName[64];",
+  "extern int d2_read_sectors(char* dest, int sector, int nsectors);\n#if defined(SIMPLE_SPOOL)\nextern char g_CurrentLevelFileName[64];")
+P('Game/C/spool.c',
+  "\tpacktype = *(int *)(cell_addr + 4);\n\tsource_packed_data = (ushort *)(cell_addr + 8);\n",
+  "\tpacktype = (int)d2_rd32(cell_addr + 4);\n\tsource_packed_data = (ushort *)(cell_addr + 8);\n\td2_swap16_array(source_packed_data, 1100);\n")
+P('Game/C/spool.c',
+  "\t\t\tnpalettes = *(int *)(model_spool_buffer + 0xE000);\n",
+  "\t\t\tnpalettes = (int)d2_rd32(model_spool_buffer + 0xE000);\n")
+P('Game/C/spool.c',
+  "\t\t\t\tclutptr[0] = getClut(cluts.x + 16, cluts.y) << 0x10 | getClut(cluts.x, cluts.y);\n\t\t\t\tclutptr[1] = getClut(cluts.x + 48, cluts.y) << 0x10 | getClut(cluts.x + 32, cluts.y);\n",
+  "\t\t\t\t((ushort*)clutptr)[0] = getClut(cluts.x, cluts.y);\n\t\t\t\t((ushort*)clutptr)[1] = getClut(cluts.x + 16, cluts.y);\n\t\t\t\t((ushort*)clutptr)[2] = getClut(cluts.x + 32, cluts.y);\n\t\t\t\t((ushort*)clutptr)[3] = getClut(cluts.x + 48, cluts.y);\n")
+P('Game/C/spool.c',
+  "\tnmodels = *newmodels;\n",
+  "\tnmodels = d2_rd16(newmodels);\n")
+P('Game/C/spool.c',
+  "\t\tmodel_number = new_model_numbers[i];\n\n\t\tsize = *(int *)addr;\n\t\tmodel = (MODEL *)(addr + 4);\n",
+  "\t\tmodel_number = d2_rd16(&new_model_numbers[i]);\n\n\t\tsize = (int)d2_rd32(addr);\n\t\tmodel = (MODEL *)(addr + 4);\n\t\td2_swap_model(model, size);\n")
+P('Game/C/spool.c',
+  "\tspool = &spool_regioninfo[spool_regionpos];\n\n\tunpack_cellpointers(",
+  "\tspool = &spool_regioninfo[spool_regionpos];\n\n\td2_swap_region_data(spool);\n\tunpack_cellpointers(")
+P('Game/C/spool.c',
+  "// [D] [T]\nvoid GotRegion(void)\n{",
+  """// N64: dados de regiao chegam em little-endian (cells, objetos, mapa de estradas/BSP)
+static void d2_swap_roadmap(char* pvs, int bytes)
+{
+	int i, k;
+	int cbr, end;
+	unsigned short* sb;
+	int offs[3], ends[3];
+	char* base;
+
+	d2_swap32_array(pvs - 4, 1);
+	cbr = *(int*)(pvs - 4);
+	if (cbr < 0 || cbr >= bytes)
+		return;
+	base = pvs + cbr;
+	end = bytes - cbr;			// bytes que sobram depois de 'base'
+	sb = (unsigned short*)base;
+	d2_swap16_array(base, 4);
+	if (sb[0] != 2)
+		return;
+	offs[0] = sb[1]; offs[1] = sb[2]; offs[2] = sb[3];
+	for (i = 0; i < 3; i++)
+	{
+		ends[i] = end;
+		for (k = 0; k < 3; k++)
+			if (offs[k] > offs[i] && offs[k] < ends[i])
+				ends[i] = offs[k];
+	}
+	{
+		int first = end;
+		for (i = 0; i < 3; i++) if (offs[i] < first) first = offs[i];
+		d2_swap16_array(base + 8, (first - 8) / 2);					// grade de superficies
+	}
+	d2_swap16_array(base + offs[1], (ends[1] - offs[1]) / 2);		// dados BSP (shorts)
+	for (k = offs[0]; k + 12 <= ends[0]; k += 12)					// sdPlane
+	{
+		d2_swap16_array(base + k, 4);
+		d2_swap32_array(base + k + 8, 1);
+	}
+	if (offs[2] != offs[1])										// (BSP e nos podem compartilhar a mesma area)
+		d2_swap16_array(base + offs[2], (ends[2] - offs[2]) / 2);		// sdNode (pares de shorts)
+}
+
+static void d2_swap_region_data(SPL_REGIONINFO* r)
+{
+	Spool* sp;
+	int t;
+
+	if (spoolinfo_offsets[r->region_to_unpack] == 0xffff)
+		return;
+	sp = (Spool*)(RegionSpoolInfo + spoolinfo_offsets[r->region_to_unpack]);
+	t = r->target_barrel_region;
+
+	d2_swap16_array(cells + cell_slots_add[t], sp->cell_data_size[0] * 1024);
+	d2_swap16_array(cell_objects + num_straddlers + cell_objects_add[t], sp->cell_data_size[2] * 1024);
+	d2_swap_roadmap(PVS_Buffers[t], sp->roadm_size * 2048 - 4);
+}
+
+// [D] [T]
+void GotRegion(void)
+{""")
+# bitfields do BSP (sdNode): ordem dos campos invertida em big-endian
+R('Game/dr2types.h', r'struct sdNodePACKED\r?\n\{\r?\n\tint angle : 11;\r?\n\tint dist : 12;\r?\n\tint offset : 8;\r?\n\tint node : 1;\r?\n\};',
+  'struct sdNodePACKED\n{\n\tint node : 1;\n\tint offset : 8;\n\tint dist : 12;\n\tint angle : 11;\n};')
+
+# ---- RNC: cabecalho little-endian, possivelmente desalinhado ----
+R('Game/ASM/rnc_2.c', r'    RNCheader\* hdr = \(RNCheader\*\)src;\r?\n\r?\n    int method = testRNC\(hdr->identifier\);\r?\n\r?\n    if \(method == 2\)\r?\n        RNCunpack2\(\(unsigned char\*\)src \+ RNC_HEADER_LENGTH, hdr->packSize, \(unsigned char\*\)dest, hdr->unpackSize\);',
+  '    int method = testRNC(d2_rd32(src));\n\n    if (method == 2)\n        RNCunpack2((unsigned char*)src + RNC_HEADER_LENGTH, d2_rd32(src + 8), (unsigned char*)dest, d2_rd32(src + 4));')
+
+# ---- PVS: nibbles em bytes (sem escrita de short desalinhada) ----
+P('Game/C/map.c',
+  "\t\t((ushort*)nybblearray)[i] = M_SHRT_2(celldata[i], celldata[i] >> 4) & 0xf0f;",
+  "\t{ nybblearray[i * 2] = (celldata[i] >> 4) & 0xf; nybblearray[i * 2 + 1] = celldata[i] & 0xf; }")
+
+
+# ---- sdNode (BSP de estradas): regiao trocada em 16 bits; valor/bitfields reconstruidos do par de shorts ----
+P('Game/dr2types.h',
+  "} sdNode;\n",
+  """} sdNode;
+
+static inline int d2_sd_value(const sdNode* n)
+{
+	const unsigned short* s = (const unsigned short*)n;
+	return (int)((unsigned)s[0] | ((unsigned)s[1] << 16));
+}
+static inline int d2_sd_angle(const sdNode* n) { return ((int)((unsigned)d2_sd_value(n) << 21)) >> 21; }
+static inline int d2_sd_dist(const sdNode* n) { return ((int)((unsigned)d2_sd_value(n) << 9)) >> 20; }
+static inline int d2_sd_offset(const sdNode* n) { return ((int)((unsigned)d2_sd_value(n) << 1)) >> 24; }
+""")
+P('Game/C/dr2roads.c',
+  "	while (node->value < 0) // & 0x80000000U)\n\t{\n\t\tdot = pos->y * RCOS(node->n.angle) - pos->x * RSIN(node->n.angle);\n\n\t\tif (dot < node->n.dist * 4096)\n\t\t\tnode++;\n\t\telse\n\t\t\tnode += node->n.offset;",
+  "\twhile (d2_sd_value(node) < 0) // & 0x80000000U)\n\t{\n\t\tdot = pos->y * RCOS(d2_sd_angle(node)) - pos->x * RSIN(d2_sd_angle(node));\n\n\t\tif (dot < d2_sd_dist(node) * 4096)\n\t\t\tnode++;\n\t\telse\n\t\t\tnode += d2_sd_offset(node);")
+P('Game/C/dr2roads.c',
+  "		if (node->value > -1)\n\t\t{\n\t\t\tbase += node->value;",
+  "\t\tif (d2_sd_value(node) > -1)\n\t\t{\n\t\t\tbase += d2_sd_value(node);")
+P('Game/C/dr2roads.c',
+  "		plane = FindRoadInBSP(node + 1, base);\n\t\tnode += node->n.offset;",
+  "\t\tplane = FindRoadInBSP(node + 1, base);\n\t\tnode += d2_sd_offset(node);")
+P('Game/ASM/d2mapasm.c',
+  "while (search->value < 0)", "while (d2_sd_value(search) < 0)")
+P('Game/ASM/d2mapasm.c',
+  "search += search->n.offset;", "search += d2_sd_offset(search);")
+
+# ---- escritas de cor (r,g,b,code) em primitivas: palavra empacotada little-endian -> bytes ----
+for _f in ['Game/C/draw.c','Game/C/tile.c','Game/C/debris.c','Game/C/shadow.c','Game/C/sky.c','Game/C/job_fx.c','Game/C/event.c','Game/C/overmap.c','Game/C/targets.c','Game/C/motion_c.c','Game/C/cars.c']:
+    R(_f, r'\*\s*\(\s*(?:u_int|uint|u_long|ulong)\s*\*?\s*\)\s*&\s*([\w\[\]\.>-]+(?:->|\.)(?:r0|r1|r2|r3))\s*=\s*([^;]+);', r'd2_st_b4(&\1, \2);')
+
+
+# ---- primitivas DR_* (palavras de comando u_int): guardadas em ordem de bytes little-endian para que P_TAG.code (byte 11) valha ----
+R('PsyCross/include/psx/libgpu.h',
+  r'(?<!#endif\n#endif\n\n) /\*\r?\n  \* Primitive Handling Macros\r?\n  \*/',
+  "#ifndef PSX_LEW\n#if defined(__BYTE_ORDER__) && __BYTE_ORDER__ == __ORDER_BIG_ENDIAN__\n#define PSX_LEW(x) __builtin_bswap32((u_int)(x))\n#else\n#define PSX_LEW(x) ((u_int)(x))\n#endif\n#endif\n\n /*\n  * Primitive Handling Macros\n  */")
+R('PsyCross/include/psx/libgpu.h',
+  r'\(\((p|pt)\)->code\[0\] = (?!PSX_LEW)(_get_mode\(dfe, dtd, tpage\)|_get_tw\(tw\)|0xa0000000|0xe6000000\|\(pbw\?0x01:0\))\)',
+  r'((\1)->code[0] = PSX_LEW(\2))')
+R('PsyCross/include/psx/libgpu.h',
+  r'\(\(p\)->code\[1\] = (?!PSX_LEW)(_get_tw\(\(RECT16 \*\)tw\))\)',
+  r'((p)->code[1] = PSX_LEW(\1))')
+R('PsyCross/src/psx/LIBGPU.C', r'dr_env->code\[(\d)\] = (?!PSX_LEW\()([^;]+);', r'dr_env->code[\1] = PSX_LEW(\2);')
+R('PsyCross/src/psx/LIBGPU.C', r'\tp->code\[([01])\] = (?!PSX_LEW\()(\(+(?:r->x|\(r->x \+ r->w\))[^;]+);', r'\tp->code[\1] = PSX_LEW(\2);')
+P('PsyCross/src/psx/LIBGPU.C', "\tp->code[0] = 0x1000000;", "\tp->code[0] = PSX_LEW(0x1000000);")
+P('PsyCross/src/psx/LIBGPU.C', "\tp->code[0] = 0xB1000000 | grTextureId;", "\tp->code[0] = PSX_LEW(0xB1000000 | grTextureId);")
+P('PsyCross/src/psx/LIBGPU.C', "\tp->code = 0xB2000000;", "\tp->code = PSX_LEW(0xB2000000);")
+P('PsyCross/src/gpu/PsyX_GPU.cpp', "\t\tconst u_int code = codePtr[i];", "\t\tconst u_int code = PSX_LEW(codePtr[i]);")
+P('PsyCross/src/gpu/PsyX_GPU.cpp', "overrideTexture = psytex->code[0] & 0xFFFFFF;", "overrideTexture = PSX_LEW(psytex->code[0]) & 0xFFFFFF;")
+
+
+# ---- GTE: MTC2/MFC2/CTC2 inline (sem chamada nem switch em cada registrador) ----
+P('PsyCross/include/psx/inline_c.h', "/*\n * Type 1 functions\n */", '#include "d2_gte_inline.h"\n/*\n * Type 1 functions\n */')
+P('PsyCross/src/psx/INLINE_C.C', '#include "../gte/PsyX_GTE.h"\n', '#include "../gte/PsyX_GTE.h"\n#undef MTC2\n#undef MTC2_S\n#undef MFC2\n#undef MFC2_S\n#undef CTC2\n')
+
+# GTE emulado: funcoes auxiliares static inline (o gcc passa a embuti-las em GTE_RotTransPers / GTE_operator)
+R('PsyCross/src/gte/PsyX_GTE.cpp', r'^(?!static )(int|long long|unsigned int) (A1|A2|A3|Lm_B1|Lm_B2|Lm_B3|Lm_B3_sf|Lm_C1|Lm_C2|Lm_C3|Lm_D|Lm_E|F|Lm_G1|Lm_G2|Lm_G1_ia|Lm_G2_ia|Lm_H|BOUNDS)\(', r'static inline \1 \2(', re.M)
+# GTE: RTPS/RTPT em caminho rapido (so 32 bits + somas de 64): vale quando nada estoura/satura (sem flags); senao cai na versao original.
+_RTPS_OLD = "int GTE_RotTransPers(int idx, int lm)\n{\n\tint h_over_sz3;\n"
+_RTPS_NEW = r"""static int GTE_RotTransPers_slow(int idx, int lm);
+// caminho rapido do RTPS (sf=1): so quando nenhuma saturacao/estouro acontece; resultado identico ao original
+int GTE_RotTransPers(int idx, int lm)
+{
+	if (m_sf == 1 && idx < 3)
+	{
+		const int vx = gteRegs.CP2D.p[idx << 1].sw.l, vy = gteRegs.CP2D.p[idx << 1].sw.h, vz = gteRegs.CP2D.p[(idx << 1) + 1].sw.l;
+		const long long m1 = ((long long)C2_TRX << 12) + (long long)(C2_R11 * vx) + (long long)(C2_R12 * vy) + (long long)(C2_R13 * vz);
+		const long long m2 = ((long long)C2_TRY << 12) + (long long)(C2_R21 * vx) + (long long)(C2_R22 * vy) + (long long)(C2_R23 * vz);
+		const long long m3 = ((long long)C2_TRZ << 12) + (long long)(C2_R31 * vx) + (long long)(C2_R32 * vy) + (long long)(C2_R33 * vz);
+		if (m1 <= 0x7ffffffffffLL && m1 >= -0x8000000000LL && m2 <= 0x7ffffffffffLL && m2 >= -0x8000000000LL && m3 <= 0x7ffffffffffLL && m3 >= -0x8000000000LL)
+		{
+			const int a1 = (int)(m1 >> 12), a2 = (int)(m2 >> 12), a3 = (int)(m3 >> 12);
+			const int imin = lm ? 0 : -0x8000;
+			if (a1 <= 0x7fff && a1 >= imin && a2 <= 0x7fff && a2 >= imin && a3 <= 0x7fff && a3 > 0 && a3 >= imin)
+			{
+				unsigned int hh = gte_divide(C2_H, a3);
+				if (hh != 0xffffffffu)
+				{
+					if (hh > 0x1ffff) hh = 0x1ffff;
+					const long long fx = (long long)C2_OFX + (long long)a1 * (int)hh;
+					const long long fy = (long long)C2_OFY + (long long)a2 * (int)hh;
+					if (fx <= 0x7fffffffLL && fx >= -0x80000000LL && fy <= 0x7fffffffLL && fy >= -0x80000000LL)
+					{
+						int sx = (int)(fx >> 16), sy = (int)(fy >> 16);
+						if (sx > 0x3ff) { sx = 0x3ff; C2_FLAG |= (1 << 31) | (1 << 14); } else if (sx < -0x400) { sx = -0x400; C2_FLAG |= (1 << 31) | (1 << 14); }
+						if (sy > 0x3ff) { sy = 0x3ff; C2_FLAG |= (1 << 31) | (1 << 13); } else if (sy < -0x400) { sy = -0x400; C2_FLAG |= (1 << 31) | (1 << 13); }
+						m_mac3 = m3; m_mac0 = fy;
+						C2_MAC1 = a1; C2_MAC2 = a2; C2_MAC3 = a3;
+						C2_IR1 = (short)a1; C2_IR2 = (short)a2; C2_IR3 = (short)a3;
+						C2_SZ0 = C2_SZ1; C2_SZ1 = C2_SZ2; C2_SZ2 = C2_SZ3; C2_SZ3 = (unsigned short)a3;
+						C2_SXY0 = C2_SXY1; C2_SXY1 = C2_SXY2;
+						C2_SX2 = (short)sx; C2_SY2 = (short)sy;
+						return (int)hh;
+					}
+				}
+			}
+		}
+	}
+	return GTE_RotTransPers_slow(idx, lm);
+}
+
+static int GTE_RotTransPers_slow(int idx, int lm)
+{
+	int h_over_sz3;
+"""
+P('PsyCross/src/gte/PsyX_GTE.cpp', _RTPS_OLD, _RTPS_NEW)
+
+
+# ---- N64: perfil visual do PS1: mesmos limites de objetos e distancias de LOD, sem ativar o scratchpad do PS1 ----
+P('Game/C/draw.h', "#else\n\n#define MAX_DRAWN_BUILDINGS\t\t384\n#define MAX_DRAWN_TILES\t\t\t750\n#define MAX_DRAWN_ANIMATING\t\t48\n#define MAX_DRAWN_SPRITES\t\t128\n\n#define DRAW_LOD_DIST_HIGH\t\t7000\n#define DRAW_LOD_DIST_LOW\t\t10000\n\nextern _pct& plotContext;",
+  "#elif defined(D2_N64_PERF)\n\n#define MAX_DRAWN_BUILDINGS\t\t192\n#define MAX_DRAWN_TILES\t\t\t320\n#define MAX_DRAWN_ANIMATING\t\t20\n#define MAX_DRAWN_SPRITES\t\t75\n\n#define DRAW_LOD_DIST_HIGH\t\t4000\n#define DRAW_LOD_DIST_LOW\t\t7000\n\nextern _pct& plotContext;\n\n#else\n\n#define MAX_DRAWN_BUILDINGS\t\t384\n#define MAX_DRAWN_TILES\t\t\t750\n#define MAX_DRAWN_ANIMATING\t\t48\n#define MAX_DRAWN_SPRITES\t\t128\n\n#define DRAW_LOD_DIST_HIGH\t\t7000\n#define DRAW_LOD_DIST_LOW\t\t10000\n\nextern _pct& plotContext;")
+P('Game/C/draw.h', "#elif defined(D2_N64_PERF)\n\n#define MAX_DRAWN_BUILDINGS",
+  "#elif defined(D2_N64_LOW)\n\n#define MAX_DRAWN_BUILDINGS\t\t128\n#define MAX_DRAWN_TILES\t\t\t192\n#define MAX_DRAWN_ANIMATING\t\t12\n#define MAX_DRAWN_SPRITES\t\t48\n\n#define DRAW_LOD_DIST_HIGH\t\t2500\n#define DRAW_LOD_DIST_LOW\t\t4500\n\nextern _pct& plotContext;\n\n#elif defined(D2_N64_PERF)\n\n#define MAX_DRAWN_BUILDINGS")
+P('Game/C/draw.c', "int goFaster = 0;\t// [A] was 1", "int goFaster = 1;\t// N64: como no PS1 (metade das celulas visiveis)")
+P('Game/C/draw.c', "\tdrawData.farClipLimit = 125000;", "\tdrawData.farClipLimit = 60000;\t// N64: como no PS1")
+
+# ---- N64: carga por quadro (sem encurtar a visao da estrada nem dos carros) ----
+P('Game/C/mission.c', "\tmaxCivCars = 14;\n\tmaxParkedCars = 7;", "\tmaxCivCars = 7;\t// N64: 50% do transito\n\tmaxParkedCars = 4;")
+P('Game/C/mission.c', "\t\tmaxCivCars = 10;\n\t\tmaxParkedCars = 5;", "\t\tmaxCivCars = 5;\n\t\tmaxParkedCars = 3;")
+P('Game/C/tile.c', "if (Z <= DRAW_LOD_DIST_HIGH)\n\t\t{\n\t\t\tif (Low2HighDetailTable", "if (Z <= (player[0].playerType == PLAYER_TYPE_PEDESTRIAN ? DRAW_LOD_DIST_HIGH : 2500))\n\t\t{\n\t\t\tif (Low2HighDetailTable")
+P('Game/C/tile.c', "\t\t\tif (Z < 2000)\n\t\t\t\tTileNxN(pModel, 4, 75);", "\t\t\tif (Z < 2000 && player[0].playerType == PLAYER_TYPE_PEDESTRIAN)\n\t\t\t\tTileNxN(pModel, 4, 75);\n\t\t\telse if (Z < 2000)\n\t\t\t\tTileNxN(pModel, 2, 35);")
+
+P('Game/C/cars.c', "#else\n#define CAR_LOD_SWITCH_DISTANCE 5500", "#else\n#define CAR_LOD_SWITCH_DISTANCE 3500")
+P('Game/C/tile.c', '#include "mission.h"\n#include "draw.h"', '#include "mission.h"\n#include "players.h"\n#include "draw.h"')
+# ---- Fidelidade PS1 no N64: remove expansoes de limites/efeitos/conteudo feitas para PC, sem ativar caminhos de plataforma PSX ----
+R('Game/dr2limits.h', r'#ifndef PSX', '#if !defined(PSX) && !defined(D2_PSX_FIDELITY)')
+P('Game/C/camera.h', "#ifdef PSX\n#define VIEW_DRAW_DISTANCE 16000", "#if defined(PSX) || defined(D2_PSX_FIDELITY)\n#define VIEW_DRAW_DISTANCE 16000")
+P('Game/C/draw.c', "#ifdef PSX\n#define MAX_TREE_SHADOW_DISTANCE 7000", "#if defined(PSX) || defined(D2_PSX_FIDELITY)\n#define MAX_TREE_SHADOW_DISTANCE 7000")
+# ---- Evita wrap-around de 16 bits no FrustrumCheck16 em DrawMapPSX (explosao de sprites distantes) ----
+P('Game/C/draw.c',
+  "model = modelpointers[(ppco->value >> 6) | ((ppco->pos).vy & 1) << 10];\n\n\t\t\t\t\tif (FrustrumCheck16(ppco, model->bounding_sphere) != -1)",
+  "model = modelpointers[(ppco->value >> 6) | ((ppco->pos).vy & 1) << 10];\n\n\t\t\t\t\t{\n\t\t\t\t\t\tint _dx = (ci.nearCell.x + (short)(ppco->pos.vx - ci.nearCell.x)) - camera_position.vx;\n\t\t\t\t\t\tint _dz = (ci.nearCell.z + (short)(ppco->pos.vz - ci.nearCell.z)) - camera_position.vz;\n                        int limit = 13000;\n#ifdef D2_TEST_BUILDING_RANGE\n                        const int modelIndex = (ppco->value >> 6) | (ppco->pos.vy & 1) << 10;\n                        const bool staticBuilding =\n                            !(model->shape_flags & (SHAPE_FLAG_SPRITE | SHAPE_FLAG_TILE | SHAPE_FLAG_WATER)) &&\n                            !(model->flags2 & (MODEL_FLAG_PATH | MODEL_FLAG_GRASS | MODEL_FLAG_ANIMOBJ));\n                        if (staticBuilding && pLodModels[modelIndex] && pLodModels[modelIndex] != model) {\n                            const int radius = model->bounding_sphere > 0 ? model->bounding_sphere : 0;\n                            limit += radius;\n                            if (limit > VIEW_DRAW_DISTANCE) limit = VIEW_DRAW_DISTANCE;\n                        }\n#endif\n                        if (ABS(_dx) > limit || ABS(_dz) > limit) continue;\n\t\t\t\t\t}\n\n\t\t\t\t\tif (FrustrumCheck16(ppco, model->bounding_sphere) != -1)")
+P('Game/C/system.h', "#ifdef PSX\n#define\tOTSIZE\t0x1080", "#if defined(PSX) || defined(D2_PSX_FIDELITY)\n#define\tOTSIZE\t0x1080")
+P('Game/driver2.h', "#define ENABLE_GAME_ENCHANCEMENTS\t1\n#define ENABLE_BONUS_CONTENT\t\t1",
+  "#ifdef D2_PSX_FIDELITY\n#define ENABLE_GAME_ENCHANCEMENTS\t0\n#define ENABLE_BONUS_CONTENT\t\t0\n#else\n#define ENABLE_GAME_ENCHANCEMENTS\t1\n#define ENABLE_BONUS_CONTENT\t\t1\n#endif")
+P('Game/C/cars.c', "#ifndef PSX\n#define CAR_LOD_SWITCH_DISTANCE switch_detail_distance",
+  "#if !defined(PSX) && !defined(D2_PSX_FIDELITY)\n#define CAR_LOD_SWITCH_DISTANCE switch_detail_distance")
+P('Game/C/main.c', "#ifndef PSX\n\tint screenW, screenH;\n\tPsyX_GetScreenSize(&screenW, &screenH);",
+  "#if !defined(PSX) && !defined(D2_PSX_FIDELITY)\n\tint screenW, screenH;\n\tPsyX_GetScreenSize(&screenW, &screenH);")
+P('Game/C/main.c', "#ifdef PSX\n\t\tsetXYWH(poly, 0, 0, 320, 256);",
+  "#if defined(PSX) || defined(D2_PSX_FIDELITY)\n\t\tsetXYWH(poly, 0, 0, 320, 256);")
+P('Game/C/debris.c', "#ifndef PSX\n\tx = (poly->x0 + poly->x3) * 0.5f;",
+  "#if !defined(PSX) && !defined(D2_PSX_FIDELITY)\n\tx = (poly->x0 + poly->x3) * 0.5f;")
+P('Game/C/debris.c', "#ifdef PSX\n\t\t\tint dx, dy;",
+  "#if defined(PSX) || defined(D2_PSX_FIDELITY)\n\t\t\tint dx, dy;")
+P('Game/C/debris.c', "#ifdef PSX\n\t\tpolys->x0 = 0;\n\t\tpolys->w = 320;",
+  "#if defined(PSX) || defined(D2_PSX_FIDELITY)\n\t\tpolys->x0 = 0;\n\t\tpolys->w = 320;")
+P('Game/Frontend/FEmain.c', "#ifndef PSX\n\t\t// replay theater",
+  "#if !defined(PSX) && !defined(D2_PSX_FIDELITY)\n\t\t// replay theater")
+P('Game/C/main.c', "\t// [A] Driver 1 music support\n#ifndef PSX",
+  "\t// [A] Driver 1 music support\n#if !defined(PSX) && !defined(D2_PSX_FIDELITY)")
+P('Game/C/main.c', "#ifdef PSX\n\t\tCloseShutters(2, 320, 512);",
+  "#if defined(PSX) || defined(D2_PSX_FIDELITY)\n\t\tCloseShutters(2, 320, 512);")
+P('Game/C/event.c', "#ifdef PSX\n#define EVENT_DRAW_DISTANCE VIEW_DRAW_DISTANCE",
+  "#if defined(PSX) || defined(D2_PSX_FIDELITY)\n#define EVENT_DRAW_DISTANCE VIEW_DRAW_DISTANCE")
+P('Game/Frontend/FEmain.c', "#ifndef PSX\n\t\t// [A] SCREEN HACKS",
+  "#if !defined(PSX) && !defined(D2_PSX_FIDELITY)\n\t\t// [A] SCREEN HACKS")
+P('Game/C/camera.c', "\t\t\t// [A] default just adds 248, but it's too close for big vehicles\n\t\t\taddDist = MAX(248, car_cos->colBox.vy * 3);",
+  "\t\t\t// PS1 usa a distancia fixa; o PC a aumentava para veiculos grandes\n#ifdef D2_PSX_FIDELITY\n\t\t\taddDist = 248;\n#else\n\t\t\taddDist = MAX(248, car_cos->colBox.vy * 3);\n#endif")
+
+# ---- registradores do GTE: unions/structs assumem LE (low half = primeiro campo). Em BE a ordem dos campos precisa ser invertida ----
+_GTE_BE = "#if defined(__BYTE_ORDER__) && __BYTE_ORDER__ == __ORDER_BIG_ENDIAN__\n#define D2_GTE_BE 1\n#endif\n"
+R('PsyCross/include/psx/gtereg.h', r'(?<!#endif\n)#ifdef Status \r?\n', _GTE_BE.replace('\\','\\\\')+"#ifdef Status \n")
+R('PsyCross/include/psx/gtereg.h', r'(?:#if defined\(__BYTE_ORDER__\) && __BYTE_ORDER__ == __ORDER_BIG_ENDIAN__\n#define D2_GTE_BE 1\n#endif\n){2,}', _GTE_BE.replace('\\','\\\\'))
+R('PsyCross/include/psx/gtereg.h', r'\tstruct \{ unsigned char l, h, h2, h3; \} b;', "#ifdef D2_GTE_BE\n\tstruct { unsigned char h3, h2, h, l; } b;\n#else\n\tstruct { unsigned char l, h, h2, h3; } b;\n#endif")
+R('PsyCross/include/psx/gtereg.h', r'\tstruct \{ unsigned short l, h; \} w;', "#ifdef D2_GTE_BE\n\tstruct { unsigned short h, l; } w;\n#else\n\tstruct { unsigned short l, h; } w;\n#endif")
+R('PsyCross/include/psx/gtereg.h', r'\tstruct \{ char l, h, h2, h3; \} sb;', "#ifdef D2_GTE_BE\n\tstruct { char h3, h2, h, l; } sb;\n#else\n\tstruct { char l, h, h2, h3; } sb;\n#endif")
+R('PsyCross/include/psx/gtereg.h', r'\tstruct \{ short l, h; \} sw;', "#ifdef D2_GTE_BE\n\tstruct { short h, l; } sw;\n#else\n\tstruct { short l, h; } sw;\n#endif")
+R('PsyCross/include/psx/gtereg.h', r'typedef struct \{\r?\n\tunsigned char r, g, b, c;\r?\n\} CBGR;', "typedef struct {\n#ifdef D2_GTE_BE\n\tunsigned char c, b, g, r;\n#else\n\tunsigned char r, g, b, c;\n#endif\n} CBGR;")
+R('PsyCross/include/psx/gtereg.h', r'typedef struct \{\r?\n\tshort x, y, z, pad;\r?\n\} SVector3D;', "typedef struct {\n#ifdef D2_GTE_BE\n\tshort y, x, pad, z;\n#else\n\tshort x, y, z, pad;\n#endif\n} SVector3D;")
+R('PsyCross/include/psx/gtereg.h', r'typedef struct \{\r?\n\tshort x, y;\r?\n\} SVector2D;', "typedef struct {\n#ifdef D2_GTE_BE\n\tshort y, x;\n#else\n\tshort x, y;\n#endif\n} SVector2D;")
+R('PsyCross/include/psx/gtereg.h', r'typedef struct \{\r?\n\tshort z, pad;\r?\n\} SVector2Dz;', "typedef struct {\n#ifdef D2_GTE_BE\n\tshort pad, z;\n#else\n\tshort z, pad;\n#endif\n} SVector2Dz;")
+R('PsyCross/include/psx/gtereg.h', r'typedef struct \{\r?\n\tshort m11, m12, m13, m21, m22, m23, m31, m32, m33, pad;\r?\n\} SMatrix3D;', "typedef struct {\n#ifdef D2_GTE_BE\n\tshort m12, m11, m21, m13, m23, m22, m32, m31, pad, m33;\n#else\n\tshort m11, m12, m13, m21, m22, m23, m31, m32, m33, pad;\n#endif\n} SMatrix3D;")
+
+
+# ---- cores empacotadas em variaveis int (nao em memoria de CVECTOR): carregar o valor direto no registrador RGBC ----
+R('Game/C/cars.c', r'gte_ldrgb\(&(FT3rgb|GT3rgb|lightlevel)\)', r'MTC2(\1, 6)')
+
+# ---- caminho direto OT -> RDP (port/n64/psyx_rdp.cpp, D2_DIRECT): poligonos F/G/FT/GT 3/4 vao direto ao RDP, sem GrVertex/lotes ----
+P('PsyCross/src/gpu/PsyX_GPU.cpp',
+  "static int ProcessFlatPoly(P_TAG* polyTag)\n{\n",
+  "static int ProcessFlatPoly(P_TAG* polyTag)\n{\n#ifdef D2_DIRECT\n\t{ const int dl = d2_direct_poly(polyTag); if (dl) return dl; }\n#endif\n")
+P('PsyCross/src/gpu/PsyX_GPU.cpp',
+  "static int ProcessGouraudPoly(P_TAG* polyTag)\n{\n",
+  "static int ProcessGouraudPoly(P_TAG* polyTag)\n{\n#ifdef D2_DIRECT\n\t{ const int dl = d2_direct_poly(polyTag); if (dl) return dl; }\n#endif\n")
+P('PsyCross/src/gpu/PsyX_GPU.cpp',
+  "// forward declarations\nint ParsePrimitive(P_TAG* polyTag);\n",
+  "// N64 (caminho direto): desenha os lotes pendentes antes de um poligono direto, para manter a ordem da OT\nextern \"C\" int d2_direct_poly(P_TAG* tag);\nextern \"C\" void d2_flush_splits(void)\n{\n\tif (g_splitIndex <= 0 || g_vertexIndex <= 0) return;\n\tGPUDrawSplit& l = g_splits[g_splitIndex];\n\tl.numVerts = g_vertexIndex - l.startVertex;\n\tDrawAllSplits();\n}\n\n// forward declarations\nint ParsePrimitive(P_TAG* polyTag);\n")
+
+# ---- GTE nativo (port/compat/d2_gte_inline.h, D2_XF_NATIVE): o macro doCOP2 nao pode renomear a definicao da funcao ----
+P('PsyCross/src/psx/INLINE_C.C', "#undef CTC2\n", "#undef CTC2\n#undef doCOP2\n")
+
+# ---- Fase 1.1 (port/n64/d2_vtxcache.cpp, D2_VTXCACHE): versoes com cache de vertices substituem estas; as originais ficam com _orig ----
+P('Game/C/tile.c', "void Tile1x1Lit(MODEL* model)\n{", "void Tile1x1Lit(MODEL* model);\nvoid drawMeshLit(MVERTEX(*VSP)[5][5], int m, int n, _pct* pc);\nvoid D2_VC_ORIG(Tile1x1Lit)(MODEL* model)\n{")
+P('Game/C/tile.c', "void Tile1x1(MODEL *model)\n{", "void D2_VC_ORIG(Tile1x1)(MODEL *model)\n{")
+P('Game/C/tile.c', "void drawMesh(MVERTEX(*VSP)[5][5], int m, int n, _pct *pc)\n{", "void D2_VC_ORIG(drawMesh)(MVERTEX(*VSP)[5][5], int m, int n, _pct *pc)\n{")
+P('Game/C/tile.c', "void drawMeshLit(MVERTEX(*VSP)[5][5], int m, int n, _pct* pc)\n{", "void D2_VC_ORIG(drawMeshLit)(MVERTEX(*VSP)[5][5], int m, int n, _pct* pc)\n{")
+P('Game/C/draw.c', "void PlotBuildingModel(MODEL* model, int rot, _pct* pc)\n{", "void PlotBuildingModel(MODEL* model, int rot, _pct* pc);\nvoid PlotBuildingModelSubdivNxN(MODEL* model, int rot, _pct* pc, int n);\nvoid D2_VC_ORIG(PlotBuildingModel)(MODEL* model, int rot, _pct* pc)\n{")
+P('Game/C/draw.c', "void PlotBuildingModelSubdivNxN(MODEL* model, int rot, _pct* pc, int n)\n{", "void D2_VC_ORIG(PlotBuildingModelSubdivNxN)(MODEL* model, int rot, _pct* pc, int n)\n{")
+
+# ---- carros (port/n64/d2_vtxcache.cpp): cada vertice do modelo do carro e projetado UMA vez por chamada (os triangulos compartilham vertices) ----
+R('Game/C/cars.c', r'd2x_ldv3\(v0, v1, v2\);\n\n\t\td2x_rtpt\(\);', 'd2_vc_car_rtpt3(indices);')
+R('Game/C/cars.c', r'(?<!d2_vc_car_begin\(vlist\);\n)\twhile \(numTris > 0\)', '\td2_vc_car_begin(vlist);\n\twhile (numTris > 0)')
+
+# ---- buffer de vertices e splits menores: nunca escrever alem dele; economiza ~305 KB de RAM ----
+P('PsyCross/src/gpu/PsyX_GPU.cpp', "#define MAX_DRAW_SPLITS 1024", "#define MAX_DRAW_SPLITS 16")
+P('PsyCross/src/gpu/PsyX_GPU.cpp',
+  "int ParsePrimitive(P_TAG* polyTag)\n{",
+  "extern \"C\" int d2_native_ft4(POLY_FT4*);\nextern \"C\" int d2_native_rect(P_TAG*);\nextern \"C\" int d2_native_line(P_TAG*);\nextern \"C\" int d2_native_drawenv(P_TAG*);\nextern \"C\" int d2_native_psyx(P_TAG*);\nextern \"C\" int d2_native_vram_packet(P_TAG*);\nint ParsePrimitive(P_TAG* polyTag)\n{\n#ifdef D2_DIRECT\n\tif (polyTag->code == 0xB3) return d2_native_ft4((POLY_FT4*)polyTag);\n\tif ((polyTag->code & 0xF0) == 0x00 || (polyTag->code & 0xF0) == 0xA0) { int n=d2_native_vram_packet(polyTag); if (n) return n; }\n\tif ((polyTag->code & 0xF0) == 0x20 || (polyTag->code & 0xF0) == 0x30) { int n = d2_direct_poly(polyTag); if (n) return n; }\n\tif ((polyTag->code & 0xF0) == 0x40 || (polyTag->code & 0xF0) == 0x50) { int n = d2_native_line(polyTag); if (n) return n; }\n\tif ((polyTag->code & 0xF0) == 0x60 || (polyTag->code & 0xF0) == 0x70) { int n = d2_native_rect(polyTag); if (n) return n; }\n\tif ((polyTag->code & 0xF0) == 0xB0) { int n = d2_native_psyx(polyTag); if (n) return n; }\n\tif ((polyTag->code & 0xF0) == 0xE0) return d2_native_drawenv(polyTag);\n\tif (g_vertexIndex > MAX_VERTEX_BUFFER_SIZE - 64) d2_flush_splits();\n#endif")
+
+P('PsyCross/src/gpu/PsyX_GPU.cpp',
+  "void ParsePrimitivesLinkedList(u_long* p, int singlePrimitive)\n{",
+  "extern \"C\" void d2_native_draw_ot(u_long* p);\nvoid ParsePrimitivesLinkedList(u_long* p, int singlePrimitive)\n{\n#ifdef D2_NATIVE_OT\n\tif (!singlePrimitive) { d2_native_draw_ot(p); return; }\n#endif")
+
+# ---- Fase 1.3: OT enxuta (D2_FASTOT) ----
+# ClearOTagR: duas palavras por entrada (endereco da anterior + len/pgxp zerados) em vez de escrita de campo de bits
+P('PsyCross/src/psx/LIBGPU.C',
+  "\t// initialize a linked list with it's previous items\n\tfor (int i = 1; i < n; ++i)\n\t{\n\t\tsetaddr(&ptag_list[i], &ptag_list[i-1]);\n\t\tsetlen(&ptag_list[i], 0);\n\t}\n",
+  "\t// initialize a linked list with it's previous items\n#if defined(D2_FASTOT)\n\tstatic_assert(sizeof(OT_TAG) == 8, \"OT_TAG de 8 bytes\");\n\t{\n\t\tunsigned int* w = (unsigned int*)ptag_list;\n\t\tint i = 1;\n\t\t// linhas de cache inteiras (16 bytes = 2 entradas): cria a linha sem ler a RAM (Create Dirty Exclusive) e escreve\n\t\tfor (; i < n && (((uintptr_t)&w[2 * i]) & 15); ++i) { w[2 * i] = (unsigned int)(uintptr_t)&ptag_list[i - 1]; w[2 * i + 1] = 0; }\n\t\tfor (; i + 1 < n; i += 2) {\n\t\t\t__asm__ volatile(\"cache 0x0d, 0(%0)\" :: \"r\"(&w[2 * i]) : \"memory\");\n\t\t\tw[2 * i] = (unsigned int)(uintptr_t)&ptag_list[i - 1]; w[2 * i + 1] = 0; w[2 * i + 2] = (unsigned int)(uintptr_t)&ptag_list[i]; w[2 * i + 3] = 0;\n\t\t}\n\t\tfor (; i < n; ++i) { w[2 * i] = (unsigned int)(uintptr_t)&ptag_list[i - 1]; w[2 * i + 1] = 0; }\n\t}\n#else\n\tfor (int i = 1; i < n; ++i)\n\t{\n\t\tsetaddr(&ptag_list[i], &ptag_list[i-1]);\n\t\tsetlen(&ptag_list[i], 0);\n\t}\n#endif\n")
+# percurso da OT: so atualiza o lote quando a entrada tinha primitivos (a maioria das entradas e vazia)
+P('PsyCross/src/gpu/PsyX_GPU.cpp',
+  "\t\t\t}\n\n\t\t\tGPUDrawSplit& lastSplit = g_splits[g_splitIndex];\n\t\t\tlastSplit.numVerts = g_vertexIndex - lastSplit.startVertex;\n\n\t\t\tif (isendprim(basePacket))",
+  "#ifdef D2_FASTOT\n\t\t\t\tGPUDrawSplit& lastSplit = g_splits[g_splitIndex];\n\t\t\t\tlastSplit.numVerts = g_vertexIndex - lastSplit.startVertex;\n\t\t\t}\n#else\n\t\t\t}\n\n\t\t\tGPUDrawSplit& lastSplit = g_splits[g_splitIndex];\n\t\t\tlastSplit.numVerts = g_vertexIndex - lastSplit.startVertex;\n#endif\n\n\t\t\tif (isendprim(basePacket))")
+
+# ---- sombra do Tanner: render offscreen nao suportado no N64 ----
+P('Game/C/motion_c.c',
+  "\t\t\tTannerShadow(pPed, &v, moon_position + GameLevel, &cV, pPed->dir.vy);\n\t\t}\n\t\telse\n\t\t{\n\t\t\tcV.b = 32;\n\t\t\tcV.g = 32;\n\t\t\tcV.r = 32;\n\t\t\tTannerShadow(pPed, &v, sun_position + GameLevel, &cV, pPed->dir.vy);",
+  "#ifndef D2_NO_TANNER_SHADOW\n\t\t\tTannerShadow(pPed, &v, moon_position + GameLevel, &cV, pPed->dir.vy);\n#endif\n\t\t}\n\t\telse\n\t\t{\n\t\t\tcV.b = 32;\n\t\t\tcV.g = 32;\n\t\t\tcV.r = 32;\n#ifndef D2_NO_TANNER_SHADOW\n\t\t\tTannerShadow(pPed, &v, sun_position + GameLevel, &cV, pPed->dir.vy);\n#endif")
+
+P('Game/C/motion_c.c',
+  "\t\t\tTannerShadow(pPed, &v, moon_position + GameLevel, &cV, pPed->dir.vy);\n\t\t}\n\t\telse\n\t\t{\n\t\t\tcV.b = cV.g = cV.r = 32;\n\t\t\tTannerShadow(pPed, &v, sun_position + GameLevel, &cV, pPed->dir.vy);",
+  "#ifndef D2_NO_TANNER_SHADOW\n\t\t\tTannerShadow(pPed, &v, moon_position + GameLevel, &cV, pPed->dir.vy);\n#endif\n\t\t}\n\t\telse\n\t\t{\n\t\t\tcV.b = cV.g = cV.r = 32;\n#ifndef D2_NO_TANNER_SHADOW\n\t\t\tTannerShadow(pPed, &v, sun_position + GameLevel, &cV, pPed->dir.vy);\n#endif")
+
+# ---- Etapa 2b: DrawSkyDome / PlotSkyPoly sem recorte UV float por quadro ----
+P('Game/C/sky.c',
+  """void PlotSkyPoly(POLYFT4* polys, int skytexnum, unsigned char r, unsigned char g, unsigned char b)
+{
+\tPOLYFT4* src;
+\tPOLY_FT4* poly;
+
+\tsrc = polys;
+\tpoly = (POLY_FT4*)current->primptr;
+
+#if USE_PGXP
+\tDVECTORF* outpoints = scratchPad_skyVertices;
+#else
+\tDVECTOR* outpoints = scratchPad_skyVertices;
+#endif
+
+#ifdef PSX
+\tif ((outpoints[src->v0].vy > -1 || outpoints[src->v1].vy > -1 || outpoints[src->v2].vy > -1 || outpoints[src->v3].vy > -1) &&
+\t\t(outpoints[src->v0].vx > -1 || outpoints[src->v1].vx > -1 || outpoints[src->v2].vx > -1 || outpoints[src->v3].vx > -1) &&
+\t\t(outpoints[src->v0].vx < 321 || outpoints[src->v1].vx < 321 || outpoints[src->v2].vx < 321 || outpoints[src->v3].vx < 321))
+#endif
+\t{
+\t\tsetPolyFT4(poly);
+
+\t\tpoly->r0 = r;
+\t\tpoly->g0 = g;
+\t\tpoly->b0 = b;
+
+\t\t*(u_int*)&poly->x0 = *(u_int*)&outpoints[src->v0].vx;
+\t\t*(u_int*)&poly->x1 = *(u_int*)&outpoints[src->v1].vx;
+\t\t*(u_int*)&poly->x2 = *(u_int*)&outpoints[src->v3].vx;
+\t\t*(u_int*)&poly->x3 = *(u_int*)&outpoints[src->v2].vx;
+\t
+\t\t*(ushort*)&poly->u0 = *(ushort*)&skytexuv[skytexnum].u2;
+\t\t*(ushort*)&poly->u1 = *(ushort*)&skytexuv[skytexnum].u3;
+\t\t*(ushort*)&poly->u2 = *(ushort*)&skytexuv[skytexnum].u0;
+\t\t*(ushort*)&poly->u3 = *(ushort*)&skytexuv[skytexnum].u1;
+\t\t
+\t\tpoly->clut = skyclut[skytexnum];
+\t\tpoly->tpage = skytpage[skytexnum];
+
+\t\taddPrim(current->ot + OTSIZE - 1, poly);
+
+#if USE_PGXP && USE_EXTENDED_PRIM_POINTERS
+\t\tpoly->pgxp_index = outpoints[src->v0].pgxp_index;
+#endif 
+
+\t\tcurrent->primptr += sizeof(POLY_FT4);
+\t}
+}""",
+  """void PlotSkyPoly(POLYFT4* polys, int skytexnum, unsigned char r, unsigned char g, unsigned char b)
+{
+\tPOLYFT4* src = polys;
+\tDVECTOR* outpoints = scratchPad_skyVertices;
+\tshort px00 = outpoints[src->v0].vx, py00 = outpoints[src->v0].vy;
+\tshort px20 = outpoints[src->v1].vx, py20 = outpoints[src->v1].vy;
+\tshort px02 = outpoints[src->v3].vx, py02 = outpoints[src->v3].vy;
+\tshort px22 = outpoints[src->v2].vx, py22 = outpoints[src->v2].vy;
+
+\tif (!((py00 > -1 || py20 > -1 || py02 > -1 || py22 > -1) &&
+\t\t  (py00 < 257 || py20 < 257 || py02 < 257 || py22 < 257) &&
+\t\t  (px00 > -1 || px20 > -1 || px02 > -1 || px22 > -1) &&
+\t\t  (px00 < 321 || px20 < 321 || px02 < 321 || px22 < 321)))
+\t\treturn;
+
+\tunsigned char qu0 = skytexuv[skytexnum].u2;
+\tunsigned char qv0 = skytexuv[skytexnum].v2;
+\tunsigned char qu1 = skytexuv[skytexnum].u3;
+\tunsigned char qv2 = skytexuv[skytexnum].v0;
+\tshort clut = skyclut[skytexnum];
+\tshort tpage = skytpage[skytexnum];
+
+\tif (qu0 == qu1 && qv0 == qv2)
+\t{
+\t\tPOLY_FT4* poly = (POLY_FT4*)current->primptr;
+\t\tsetPolyFT4(poly);
+\t\tpoly->r0 = r; poly->g0 = g; poly->b0 = b;
+\t\tpoly->x0 = px00; poly->y0 = py00;
+\t\tpoly->x1 = px20; poly->y1 = py20;
+\t\tpoly->x2 = px02; poly->y2 = py02;
+\t\tpoly->x3 = px22; poly->y3 = py22;
+\t\tpoly->u0 = qu0; poly->v0 = qv0;
+\t\tpoly->u1 = qu0; poly->v1 = qv0;
+\t\tpoly->u2 = qu0; poly->v2 = qv0;
+\t\tpoly->u3 = qu0; poly->v3 = qv0;
+\t\tpoly->clut = clut;
+\t\tpoly->tpage = tpage;
+\t\taddPrim(current->ot + OTSIZE - 1, poly);
+\t\tcurrent->primptr += sizeof(POLY_FT4);
+\t\treturn;
+\t}
+
+\t/* Subdivide patches 128x84 CI4 (> 2 KB TMEM) em grade 2x2 de 64x42 (1344 B <= 2 KB TMEM) */
+\tshort gx[3][3], gy[3][3];
+\tgx[0][0] = px00; gy[0][0] = py00;
+\tgx[0][2] = px20; gy[0][2] = py20;
+\tgx[2][0] = px02; gy[2][0] = py02;
+\tgx[2][2] = px22; gy[2][2] = py22;
+\tgx[0][1] = (short)(((int)px00 + (int)px20) >> 1);
+\tgy[0][1] = (short)(((int)py00 + (int)py20) >> 1);
+\tgx[2][1] = (short)(((int)px02 + (int)px22) >> 1);
+\tgy[2][1] = (short)(((int)py02 + (int)py22) >> 1);
+\tgx[1][0] = (short)(((int)px00 + (int)px02) >> 1);
+\tgy[1][0] = (short)(((int)py00 + (int)py02) >> 1);
+\tgx[1][2] = (short)(((int)px20 + (int)px22) >> 1);
+\tgy[1][2] = (short)(((int)py20 + (int)py22) >> 1);
+\tgx[1][1] = (short)(((int)px00 + (int)px20 + (int)px02 + (int)px22 + 2) >> 2);
+\tgy[1][1] = (short)(((int)py00 + (int)py20 + (int)py02 + (int)py22 + 2) >> 2);
+
+\tunsigned char us0[2], us1[2], vs0[2], vs1[2];
+\tus0[0] = qu0;
+\tus1[0] = (unsigned char)(qu0 + 63);
+\tus0[1] = (unsigned char)(qu0 + 64);
+\tus1[1] = qu1;
+\tif (qv0 <= qv2)
+\t{
+\t\tvs0[0] = qv0;
+\t\tvs1[0] = (unsigned char)(qv0 + 41);
+\t\tvs0[1] = (unsigned char)(qv0 + 42);
+\t\tvs1[1] = qv2;
+\t}
+\telse
+\t{
+\t\tvs0[0] = qv0;
+\t\tvs1[0] = (unsigned char)(qv2 + 42);
+\t\tvs0[1] = (unsigned char)(qv2 + 41);
+\t\tvs1[1] = qv2;
+\t}
+
+\tfor (int iy = 0; iy < 2; iy++)
+\t{
+\t\tfor (int ix = 0; ix < 2; ix++)
+\t\t{
+\t\t\tshort sx00 = gx[iy][ix],         sy00 = gy[iy][ix];
+\t\t\tshort sx10 = gx[iy][ix + 1],     sy10 = gy[iy][ix + 1];
+\t\t\tshort sx01 = gx[iy + 1][ix],     sy01 = gy[iy + 1][ix];
+\t\t\tshort sx11 = gx[iy + 1][ix + 1], sy11 = gy[iy + 1][ix + 1];
+\t\t\tif (!((sy00 > -1 || sy10 > -1 || sy01 > -1 || sy11 > -1) &&
+\t\t\t\t  (sy00 < 257 || sy10 < 257 || sy01 < 257 || sy11 < 257) &&
+\t\t\t\t  (sx00 > -1 || sx10 > -1 || sx01 > -1 || sx11 > -1) &&
+\t\t\t\t  (sx00 < 321 || sx10 < 321 || sx01 < 321 || sx11 < 321)))
+\t\t\t\tcontinue;
+
+\t\t\tPOLY_FT4* poly = (POLY_FT4*)current->primptr;
+\t\t\tsetPolyFT4(poly);
+\t\t\tpoly->r0 = r; poly->g0 = g; poly->b0 = b;
+\t\t\tpoly->x0 = sx00; poly->y0 = sy00;
+\t\t\tpoly->x1 = sx10; poly->y1 = sy10;
+\t\t\tpoly->x2 = sx01; poly->y2 = sy01;
+\t\t\tpoly->x3 = sx11; poly->y3 = sy11;
+\t\t\tpoly->u0 = us0[ix]; poly->v0 = vs0[iy];
+\t\t\tpoly->u1 = us1[ix]; poly->v1 = vs0[iy];
+\t\t\tpoly->u2 = us0[ix]; poly->v2 = vs1[iy];
+\t\t\tpoly->u3 = us1[ix]; poly->v3 = vs1[iy];
+\t\t\tpoly->clut = clut;
+\t\t\tpoly->tpage = tpage;
+\t\t\taddPrim(current->ot + OTSIZE - 1, poly);
+\t\t\tcurrent->primptr += sizeof(POLY_FT4);
+\t\t}
+\t}
+}""")
+
+P('Game/C/sky.c',
+  "#ifdef PSX\n\t// FIXME: use frustrum angle instead?",
+  "#if defined(PSX) || defined(D2_PSX_FIDELITY)\n\t// FIXME: use frustrum angle instead?")
+
+# ---- remocao do GTE (tools/patch_gte_removal.py) ----
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import patch_gte_removal
+patch_gte_removal.register(P, R)
+import patch_ot_native
+patch_ot_native.register(P, R)
+import patch_cd_native
+patch_cd_native.register(P, R)
+import patch_audio_native
+patch_audio_native.register(P, R)
+import patch_gpu_native
+patch_gpu_native.register(P, R)
+P("Game/C/tile.c", '#include "d2_t3d_world.h"', '#include "d2_t3d_world.h"\n#include "d2_ground.h"')
+P("Game/C/tile.c",
+  """	plotContext.flags = 0;
+	plotContext.polySizes = PolySizes;""",
+  """	plotContext.flags = D2_PLOT_GROUND;
+	plotContext.polySizes = PolySizes;""")
+P("Game/C/draw.c",
+  """		model = Z > DRAW_LOD_DIST_LOW ? pLodModels[cop->type] : modelpointers[cop->type];""",
+  """        bool useLod = Z > DRAW_LOD_DIST_LOW;
+#ifdef D2_TEST_BUILDING_RANGE
+        useLod |= ABS(cop->pos.vx - camera_position.vx) > 13000 ||
+                  ABS(cop->pos.vz - camera_position.vz) > 13000;
+#endif
+        model = useLod ? pLodModels[cop->type] : modelpointers[cop->type];""")
+P("Game/C/draw.c",
+  """		if(Z <= DRAW_LOD_DIST_HIGH)
+			PlotBuildingModelSubdivNxN(model, cop->yang, &plotContext, 1);""",
+  """#ifdef D2_TEST_BUILDING_RANGE
+        if (!useLod && Z <= DRAW_LOD_DIST_HIGH)
+#else
+		if(Z <= DRAW_LOD_DIST_HIGH)
+#endif
+			PlotBuildingModelSubdivNxN(model, cop->yang, &plotContext, 1);""")
+P("Game/C/draw.c",
+  """	num_cars_drawn = 0;
+	num_cars_to_draw = 0;""",
+  """	num_cars_drawn = 0;
+#ifdef D2_DIAG_NO_CARS
+    return; // Rendering entry point only. Simulation and collisions still run.
+#endif
+	num_cars_to_draw = 0;""")
+P("Game/C/draw.c", 'int num_cars_drawn = 0;', '#ifdef D2_DIAG_DRAW_CPU\nextern "C" double d2_now_ms(void);\nstruct DrawCpuWindow {\n    double total;\n    unsigned samples;\n};\nstruct DrawCpuSample {\n    DrawCpuWindow &window;\n    const char *name;\n    double start;\n    DrawCpuSample(DrawCpuWindow &w, const char *n) : window(w), name(n), start(d2_now_ms()) {}\n    ~DrawCpuSample() {\n        window.total += d2_now_ms() - start;\n        if (++window.samples == 64) {\n            printInfo("[draw-cpu] %s mean_us=%u samples=%u\\n",\n                      name, (unsigned)(window.total * 1000 / window.samples), window.samples);\n            window.total = 0;\n            window.samples = 0;\n        }\n    }\n};\n#endif\nint num_cars_drawn = 0;')
+P("Game/C/draw.c", 'void DrawAllTheCars(int view)\n{', 'void DrawAllTheCars(int view)\n{\n#ifdef D2_DIAG_DRAW_CPU\n    static DrawCpuWindow cpuWindow;\n    DrawCpuSample cpuSample(cpuWindow, "cars");\n#endif')
+P("Game/C/draw.c", 'int DrawAllBuildings(CELL_OBJECT** objects, int num_buildings)\n{', 'int DrawAllBuildings(CELL_OBJECT** objects, int num_buildings)\n{\n#ifdef D2_DIAG_DRAW_CPU\n    static DrawCpuWindow cpuWindow;\n    DrawCpuSample cpuSample(cpuWindow, "buildings");\n#endif')
+import patch_vram_native
+patch_vram_native.register(P, R)
+P("Game/C/pad.c",
+  '#include <libpad.h>',
+  """#include <libpad.h>
+
+#ifdef D2_N64
+extern "C" void d2_read_buttons(unsigned short buttons[2]);
+#endif""")
+P("Game/C/pad.c",
+  """	PadInitDirect((unsigned char*)padbuffer[0], (unsigned char*)padbuffer[1]);
+	PadStartCom();""",
+  """#ifndef D2_N64
+	PadInitDirect((unsigned char*)padbuffer[0], (unsigned char*)padbuffer[1]);
+	PadStartCom();
+#endif""")
+P("Game/C/pad.c",
+  '\tPadStopCom();',
+  """#ifndef D2_N64
+	PadStopCom();
+#endif""")
+P("Game/C/pad.c",
+  """// [D] [T]
+void MapPad(int pad, PADRAW *pData)
+{
+	unsigned char uVar1;
+
+	ushort i;
+	ushort buttons;
+	ushort mapped;""",
+  """#ifndef D2_N64
+static void MapPadActions(int pad, ushort buttons, const char analog[4]);
+
+// [D] [T]
+void MapPad(int pad, PADRAW *pData)
+{""")
+P("Game/C/pad.c",
+  """	mapped = Pads[pad].direct;
+	buttons = ~((pData->buttons[0] << 8) | (pData->buttons[1])) & 0xffff;
+
+	Pads[pad].direct = buttons;
+	Pads[pad].dirnew = buttons & ~mapped;
+
+	Pads[pad].diranalog[0] = pData->analog[0] - 128;
+	Pads[pad].diranalog[1] = pData->analog[1] - 128;
+	Pads[pad].diranalog[2] = pData->analog[2] - 128;
+	Pads[pad].diranalog[3] = pData->analog[3] - 128;
+""",
+  """	const ushort buttons = ~((pData->buttons[0] << 8) | pData->buttons[1]) & 0xffff;
+    const char analog[4] = {
+        (char)(pData->analog[0] - 128), (char)(pData->analog[1] - 128),
+        (char)(pData->analog[2] - 128), (char)(pData->analog[3] - 128)
+    };
+    MapPadActions(pad, buttons, analog);
+}
+#endif
+
+static void MapPadActions(int pad, ushort buttons, const char analog[4])
+{
+    ushort mapped = Pads[pad].direct;
+    Pads[pad].direct = buttons;
+    Pads[pad].dirnew = buttons & ~mapped;
+    memcpy(Pads[pad].diranalog, analog, sizeof(Pads[pad].diranalog));""")
+P("Game/C/pad.c",
+  'for (i = 0; i < 16; i++)',
+  'for (ushort i = 0; i < 16; i++)')
+P("Game/C/pad.c",
+  """void HandleDualShock(void)
+{
+""",
+  """#ifndef D2_N64
+void HandleDualShock(void)
+{
+""")
+P("Game/C/pad.c",
+  """// [D] [T]
+void HandlePadVibration(int pad)
+{""",
+  """#endif
+
+// [D] [T]
+void HandlePadVibration(int pad)
+{""")
+P("Game/C/pad.c",
+  """#ifndef PSX
+	PsyX_UpdateInput();
+#endif
+
+	if (DuplicatePadData.buffer)
+		memcpy((u_char*)DuplicatePadData.buffer, (u_char*)&padbuffer, DuplicatePadData.size);
+
+	pad = 0;
+	do {
+		PADRAW* padRaw = (PADRAW*)padbuffer[pad];
+
+		if (padRaw->status == 0)
+		{
+			if (padRaw->id == 65 || padRaw->id == 115)
+			{
+				MapPad(pad, padRaw);
+			}
+			else
+			{
+				Pads[pad].type = 1;
+				ClearPad(pad);
+			}
+		}
+		else
+		{
+			Pads[pad].type = 0;
+			ClearPad(pad);
+		}
+
+		pad++;
+	} while (pad < 2);
+
+	HandleDualShock();""",
+  """#ifdef D2_N64
+    // Preserve the two logical slots. An unplugged controller sends no actions.
+    unsigned short buttons[2];
+    d2_read_buttons(buttons);
+    for (pad = 0; pad < 2; pad++)
+    {
+        Pads[pad].type = 2;
+        const char analog[4] = { -128, -128, -128, -128 };
+        MapPadActions(pad, buttons[pad], analog);
+    }
+#else
+#ifndef PSX
+	PsyX_UpdateInput();
+#endif
+
+	if (DuplicatePadData.buffer)
+		memcpy((u_char*)DuplicatePadData.buffer, (u_char*)&padbuffer, DuplicatePadData.size);
+
+	pad = 0;
+	do {
+		PADRAW* padRaw = (PADRAW*)padbuffer[pad];
+
+		if (padRaw->status == 0)
+		{
+			if (padRaw->id == 65 || padRaw->id == 115)
+			{
+				MapPad(pad, padRaw);
+			}
+			else
+			{
+				Pads[pad].type = 1;
+				ClearPad(pad);
+			}
+		}
+		else
+		{
+			Pads[pad].type = 0;
+			ClearPad(pad);
+		}
+
+		pad++;
+	} while (pad < 2);
+
+	HandleDualShock();
+#endif""")
+PATCHES[:] = [x for x in PATCHES if not patch_gpu_native.is_old_rename(x) and not patch_gpu_native.is_dead(x[0])]
+REGEX[:] = [x for x in REGEX if not patch_gpu_native.is_dead(x[0])]
+PATCHES[:] = [x for x in PATCHES if not (x[0].endswith('LIBGPU.C') and "initialize a linked list with it's previous items" in x[1])]
+PATCHES[:] = [x for x in PATCHES if x[0] not in patch_gte_removal.GONE]
+REGEX[:] = [x for x in REGEX if x[0] not in patch_gte_removal.GONE]
+
+def prune():
+    import shutil
+    for d in patch_gpu_native.DEAD:
+        fp = os.path.join(ROOT, d)
+        if os.path.isdir(fp):
+            for r, _, fs in os.walk(fp):
+                for f in fs:
+                    if f.lower().endswith(('.c', '.cpp')): os.remove(os.path.join(r, f))
+        elif os.path.exists(fp): os.remove(fp)
+
+def main():
+    ok = skipped = missing = 0
+    cache = {}
+    for path, old, new in PATCHES:
+        fp = os.path.join(ROOT, path)
+        if not os.path.exists(fp):
+            print('patch_engine.py: arquivo ausente', path); missing += 1; continue
+        s = cache.get(fp)
+        if s is None: s = open(fp, encoding='latin-1', newline='').read()
+        crlf = '\r\n' in s
+        o, n = (old.replace('\n', '\r\n'), new.replace('\n', '\r\n')) if crlf else (old, new)
+        if n in s or (path in patch_gte_removal.RENAME_FILES and patch_gte_removal.rename(n) in s):
+            skipped += 1
+        elif o in s:
+            s = s.replace(o, n, 1); ok += 1
+        else:
+            print('patch_engine.py: trecho NAO encontrado em', path, '->', old[:60].replace('\n', '\\n')); missing += 1
+        cache[fp] = s
+    for path, rx, repl in REGEX:
+        fp = os.path.join(ROOT, path)
+        if not os.path.exists(fp):
+            print('patch_engine.py: arquivo ausente', path); missing += 1; continue
+        s = cache.get(fp)
+        if s is None: s = open(fp, encoding='latin-1', newline='').read()
+        if isinstance(rx, tuple):
+            _, names, pat, rp = rx
+            out = []; cnt = 0
+            for blk in re.split(r'(\r?\n[ \t]*\r?\n)', s):
+                m = re.match(r'(?s).*?#define[ \t]+(\w+)', blk)
+                if m and m.group(1) in names:
+                    blk, n = pat.subn(rp, blk); cnt += n
+                out.append(blk)
+            s = ''.join(out)
+        else:
+            s, cnt = rx.subn(repl, s)
+        ok += 1 if cnt else 0
+        cache[fp] = s
+    for rf in patch_gte_removal.RENAME_FILES:
+        fp = os.path.join(ROOT, rf)
+        if not os.path.exists(fp): print('patch_engine.py: arquivo ausente', rf); missing += 1; continue
+        s = cache.get(fp)
+        if s is None: s = open(fp, encoding='latin-1', newline='').read()
+        cache[fp] = patch_gte_removal.rename(s)
+    for fp, s in cache.items():
+        open(fp, 'w', encoding='latin-1', newline='').write(s)
+    prune()
+    print('patch_engine.py: %d aplicados, %d ja aplicados, %d faltando' % (ok, skipped, missing))
+    return 0
+sys.exit(main())
