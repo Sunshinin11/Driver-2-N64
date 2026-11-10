@@ -1,3 +1,5 @@
+#include <malloc.h>
+extern "C" unsigned int d2_tk_cars, d2_tk_blds;
 // Renderizador N64 (RDP) da camada PsyX: recebe os triangulos ja transformados (coordenadas de tela do PS1) e desenha com rdpq.
 // As texturas do PS1 vivem na VRAM (1024x512 de 16 bits). Para cada triangulo texturizado, a regiao usada da pagina de textura e
 // decodificada (CI4/CI8/RGBA16 no formato do RDP) para um cache pequeno e carregada na TMEM; a paleta (CLUT) vai junto.
@@ -57,6 +59,7 @@ static unsigned int s_ft4RejClip = 0;
 static unsigned int s_ft4RejScale = 0;
 static unsigned int s_ft4RejUp = 0;
 static unsigned int s_ft3Total = 0;
+static unsigned int s_dbgB3 = 0, s_dbg2C = 0;
 static unsigned int s_directFt4Total = 0;
 static unsigned int s_ovlSwitches = 0;
 static uint32_t s_lastOvlSent = 0xFFFFFFFF;
@@ -615,7 +618,7 @@ static void upload_pal_bank(int clut)
 // ---------------------------------------------------------------- D2_TEXWIN: janela fixa de 64x64 texels (CI4, 2 KB) na TMEM
 // Em vez de carregar o retangulo exato de cada triangulo, carrega uma janela de 64x64 da VRAM sombra e mantem enquanto os
 // triangulos seguintes couberem nela (mesma pagina, VRAM nao alterada). A carga e um unico LOAD_TILE (tiles fixos).
-static struct { int px, py, wu0, wv0; unsigned int sig, vw; } s_win;
+static struct { int px, py, wu0, wv0; unsigned int sig, vw; } s_win;   // sig: assinatura das celulas da VRAM cobertas pela janela
 static TexSlot s_winTag;
 #ifndef D2_WINALIGN
 #define D2_WINALIGN 16
@@ -627,9 +630,13 @@ static bool upload_win(int px, int py, int clut, int u0, int v0, int w, int h)
     bool hit = s_tmemWin && s_win.px == px && s_win.py == py && u0 >= s_win.wu0 && u0 + w <= s_win.wu0 + 64 && v0 >= s_win.wv0 && v0 + h <= s_win.wv0 + 64;
     if (hit && s_win.vw != s_vramWrites)
     {
-        hit = false;          // a VRAM mudou desde a carga (raro durante o jogo): recarrega
+        // a VRAM mudou em algum lugar: so recarrega se as celulas cobertas pela janela mudaram de fato
+        const unsigned int sg = cell_signature(px + (s_win.wu0 >> 2), py + s_win.wv0, 16, 64);
+        if (sg != s_win.sig) hit = false; else s_win.vw = s_vramWrites;
     }
+#ifndef D2_X_NOPAL
     upload_pal_bank(clut);
+#endif
     if (hit) { s_cWinHit++; s_upOu = s_win.wu0; s_upOv = s_win.wv0; s_lastUp.slot = &s_winTag; return true; }
 
     // Origem centralizada e alinhada a 16 para cobrir o maximo de quads vizinhos do mesmo modelo
@@ -650,7 +657,7 @@ static bool upload_win(int px, int py, int clut, int u0, int v0, int w, int h)
     if (v0 + h > wv0 + 64) wv0 = ((v0 + h - 64) + 15) & ~15;
     if (wv0 + 64 > 256) wv0 = 192;
     if (wv0 < 0) wv0 = 0;
-    s_win.px = px; s_win.py = py; s_win.wu0 = wu0; s_win.wv0 = wv0; s_win.vw = s_vramWrites;
+    s_win.px = px; s_win.py = py; s_win.wu0 = wu0; s_win.wv0 = wv0; s_win.vw = s_vramWrites; s_win.sig = cell_signature(px + (wu0 >> 2), py + wv0, 16, 64);
     s_shLastUse = ++s_useCounter;
     if (!s_leanTiles)
     {
@@ -953,6 +960,21 @@ void PsyX_EndScene(void)
     if (!s_scene) { d2_sys_note_frame(); return; }
     s_scene = false;
     D2DBG("[rdp] EndScene f=%d vbl=%d tris=%d tex=%d\n", d2_rdp_frames, d2_sys_vbl_count(), s_triCount, s_texTriCount);
+    {   // telemetria de quadros: VBlanks entre apresentacoes (mediana, p95, proporcao > 2 VBlanks), janela de 300 quadros
+        static int lastVbl = -1; static unsigned int hist[8]; static unsigned int n, slow;
+        const int v = d2_sys_vbl_count();
+        if (lastVbl >= 0) { int d = v - lastVbl; if (d < 1) d = 1; if (d > 7) d = 7; hist[d]++; n++; if (d > 2) slow++; }
+        lastVbl = v;
+        if (n >= 300)
+        {
+            unsigned int acc = 0, med = 0, p95 = 0;
+            for (int i = 1; i < 8; i++) { acc += hist[i]; if (!med && acc * 2 >= n) med = i; if (!p95 && acc * 100 >= n * 95) p95 = i; }
+            debugf("[frametime] n=%u mediana=%uVB p95=%uVB >2VB=%u.%u%% h=%u,%u,%u,%u,%u,%u,%u\n", n, med, p95, slow * 100 / n, (slow * 1000 / n) % 10, hist[1], hist[2], hist[3], hist[4], hist[5], hist[6], hist[7]);
+            { struct mallinfo mi = mallinfo(); static int minFree = 0x7FFFFFFF; int fr = (int)(0x800000 - mi.uordblks); if (fr < minFree) minFree = fr; debugf("[heap] usado=%d livre_aprox=%d menor_livre=%d quadros=%d\n", (int)mi.uordblks, fr, minFree, d2_rdp_frames); }
+            { debugf("[custo] carros=%u predios=%u ticks/quadro\n", d2_tk_cars / 300, d2_tk_blds / 300); d2_tk_cars = d2_tk_blds = 0; }
+            memset(hist, 0, sizeof hist); n = slow = 0;
+        }
+    }
     if ((d2_rdp_frames % 30) == 0) { static unsigned int lastc; unsigned int cc; __asm__ volatile("mfc0 %0,$9" : "=r"(cc)); debugf("[cyc] %u ticks/frame\n", (cc - lastc) / 30); lastc = cc; }
     if ((d2_rdp_frames % 30) == 0) {  debugf("[fps] f=%d vbl=%d sub=%d calls=%d tris=%d tex=%d hit=%u miss=%u texels=%u stepped=%u pm=%u,%u,%u pt=%u,%u,%u\n", d2_rdp_frames, d2_sys_vbl_count(), s_subTri, s_calls, s_triCount, s_texTriCount, s_dbgHit, s_dbgMiss, s_dbgTex, s_dbgTexStep, s_dbgPM[0],s_dbgPM[1],s_dbgPM[2],s_dbgPT[0],s_dbgPT[1],s_dbgPT[2]); }
     s_dbgHit = s_dbgMiss = s_dbgTex = s_dbgTexStep = 0; memset(s_dbgPM,0,sizeof s_dbgPM); memset(s_dbgPT,0,sizeof s_dbgPT);
@@ -963,6 +985,7 @@ void PsyX_EndScene(void)
     if ((d2_rdp_frames % 30) == 0) {
         debugf("[rsp_ovl] ovl_id=0x%lx f3=%u f4=%u ft4_rsp=%u ft4_cpu=%u ft4_tot=%u ft3=%u dir_ft4=%u ovl_sw=%u\n",
             (unsigned long)s_d2gpuOvl, s_rspF3Count, s_rspF4Count, s_ft4Rsp, s_ft4Cpu, s_ft4Total, s_ft3Total, s_directFt4Total, s_ovlSwitches);
+        debugf("[ft4_code] b3=%u c2c=%u\n", s_dbgB3, s_dbg2C); s_dbgB3 = s_dbg2C = 0;
         debugf("[ft4_stat] rsp=%u cpu=%u ci4_elig=%u rej_dim=%u rej_fmt=%u rej_clip=%u rej_scale=%u rej_up=%u win_hit=%u win_miss=%u tlut_up=%u\n",
             s_ft4Rsp, s_ft4Cpu, s_ft4Ci4Eligible, s_ft4RejDim, s_ft4RejFmt, s_ft4RejClip, s_ft4RejScale, s_ft4RejUp, s_cWinHit, s_cLdWin, s_cTlut);
         s_ft4Rsp = s_ft4Cpu = s_ft4Total = s_ft3Total = s_directFt4Total = s_ft4Ci4Eligible = 0;
@@ -1576,7 +1599,11 @@ static bool rsp_ft4(const short *xs, const short *ys, const unsigned char *us, c
     if (sx1 < s_ctxCx0 || sx0 >= s_ctxCx1 || sy1 < s_ctxCy0 || sy0 >= s_ctxCy1) return true;     // fora do recorte: nada a desenhar
     if (sx0 < -4096 || sx1 > 4095 || sy0 < -4096 || sy1 > 4095 || sx1 - sx0 > 16000 || sy1 - sy0 > 16000) return false;
     const int uw = (umax > umin) ? (umax - umin) : 1, vh = (vmax > vmin) ? (vmax - vmin) : 1;
+#ifdef D2_X_NOWIN
+    if (uw > 64 || vh > 64) return false;
+#else
     if (uw > 64 || vh > 64 || !upload_win((tpage & 15) * 64, ((tpage >> 4) & 1) * 256, clut, umin, vmin, uw, vh)) return false;
+#endif
     if (s_rspOfx != ofx || s_rspOfy != ofy)
     {
         s_rspOfx = ofx; s_rspOfy = ofy;
@@ -1604,8 +1631,10 @@ static bool rsp_ft4(const short *xs, const short *ys, const unsigned char *us, c
         track_ovl_switch(s_d2gpuOvl);
         rspq_write(s_d2gpuOvl, D2G_CMD_SET_ALPHA, 0, (uint32_t)alpha);
     }
+#ifndef D2_X_NOPOLY
     track_ovl_switch(s_d2gpuOvl);
     rspq_write(s_d2gpuOvl, D2G_CMD_POLY_FT4, col, xy0, xy1, xy2, xy3, uv01, uv23);
+#endif
     s_rspFT4Count++;
     s_triCount += 2;
     s_texTriCount += 2;
@@ -1715,6 +1744,9 @@ static bool draw_ground_perspective(const POLY_FT4 *p, const unsigned short *dep
 
 static int d2_native_ft4_inner(POLY_FT4 *p, const unsigned short *depth)
 {
+#ifdef D2_X_NOFT4
+    return 9;
+#endif
     if (!activeDrawEnv.dfe || !s_scene) return 9;
     if (!ensure_slots()) return 9;
 
@@ -1734,8 +1766,9 @@ static int d2_native_ft4_inner(POLY_FT4 *p, const unsigned short *depth)
         const short xs[4] = { p->x0, p->x1, p->x2, p->x3 }, ys[4] = { p->y0, p->y1, p->y2, p->y3 };
         const unsigned char us[4] = { p->u0, p->u1, p->u2, p->u3 }, vs[4] = { p->v0, p->v1, p->v2, p->v3 };
         const uint32_t col = ((uint32_t)s_shadeLut[p->r0] << 16) | ((uint32_t)s_shadeLut[p->g0] << 8) | s_shadeLut[p->b0];
-        if (rsp_ft4(xs, ys, us, vs, p->tpage, p->clut, col, ofx, ofy)) return 9;
+        if (rsp_ft4(xs, ys, us, vs, p->tpage, p->clut, col, ofx, ofy)) { s_ft4Rsp++; return 9; }
     }
+    s_ft4Cpu++;
     const short *xy[4] = { &p->x0, &p->x1, &p->x2, &p->x3 };
     const unsigned char *uv[4] = { &p->u0, &p->u1, &p->u2, &p->u3 };
     const uint32_t col = calc_vertex_color(p->r0, p->g0, p->b0, BM_NONE, true);
@@ -1895,9 +1928,17 @@ int d2_native_vram_packet(P_TAG *tag)
 }
 extern "C" int d2_native_dispatch(P_TAG *tag)
 {
-    if (__builtin_expect(tag->code == 0xB3 || tag->code == 0x2C, 1)) return d2_native_ft4((POLY_FT4*)tag);
+    if (__builtin_expect(tag->code == 0xB3 || tag->code == 0x2C, 1)) { if (tag->code == 0xB3) s_dbgB3++; else s_dbg2C++; return d2_native_ft4((POLY_FT4*)tag); }
     if (tag->code == D2_GROUND_CODE && getlen(tag) == D2_GROUND_WORDS) {
         D2GroundQuad *quad = (D2GroundQuad *)tag;
+        {   // fecha frestas de T-junction entre malha subdividida e tile 1x1: cresce o quad ~1 px a partir do centro
+            POLY_FT4 *q = &quad->prim;
+            const int cx = (q->x0 + q->x1 + q->x2 + q->x3) >> 2, cy = (q->y0 + q->y1 + q->y2 + q->y3) >> 2;
+            q->x0 += q->x0 > cx ? 1 : (q->x0 < cx ? -1 : 0); q->y0 += q->y0 > cy ? 1 : (q->y0 < cy ? -1 : 0);
+            q->x1 += q->x1 > cx ? 1 : (q->x1 < cx ? -1 : 0); q->y1 += q->y1 > cy ? 1 : (q->y1 < cy ? -1 : 0);
+            q->x2 += q->x2 > cx ? 1 : (q->x2 < cx ? -1 : 0); q->y2 += q->y2 > cy ? 1 : (q->y2 < cy ? -1 : 0);
+            q->x3 += q->x3 > cx ? 1 : (q->x3 < cx ? -1 : 0); q->y3 += q->y3 > cy ? 1 : (q->y3 < cy ? -1 : 0);
+        }
         d2_native_ft4_inner(&quad->prim, quad->depth);
         return D2_GROUND_WORDS;
     }

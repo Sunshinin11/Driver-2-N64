@@ -863,6 +863,21 @@ P("Game/C/tile.c",
   """	plotContext.flags = D2_PLOT_GROUND;
 	plotContext.polySizes = PolySizes;""")
 P("Game/C/draw.c",
+  """						if (ABS(_dx) > 13000 || ABS(_dz) > 13000) continue;   // N64: predios/arvores/postes mais perto (estrada e carros seguem em VIEW_DRAW_DISTANCE); evita wrap-around de 16 bits no FrustrumCheck16""",
+  """                        int limit = 13000;
+#ifdef D2_TEST_BUILDING_RANGE
+                        const int modelIndex = (ppco->value >> 6) | (ppco->pos.vy & 1) << 10;
+                        const bool staticBuilding =
+                            !(model->shape_flags & (SHAPE_FLAG_SPRITE | SHAPE_FLAG_TILE | SHAPE_FLAG_WATER)) &&
+                            !(model->flags2 & (MODEL_FLAG_PATH | MODEL_FLAG_GRASS | MODEL_FLAG_ANIMOBJ));
+                        if (staticBuilding && pLodModels[modelIndex] && pLodModels[modelIndex] != model) {
+                            const int radius = model->bounding_sphere > 0 ? model->bounding_sphere : 0;
+                            limit += radius;
+                            if (limit > VIEW_DRAW_DISTANCE) limit = VIEW_DRAW_DISTANCE;
+                        }
+#endif
+                        if (ABS(_dx) > limit || ABS(_dz) > limit) continue;""")
+P("Game/C/draw.c",
   """		model = Z > DRAW_LOD_DIST_LOW ? pLodModels[cop->type] : modelpointers[cop->type];""",
   """        bool useLod = Z > DRAW_LOD_DIST_LOW;
 #ifdef D2_TEST_BUILDING_RANGE
@@ -1057,6 +1072,22 @@ REGEX[:] = [x for x in REGEX if not patch_gpu_native.is_dead(x[0])]
 PATCHES[:] = [x for x in PATCHES if not (x[0].endswith('LIBGPU.C') and "initialize a linked list with it's previous items" in x[1])]
 PATCHES[:] = [x for x in PATCHES if x[0] not in patch_gte_removal.GONE]
 REGEX[:] = [x for x in REGEX if x[0] not in patch_gte_removal.GONE]
+
+# --- Tiny3D: predios/tiles distantes entram na fila do mundo T3D (perto continua subdividido) ---
+P("Game/C/draw.c", '#include "event.h"', '#include "event.h"\n#include "d2_t3d_world.h"\n#include "d2_xf.h"')
+P("Game/C/draw.c",
+  "\t\telse\n\t\t\tPlotBuildingModel(model, cop->yang, &plotContext);",
+  "\t\telse\n\t\t{\n#ifdef D2_T3D_QUEUE\n\t\t\tint t3dIdx = cop->type;\n\t\t\tif (useLod && Low2LowerDetailTable && Low2LowerDetailTable[t3dIdx] != 0xFFFF)\n\t\t\t\tt3dIdx = Low2LowerDetailTable[t3dIdx];\n\t\t\tif (d2_t3d_has_model(t3dIdx))\n\t\t\t\td2_t3d_queue_building(t3dIdx, cop->yang, Z, d2xf.tr[0], d2xf.tr[1], d2xf.tr[2]);\n\t\t\telse\n#endif\n\t\t\tPlotBuildingModel(model, cop->yang, &plotContext);\n\t\t}")
+P("Game/C/tile.c", '#include "d2_ground.h"\n#include "psx/gtereg.h"', '#include "d2_ground.h"\n#include "d2_xf.h"\n#include "psx/gtereg.h"')
+P("Game/C/tile.c",
+  "#ifdef DYNAMIC_LIGHTING\n\t\t\t(gEnableDlights ? Tile1x1Lit : Tile1x1)(pModel);",
+  "#ifdef D2_T3D_QUEUE\n\t\t\tif (d2_t3d_has_model(Z > DRAW_LOD_DIST_LOW ? (Low2LowerDetailTable[model_number] != 0xFFFF ? Low2LowerDetailTable[model_number] : model_number) : model_number))\n\t\t\t{\n\t\t\t\tint t3dIdx = Z > DRAW_LOD_DIST_LOW ? (Low2LowerDetailTable[model_number] != 0xFFFF ? Low2LowerDetailTable[model_number] : model_number) : model_number;\n\t\t\t\td2_t3d_set_tile_tint(plotContext.colour);\n\t\t\t\td2_t3d_queue_tile(t3dIdx, yang, Z, d2xf.tr[0], d2xf.tr[1], d2xf.tr[2]);\n\t\t\t\tcontinue;\n\t\t\t}\n#endif\n#ifdef DYNAMIC_LIGHTING\n\t\t\t(gEnableDlights ? Tile1x1Lit : Tile1x1)(pModel);")
+
+
+# --- custo separado: carros (ticks CP0 acumulados em DrawAllTheCars e predios/tiles), lido pela telemetria de quadros ---
+P("Game/C/draw.c", 'int num_cars_drawn = 0;', 'extern "C" { unsigned int d2_tk_cars = 0, d2_tk_blds = 0; }\nstruct D2TickScope { unsigned int *acc; unsigned int t0; D2TickScope(unsigned int *a) : acc(a) { __asm__ volatile("mfc0 %0,$9" : "=r"(t0)); } ~D2TickScope() { unsigned int t1; __asm__ volatile("mfc0 %0,$9" : "=r"(t1)); *acc += t1 - t0; } };\nint num_cars_drawn = 0;')
+P("Game/C/draw.c", 'void DrawAllTheCars(int view)\n{', 'void DrawAllTheCars(int view)\n{\n\tD2TickScope d2TkCars(&d2_tk_cars);')
+P("Game/C/draw.c", 'int DrawAllBuildings(CELL_OBJECT** objects, int num_buildings)\n{', 'int DrawAllBuildings(CELL_OBJECT** objects, int num_buildings)\n{\n\tD2TickScope d2TkBlds(&d2_tk_blds);')
 
 def prune():
     import shutil
