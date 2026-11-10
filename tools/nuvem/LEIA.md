@@ -40,3 +40,7 @@ Todos os scripts em `tools/nuvem/` e na raiz respeitam essas variáveis de ambie
 - O Ares do harness e determinista: repetir a mesma ROM da exatamente o mesmo numero. A incerteza vem de mudar o layout do codigo (hot.ld, tamanho das funcoes), que desloca o resultado por alguns por cento; so aceite ganho do quadro inteiro acima de 3% ou confirmado por timer de regiao.
 - Log do jogador x harness: as janelas iniciais (cc 32..96, mesma rua parada) dao 3,4M x 3,3M ticks (+2%); as diferencas maiores aparecem so depois, quando o jogador dirige para outra area com mais transito. Nao compare cenas diferentes.
 - Em medidas de nova versao, rode tambem a versao anterior no mesmo instante; nao reutilize numeros de outra sessao.
+
+## libdragon: fila RSPQ mais funda (referencia: Half-Life N64 port)
+`tools/libdragon-rspq-buffer.patch` sobe RSPQ_DRAM_LOWPRI_BUFFER_SIZE de 0x200 para 0x1000 palavras (2 KB -> 16 KB por buffer, +32 KB de RAM),
+para a CPU preparar mais comandos enquanto RSP/RDP desenham. Aplicar no checkout do libdragon (`git apply`), `make libdragon && make install`, e recompilar o jogo.
