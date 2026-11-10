@@ -44,3 +44,14 @@ Todos os scripts em `tools/nuvem/` e na raiz respeitam essas variáveis de ambie
 ## libdragon: fila RSPQ mais funda (referencia: Half-Life N64 port)
 `tools/libdragon-rspq-buffer.patch` sobe RSPQ_DRAM_LOWPRI_BUFFER_SIZE de 0x200 para 0x1000 palavras (2 KB -> 16 KB por buffer, +32 KB de RAM),
 para a CPU preparar mais comandos enquanto RSP/RDP desenham. Aplicar no checkout do libdragon (`git apply`), `make libdragon && make install`, e recompilar o jogo.
+
+## Telemetria no log (uma linha por 300 quadros) e linha de base
+- `[frametime] n mediana p95 >2VB h=...`: VBlanks entre apresentacoes (histograma 1..7). `[heap]`: usado, livre aproximado e menor livre. `[custo] carros predios tiles`: ticks CP0/quadro em DrawAllTheCars, DrawAllBuildings e DrawTILES.
+- Cenarios fixos (Ares headless): a pe = `/tmp/ab.sh` com `in_s1.txt`; direcao/replay = `tools/nuvem/in_drive.txt`. Linha de base desta revisao no cenario in_drive: mediana 2 VB, p95 3 VB, >2 VB entre 33% e 39%; custo carros ~4-7k, predios ~68k, tiles ~32k ticks/quadro; heap livre ~7,3 MB, sem excecoes.
+- O caminho CI4 usa a janela fixa 64x64 (cache de regioes quase nao e usado: ld_regiao ~2/quadro), entao o orcamento de RAM do cache de regioes nao e gargalo; a RAM livre (~7,3 MB) permite o buffer RSPQ maior.
+
+## Referencias estudadas e o que foi aproveitado
+- Half-Life N64 e halo-64: buffer RSPQ lowpri maior (patch do libdragon) para CPU e RSP/RDP andarem em paralelo -> `tools/libdragon-rspq-buffer.patch`.
+- N64GTA2Port: cache de texturas convertidas em slots fixos com reserva de heap para o motor (`N64_CACHE_N`, `N64_HEAP_RESERVE_KB`) e overlay de depuracao com FPS/RAM/quadros longos -> telemetria `[frametime]`/`[heap]`.
+- X-Men 2 (crabsmack/xmen2-pc): medir por subsistema (logica/preparo/render/audio) e cachear planos -> `[custo]`.
+- Dark Forces, OpenLara64, portal64, n64brew2025: lidos os README/estruturas; sem tecnica adicional aplicavel a este ponto do renderizador (portal64 e OpenLara usam cull por sala/PVS, que o Driver 2 ja faz com PositionVisible e a lista de celulas).

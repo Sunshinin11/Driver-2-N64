@@ -1,5 +1,6 @@
 #include <malloc.h>
-extern "C" unsigned int d2_tk_cars, d2_tk_blds;
+#include "d2_ticks.h"
+extern "C" { unsigned int d2_tk_cars, d2_tk_blds, d2_tk_tiles; }
 // Renderizador N64 (RDP) da camada PsyX: recebe os triangulos ja transformados (coordenadas de tela do PS1) e desenha com rdpq.
 // As texturas do PS1 vivem na VRAM (1024x512 de 16 bits). Para cada triangulo texturizado, a regiao usada da pagina de textura e
 // decodificada (CI4/CI8/RGBA16 no formato do RDP) para um cache pequeno e carregada na TMEM; a paleta (CLUT) vai junto.
@@ -971,7 +972,7 @@ void PsyX_EndScene(void)
             for (int i = 1; i < 8; i++) { acc += hist[i]; if (!med && acc * 2 >= n) med = i; if (!p95 && acc * 100 >= n * 95) p95 = i; }
             debugf("[frametime] n=%u mediana=%uVB p95=%uVB >2VB=%u.%u%% h=%u,%u,%u,%u,%u,%u,%u\n", n, med, p95, slow * 100 / n, (slow * 1000 / n) % 10, hist[1], hist[2], hist[3], hist[4], hist[5], hist[6], hist[7]);
             { struct mallinfo mi = mallinfo(); static int minFree = 0x7FFFFFFF; int fr = (int)(0x800000 - mi.uordblks); if (fr < minFree) minFree = fr; debugf("[heap] usado=%d livre_aprox=%d menor_livre=%d quadros=%d\n", (int)mi.uordblks, fr, minFree, d2_rdp_frames); }
-            { debugf("[custo] carros=%u predios=%u ticks/quadro\n", d2_tk_cars / 300, d2_tk_blds / 300); d2_tk_cars = d2_tk_blds = 0; }
+            { debugf("[custo] carros=%u predios=%u tiles=%u ticks/quadro\n", d2_tk_cars / 300, d2_tk_blds / 300, d2_tk_tiles / 300); d2_tk_cars = d2_tk_blds = d2_tk_tiles = 0; }
             memset(hist, 0, sizeof hist); n = slow = 0;
         }
     }

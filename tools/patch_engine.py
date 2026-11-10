@@ -902,7 +902,6 @@ P("Game/C/draw.c",
     return; // Rendering entry point only. Simulation and collisions still run.
 #endif
 	num_cars_to_draw = 0;""")
-P("Game/C/draw.c", 'int num_cars_drawn = 0;', '#ifdef D2_DIAG_DRAW_CPU\nextern "C" double d2_now_ms(void);\nstruct DrawCpuWindow {\n    double total;\n    unsigned samples;\n};\nstruct DrawCpuSample {\n    DrawCpuWindow &window;\n    const char *name;\n    double start;\n    DrawCpuSample(DrawCpuWindow &w, const char *n) : window(w), name(n), start(d2_now_ms()) {}\n    ~DrawCpuSample() {\n        window.total += d2_now_ms() - start;\n        if (++window.samples == 64) {\n            printInfo("[draw-cpu] %s mean_us=%u samples=%u\\n",\n                      name, (unsigned)(window.total * 1000 / window.samples), window.samples);\n            window.total = 0;\n            window.samples = 0;\n        }\n    }\n};\n#endif\nint num_cars_drawn = 0;')
 P("Game/C/draw.c", 'void DrawAllTheCars(int view)\n{', 'void DrawAllTheCars(int view)\n{\n#ifdef D2_DIAG_DRAW_CPU\n    static DrawCpuWindow cpuWindow;\n    DrawCpuSample cpuSample(cpuWindow, "cars");\n#endif')
 P("Game/C/draw.c", 'int DrawAllBuildings(CELL_OBJECT** objects, int num_buildings)\n{', 'int DrawAllBuildings(CELL_OBJECT** objects, int num_buildings)\n{\n#ifdef D2_DIAG_DRAW_CPU\n    static DrawCpuWindow cpuWindow;\n    DrawCpuSample cpuSample(cpuWindow, "buildings");\n#endif')
 import patch_vram_native
@@ -1074,20 +1073,23 @@ PATCHES[:] = [x for x in PATCHES if x[0] not in patch_gte_removal.GONE]
 REGEX[:] = [x for x in REGEX if x[0] not in patch_gte_removal.GONE]
 
 # --- Tiny3D: predios/tiles distantes entram na fila do mundo T3D (perto continua subdividido) ---
-P("Game/C/draw.c", '#include "event.h"', '#include "event.h"\n#include "d2_t3d_world.h"\n#include "d2_xf.h"')
+P("Game/C/draw.c", '#include "event.h"', '#include "event.h"\n#include "d2_t3d_world.h"\n#include "d2_xf.h"\n#include "d2_ticks.h"')
 P("Game/C/draw.c",
   "\t\telse\n\t\t\tPlotBuildingModel(model, cop->yang, &plotContext);",
-  "\t\telse\n\t\t{\n#ifdef D2_T3D_QUEUE\n\t\t\tint t3dIdx = cop->type;\n\t\t\tif (useLod && Low2LowerDetailTable && Low2LowerDetailTable[t3dIdx] != 0xFFFF)\n\t\t\t\tt3dIdx = Low2LowerDetailTable[t3dIdx];\n\t\t\tif (d2_t3d_has_model(t3dIdx))\n\t\t\t\td2_t3d_queue_building(t3dIdx, cop->yang, Z, d2xf.tr[0], d2xf.tr[1], d2xf.tr[2]);\n\t\t\telse\n#endif\n\t\t\tPlotBuildingModel(model, cop->yang, &plotContext);\n\t\t}")
-P("Game/C/tile.c", '#include "d2_ground.h"\n#include "psx/gtereg.h"', '#include "d2_ground.h"\n#include "d2_xf.h"\n#include "psx/gtereg.h"')
+  "\t\telse\n\t\t{\n#ifdef D2_T3D_QUEUE\n\t\t\tint t3dIdx = cop->type;\n\t\t\tif (Z > DRAW_LOD_DIST_LOW + DRAW_LOD_DIST_LOW / 4 && Low2LowerDetailTable && Low2LowerDetailTable[t3dIdx] != 0xFFFF)\n\t\t\t\tt3dIdx = Low2LowerDetailTable[t3dIdx];\n\t\t\tif (d2_t3d_has_model(t3dIdx))\n\t\t\t\td2_t3d_queue_building(t3dIdx, cop->yang, Z, d2xf.tr[0], d2xf.tr[1], d2xf.tr[2]);\n\t\t\telse\n#endif\n\t\t\tPlotBuildingModel(model, cop->yang, &plotContext);\n\t\t}")
+P("Game/C/tile.c", '#include "d2_ground.h"\n#include "psx/gtereg.h"', '#include "d2_ground.h"\n#include "d2_xf.h"\n#include "d2_ticks.h"\n#include "psx/gtereg.h"')
 P("Game/C/tile.c",
   "#ifdef DYNAMIC_LIGHTING\n\t\t\t(gEnableDlights ? Tile1x1Lit : Tile1x1)(pModel);",
   "#ifdef D2_T3D_QUEUE\n\t\t\tif (d2_t3d_has_model(Z > DRAW_LOD_DIST_LOW ? (Low2LowerDetailTable[model_number] != 0xFFFF ? Low2LowerDetailTable[model_number] : model_number) : model_number))\n\t\t\t{\n\t\t\t\tint t3dIdx = Z > DRAW_LOD_DIST_LOW ? (Low2LowerDetailTable[model_number] != 0xFFFF ? Low2LowerDetailTable[model_number] : model_number) : model_number;\n\t\t\t\td2_t3d_set_tile_tint(plotContext.colour);\n\t\t\t\td2_t3d_queue_tile(t3dIdx, yang, Z, d2xf.tr[0], d2xf.tr[1], d2xf.tr[2]);\n\t\t\t\tcontinue;\n\t\t\t}\n#endif\n#ifdef DYNAMIC_LIGHTING\n\t\t\t(gEnableDlights ? Tile1x1Lit : Tile1x1)(pModel);")
 
 
 # --- custo separado: carros (ticks CP0 acumulados em DrawAllTheCars e predios/tiles), lido pela telemetria de quadros ---
-P("Game/C/draw.c", 'int num_cars_drawn = 0;', 'extern "C" { unsigned int d2_tk_cars = 0, d2_tk_blds = 0; }\nstruct D2TickScope { unsigned int *acc; unsigned int t0; D2TickScope(unsigned int *a) : acc(a) { __asm__ volatile("mfc0 %0,$9" : "=r"(t0)); } ~D2TickScope() { unsigned int t1; __asm__ volatile("mfc0 %0,$9" : "=r"(t1)); *acc += t1 - t0; } };\nint num_cars_drawn = 0;')
-P("Game/C/draw.c", 'void DrawAllTheCars(int view)\n{', 'void DrawAllTheCars(int view)\n{\n\tD2TickScope d2TkCars(&d2_tk_cars);')
-P("Game/C/draw.c", 'int DrawAllBuildings(CELL_OBJECT** objects, int num_buildings)\n{', 'int DrawAllBuildings(CELL_OBJECT** objects, int num_buildings)\n{\n\tD2TickScope d2TkBlds(&d2_tk_blds);')
+
+# --- LOD dos predios no caminho T3D: troca de modelo mais longe (menos pop-in; o T3D e barato por poligono) ---
+P("Game/C/draw.c", '    DrawCpuSample cpuSample(cpuWindow, "cars");\n#endif', '    DrawCpuSample cpuSample(cpuWindow, "cars");\n#endif\n\tD2TickScope d2TkCars(&d2_tk_cars);')
+P("Game/C/draw.c", '    DrawCpuSample cpuSample(cpuWindow, "buildings");\n#endif', '    DrawCpuSample cpuSample(cpuWindow, "buildings");\n#endif\n\tD2TickScope d2TkBlds(&d2_tk_blds);')
+# --- custo separado: tiles ---
+P("Game/C/tile.c", "void DrawTILES(PACKED_CELL_OBJECT** tiles, int tile_amount)\n{", "void DrawTILES(PACKED_CELL_OBJECT** tiles, int tile_amount)\n{\n\tD2TickScope d2TkT(&d2_tk_tiles);")
 
 def prune():
     import shutil
