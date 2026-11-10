@@ -170,6 +170,16 @@ int main(int argc, char** argv) {
       printf("[crash] regs:"); for(int i = 1; i < 32; i++) printf(" r%d=%08x", i, (u32)cpu.readDebug<4>((s32)(a0 + 16 + 4*i)));
       printf("\n[crash] pilha:"); for(u32 i = 0; i < (w0 & 0xffff); i++) printf(" %08x", (u32)cpu.readDebug<4>((s32)(a0 + 160 + 4*i)));
       printf("\n");
+      const u32 fs = a0 + 140 * 4;
+      if ((u32)cpu.readDebug<4>((s32)fs) == 0x44324653) {
+        char asset[65] = {};
+        for (int i = 0; i < 64; ++i)
+          asset[i] = (char)cpu.readDebug<1>((s32)(fs + 24 + i));
+        printf("[crash] asset=%s dest=%08x sector=%d count=%d read=%d file_bytes=%d\n",
+          asset, (u32)cpu.readDebug<4>((s32)(fs + 4)),
+          (s32)cpu.readDebug<4>((s32)(fs + 8)), (s32)cpu.readDebug<4>((s32)(fs + 12)),
+          (s32)cpu.readDebug<4>((s32)(fs + 16)), (s32)cpu.readDebug<4>((s32)(fs + 20)));
+      }
     } else printf("[crash] sem excecao registrada\n");
   }
   if(const char* va = getenv("D2_VRAM_ADDR")) {   // despeja a VRAM (1024x512 u16 nativos) em PPM 1024x512 (BGR555 -> RGB)

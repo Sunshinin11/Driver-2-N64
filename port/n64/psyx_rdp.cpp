@@ -14,7 +14,8 @@
 #include "d2_t3d_world.h"
 
 extern "C" {
-#include "d2_vram.h"   // VRAM nativa (metade esquerda com bytes trocados, metade direita ja no formato do RDP)
+#include "d2_vram.h"
+#include "d2_ground.h"   // VRAM nativa (metade esquerda com bytes trocados, metade direita ja no formato do RDP)
 extern DRAWENV activeDrawEnv;
 extern DISPENV activeDispEnv;
 void d2_sys_note_frame(void);      // sys_n64.c
@@ -1656,7 +1657,63 @@ static bool rsp_gt3(const short *xs, const short *ys, const unsigned char *us, c
     s_texTriCount++;
     return true;
 }
-int d2_native_ft4(POLY_FT4 *p)
+static bool draw_ground_perspective(const POLY_FT4 *p, const unsigned short *depth, int ofx, int ofy)
+{
+    if (s_texFormat != TF_4_BIT)
+        return false;
+
+    const short x[] = {p->x0, p->x1, p->x2, p->x3};
+    const short y[] = {p->y0, p->y1, p->y2, p->y3};
+    const unsigned char u[] = {p->u0, p->u1, p->u2, p->u3};
+    const unsigned char v[] = {p->v0, p->v1, p->v2, p->v3};
+    int umin = u[0], umax = u[0], vmin = v[0], vmax = v[0];
+    for (int i = 1; i < 4; ++i) {
+        if (u[i] < umin) umin = u[i];
+        if (u[i] > umax) umax = u[i];
+        if (v[i] < vmin) vmin = v[i];
+        if (v[i] > vmax) vmax = v[i];
+    }
+    const float sx = s_ctxSx16 * (1.0f / 65536), sy = s_ctxSy16 * (1.0f / 65536);
+    float left = (x[0] + ofx) * sx, right = left;
+    float top = (y[0] + ofy) * sy, bottom = top;
+    for (int i = 1; i < 4; ++i) {
+        const float px = (x[i] + ofx) * sx, py = (y[i] + ofy) * sy;
+        if (px < left) left = px;
+        if (px > right) right = px;
+        if (py < top) top = py;
+        if (py > bottom) bottom = py;
+    }
+    if (right * 4 < s_ctxCx0 || left * 4 >= s_ctxCx1 ||
+        bottom * 4 < s_ctxCy0 || top * 4 >= s_ctxCy1)
+        return true;
+
+    const int width = umax - umin + 1, height = vmax - vmin + 1;
+    if (width > 64 || height > 64 ||
+        !upload_region(p->tpage, p->clut, umin, vmin, width, height, 1))
+        return false;
+
+    float vertices[4][9];
+    for (int i = 0; i < 4; ++i) {
+        vertices[i][0] = (x[i] + ofx) * sx;
+        vertices[i][1] = (y[i] + ofy) * sy;
+        vertices[i][2] = s_shadeLut[p->r0] / 255.0f;
+        vertices[i][3] = s_shadeLut[p->g0] / 255.0f;
+        vertices[i][4] = s_shadeLut[p->b0] / 255.0f;
+        vertices[i][5] = 1.0f;
+        vertices[i][6] = u[i] - s_upOu;
+        vertices[i][7] = v[i] - s_upOv;
+        vertices[i][8] = 1.0f / depth[i];
+    }
+    rdpq_mode_persp(true);
+    rdpq_triangle(&TRIFMT_SHADE_TEX, vertices[0], vertices[1], vertices[2]);
+    rdpq_triangle(&TRIFMT_SHADE_TEX, vertices[1], vertices[3], vertices[2]);
+    rdpq_mode_persp(false);
+    s_triCount += 2;
+    s_texTriCount += 2;
+    return true;
+}
+
+static int d2_native_ft4_inner(POLY_FT4 *p, const unsigned short *depth)
 {
     if (!activeDrawEnv.dfe || !s_scene) return 9;
     if (!ensure_slots()) return 9;
@@ -1672,6 +1729,7 @@ int d2_native_ft4(POLY_FT4 *p)
     const int ofy = activeDrawEnv.ofs[1] - activeDispEnv.disp.y;
 
     s_ft4Total++;
+    if (depth && draw_ground_perspective(p, depth, ofx, ofy)) return 9;
     {
         const short xs[4] = { p->x0, p->x1, p->x2, p->x3 }, ys[4] = { p->y0, p->y1, p->y2, p->y3 };
         const unsigned char us[4] = { p->u0, p->u1, p->u2, p->u3 }, vs[4] = { p->v0, p->v1, p->v2, p->v3 };
@@ -1703,6 +1761,10 @@ int d2_native_ft4(POLY_FT4 *p)
     tri_core(&q[0], &q[1], &q[2], p->tpage, p->clut);
     tri_core(&q[1], &q[3], &q[2], p->tpage, p->clut);
     return 9;
+}
+int d2_native_ft4(POLY_FT4 *p)
+{
+    return d2_native_ft4_inner(p, nullptr);
 }
 int d2_native_rect(P_TAG *tag)
 {
@@ -1834,6 +1896,11 @@ int d2_native_vram_packet(P_TAG *tag)
 extern "C" int d2_native_dispatch(P_TAG *tag)
 {
     if (__builtin_expect(tag->code == 0xB3 || tag->code == 0x2C, 1)) return d2_native_ft4((POLY_FT4*)tag);
+    if (tag->code == D2_GROUND_CODE && getlen(tag) == D2_GROUND_WORDS) {
+        D2GroundQuad *quad = (D2GroundQuad *)tag;
+        d2_native_ft4_inner(&quad->prim, quad->depth);
+        return D2_GROUND_WORDS;
+    }
     const int type = tag->code & 0xF0;
     if (__builtin_expect(type == 0x20 || type == 0x30, 1)) return d2_direct_poly(tag);
     if (type == 0xE0) return d2_native_drawenv(tag);

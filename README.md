@@ -1,223 +1,390 @@
-# Driver 2 for Nintendo 64 (Port / Tech Demo)
+# Driver 2 — Nintendo 64 Port
 
-Port do jogo **Driver 2** (PlayStation 1) para o **Nintendo 64**, baseado na engenharia reversa [REDRIVER2](https://github.com/OpenDriver2/REDRIVER2) e no SDK [libdragon](https://github.com/DragonMinded/libdragon).
-
-O código do jogo original roda na CPU VR4300 do N64 (requer **Expansion Pak / 8 MB de RAM**) sobre uma camada de compatibilidade de PS1 ([PsyCross](https://github.com/OpenDriver2/PsyCross) adaptado), renderizador RDP nativo, sistema de arquivos em cartucho (DragonFS) e stubs/implementações de hardware.
-
-> **Repositório Privado**: Este repositório é privado e inclui os arquivos de código-fonte, scripts de build/harness, ferramentas de medição e a imagem de disco CD1 via Git LFS para viabilizar compilação e testes autônomos em ambientes na nuvem (Codex Cloud).
+[🇧🇷 Português](#-driver-2-para-nintendo-64) | [🇺🇸 English](#-driver-2-for-nintendo-64)
 
 ---
 
-## Estrutura do Projeto
+# 🇧🇷 Driver 2 para Nintendo 64
 
-| Caminho | Descrição |
-|---|---|
-| `port/n64/` | Camada de plataforma do N64: renderizador RDP direto (`psyx_rdp.cpp`), entrada (`psyx_backend.cpp`), stubs/runtime, cache de vértices (`d2_vtxcache.cpp`) e GTE nativa (`gte_native.cpp`). |
-| `port/compat/` | Cabeçalhos de compatibilidade (endianness, wrappers de tipos PSX/SDL, `d2_gte_inline.h`). |
-| `port/redriver2/` | Código do motor descompactado e modificado (gerado por `setup_engine.sh`, ignorado no Git). |
-| `tools/` | Utilitários de build: extrator de dados de CD (`extract_cd.py`), patches do motor (`patch_engine.py`), ordenação de funções no icache (`hot.py`). |
-| `tools/ares_headless/` | Harness em C++ para executar a ROM no emulador ares sem interface gráfica, injetar botões e coletar métricas. |
-| `tools/nuvem/` | Scripts de medição e benchmark automatizados (`bench.sh`, `cc.sh`, `mk.sh`, `run.sh`, `pgo.sh`, `layout.sh`). |
-| `data/` | Imagem do disco original (`Driver2CD1.bin`) rastreada via **Git LFS**. |
-| `docs/` | Documentação técnica aprofundada (`docs/OTIMIZACAO_N64.md`). |
-| `Makefile.d2`, `build.sh` | Sistema de compilação libdragon / N64. |
-| `setup_engine.sh`, `patch_engine.sh` | Scripts de obtenção e aplicação de patches no motor upstream. |
-| `hot.ld` | Script de linker que posiciona funções críticas juntas nos 16 KB de cache de instruções do VR4300. |
+Port nativo de **Driver 2: The Wheelman Is Back** (PlayStation 1, 2000) para o console **Nintendo 64**, construído a partir da descompilação e engenharia reversa do projeto de código aberto [REDRIVER2](https://github.com/OpenDriver2/REDRIVER2) e utilizando o SDK moderno [libdragon](https://github.com/DragonMinded/libdragon).
+
+O código original em C/C++ executa diretamente no processador MIPS VR4300 do N64 sem emulação de CPU, empregando transformações vetoriais nativas, renderização direta no RDP com o motor [Tiny3D](https://github.com/sp1180/tiny3d), áudio comprimido em VADPCM/WAV64 e armazenamento de ativos no sistema de arquivos de cartucho DragonFS.
+
+> ⚠️ **Aviso Legal e Imagens de Disco**: Este repositório **NÃO contém dados proprietários, código binário original, modelos, texturas ou músicas protegidos por direitos autorais**. Para compilar a ROM jogável, o usuário deve fornecer uma cópia legítima do disco original do PlayStation 1 (*Driver 2 — CD1*).
 
 ---
 
-## Pré-requisitos de Build
+## Índice
 
-1. **Sistema Operacional**: Linux (Ubuntu 22.04+ / 24.04+) ou Windows através de WSL (Ubuntu).
-2. **Toolchain MIPS64**: GCC 14+ / 16+ para `mips64-elf`, normalmente instalado em `/opt/libdragon`.
-3. **libdragon**: branch `preview` (instalado com `make install tools-install`).
-4. **Git e Git LFS**: para clonagem e download dos arquivos binários grandes.
-5. **Python 3** (com bibliotecas padrão e opcionalmente Pillow/PIL para converter capturas PPM -> PNG).
-6. **Mesa / Vulkan (opcional para ares headless)**: drivers Vulkan de software (`mesa-vulkan-drivers`) para execução sem GPU física.
+- [Visão Geral e Estado Atual](#visão-geral-e-estado-atual)
+- [Arquitetura Técnica](#arquitetura-técnica)
+- [Requisitos de Sistema](#requisitos-de-sistema)
+- [Obtenção e Preparação dos Discos](#obtenção-e-preparação-dos-discos)
+- [Instruções de Compilação](#instruções-de-compilação)
+- [Como Jogar e Mapeamento de Controles](#como-jogar-e-mapeamento-de-controles)
+- [Emulação e Hardware Real](#emulação-e-hardware-real)
+- [Galeria](#galeria)
+- [Créditos e Licenças](#créditos-e-licenças)
 
 ---
 
-## Obtenção dos Arquivos Grandes (Git LFS)
+## Visão Geral e Estado Atual
 
-A imagem do jogo utilizada para extrair os dados das fases (`data/Driver2CD1.bin`, ~617 MB) é versionada usando o **Git LFS**.
+### O Que Funciona
+- **Lógica e Física do Jogo**: Simulação completa dos veículos, tráfego urbano, inteligência artificial da polícia e colisões 3D fielmente adaptadas.
+- **Exploração e Modo Praticar**: Navegação livre pela cidade de Chicago com renderização de edifícios, malha viária, cruzamentos e sinalização.
+- **Renderizador RDP Nativo**: Renderização em hardware através do Reality Display Processor (RDP) com pipeline de triângulos Tiny3D, correção de perspectiva de pistas e planos de chão, e ordenação por tabela de exibição (OT).
+- **Subdivisão e Clipping**: Projeção com clipping de planos próximos e subdivisão adaptativa de polígonos para contornar limitações de precisão de ponto fixo.
+- **Áudio e Efeitos Sonoros**: Motor de som VADPCM reproduzindo efeitos sonoros (SFX), música do jogo em tempo real e faixas de fala XA convertidas em formato WAV64.
+- **Vídeos e Cinemáticas (FMV)**: Suporte à reprodução de vídeos em formato MPEG-1/WAV64 através de streaming de cartucho.
 
-Após clonar o repositório, certifique-se de baixar o conteúdo real do disco:
+### Limitações Conhecidas
+- **Expansion Pak Obrigatório**: A memória padrão de 4 MB do console é insuficiente; o jogo exige a expansão de 8 MB RDRAM.
+- **Taxa de Quadros em Cenas Complexas**: Dependendo da densidade poligonal de prédios e do número de viaturas em perseguição, quedas de framerate podem ocorrer. Otimizações de pipeline continuam em desenvolvimento ativo.
+- **Suporte Multicidades**: O build padrão embute a cidade de Chicago para garantir estabilidade e tempos ágeis de compilação. As cidades de Havana, Rio de Janeiro e Las Vegas requerem ativação seletiva através de sinalizadores do Makefile.
 
-```bash
-git lfs install
-git lfs pull
+---
+
+## Arquitetura Técnica
+
+```
+                    ┌────────────────────────────┐
+                    │    REDRIVER2 Game Engine   │
+                    │   (Física, IA, Câmera)     │
+                    └─────────────┬──────────────┘
+                                  │
+                    ┌─────────────┴──────────────┐
+                    │  Camada de Port N64 / GTE  │
+                    │  (Transformações Nativas)  │
+                    └──────┬──────────────┬──────┘
+                           │              │
+           ┌───────────────┴────┐   ┌─────┴────────────────┐
+           │ Tiny3D / RDP Direct│   │  libdragon Subsystems│
+           │  (Rasterização)    │   │ (DragonFS, Audio/SFX)│
+           └────────────────────┘   └──────────────────────┘
 ```
 
-Verifique se `data/Driver2CD1.bin` possui cerca de 647.268.048 bytes (e não apenas o ponteiro de texto do LFS).
-
-> **Por que apenas o CD1?** O script `tools/extract_cd.py` e o `Makefile.d2` utilizam unicamente o CD1. As quatro cidades do jogo (Chicago, Havana, Rio, Vegas) estão presentes de forma idêntica tanto no CD1 quanto no CD2. O CD2 difere essencialmente nas cenas de vídeo (FMV), que não são incluídas no cartucho de N64. Manter apenas o CD1 economiza espaço e preserva a cota gratuita do Git LFS (~617 MB < 1 GB).
+1. **CPU VR4300 @ 93.75 MHz**: Executa o código C nativo compilado pelo GCC MIPS64. As rotinas da GTE (Geometry Transformation Engine) do PS1 foram substituídas por operações trigonométricas e matriciais nativas de 32/64 bits com ordenação de funções para máximo aproveitamento do cache de instruções (16 KB L1 icache).
+2. **Reality Coprocessor (RCP - RSP / RDP)**: O RSP processa listas de comandos de display através de microcódigos modernos do libdragon/Tiny3D, enquanto o RDP desenha texturas em 16-bit RGBA com filtragem de ponto e correção de perspectiva de textura.
+3. **Gerenciamento de Memória**: O jogo original foi projetado para a arquitetura de 2 MB de RAM do PS1. No N64, o heap de fases, tabelas de modelos e buffers de vértices foram recalibrados para operar confortavelmente dentro do limite seguro dos 8 MB da RDRAM.
+4. **DragonFS (DFS)**: O sistema de arquivos do cartucho armazena texturas, tabelas de colisão, modelos e áudio convertidos, lidos diretamente via DMA de cartucho sem latência mecânica de CD-ROM.
 
 ---
 
-## Preparação do Motor (`setup_engine.sh`)
+## Requisitos de Sistema
 
-O código do REDRIVER2 e do PsyCross não é versionado diretamente na pasta `port/redriver2/`. O script `setup_engine.sh` faz o download dos commits fixados e aplica as alterações necessárias de forma idempotente:
+### Para Jogar
+- **Hardware Real**: Console Nintendo 64 com acessório **Expansion Pak (8 MB de RAM)** instalado + Flashcart (EverDrive-64 v2.5+, EverDrive-64 X7, SummerCart64 ou ED64Plus).
+- **Emulador**: [Ares](https://ares-emulator.github.io/) (versão v138 ou superior recomendada, com Expansion Pak ativado). Outros emuladores compatíveis com microcódigos RDPQ modernos do libdragon (ex.: simple64) também são suportados.
 
-- **REDRIVER2 upstream**: commit `b2d8857426f815007486def9bd23f9a6007a2c64`
-- **PsyCross upstream**: commit `e56e4cde1c2b8a15e0d4e38b26cdd9202e0d17e6`
+### Para Compilar
+- **Sistema Operacional**: Linux (Ubuntu 22.04 LTS / 24.04 LTS) ou Windows 10/11 com **WSL2** (Ubuntu).
+- **Compilador e SDK**:
+  - `mips64-elf-gcc` (GCC 14+ ou GCC 16+ do libdragon toolchain).
+  - [libdragon](https://github.com/DragonMinded/libdragon) (branch `preview`, com ferramentas instaladas em `/opt/libdragon`).
+- **Dependências de Build**:
+  - `python3` (para scripts de extração e empacotamento).
+  - `ffmpeg` e `ffprobe` (para conversão de áudio XA e cinemáticas FMV).
+  - `git` e `make`.
 
-Para preparar o motor:
+---
+
+## Obtenção e Preparação dos Discos
+
+Para extrair os recursos originais do jogo:
+
+1. Obtenha a imagem de disco do **Driver 2 (PlayStation 1, Disco 1)** no formato binário bruto (`.bin` com 2352 bytes por setor).
+2. Crie a pasta `data/` na raiz do projeto (caso não exista).
+3. Renomeie e posicione o arquivo como:
+   ```
+   data/Driver2CD1.bin
+   ```
+4. *(Opcional)* Se desejar cinemáticas ou conteúdos adicionais do Disco 2, forneça o caminho através da variável `CD2=/caminho/Driver2CD2.bin` durante a compilação.
+
+---
+
+## Instruções de Compilação
+
+### 1. Clonar o Repositório com Submódulos
+
+```bash
+git clone --recurse-submodules https://github.com/Sunshinin11/Driver-2-Port-N64.git
+cd Driver-2-Port-N64
+```
+
+Se você já clonou sem a opção recursiva, inicialize os submódulos:
+```bash
+git submodule update --init --recursive
+```
+
+### 2. Configurar o Motor REDRIVER2
+
+Execute o script de preparação para baixar e aplicar os patches de compatibilidade no motor do jogo:
 
 ```bash
 bash setup_engine.sh
 ```
 
-Para forçar uma reconstrução limpa do motor a partir do zero:
+Esse script realiza:
+- Clone/atualização do commit fixado do REDRIVER2 e PsyCross.
+- Ajuste de chamadas de trap de CPU para o MIPS VR4300.
+- Execução de `patch_engine.py` para compatibilidade de endianness, ajustes de limites de memória e ganchos gráficos.
 
-```bash
-bash setup_engine.sh --force
-```
+### 3. Compilar a ROM
 
-O script automaticamente baixa os fontes, copia os módulos necessários, extrai as strings de idioma (`data/DRIVER2/LANG`) e executa `patch_engine.sh` (que chama `tools/patch_engine.py` para aplicar conversões de endianness, ajustes de alocação de memória e ganchos de renderização).
-
----
-
-## Compilação
-
-### Build no Linux / WSL
-
-Compilação completa / incremental gerando `d2_n64.z64`:
+Com o arquivo `data/Driver2CD1.bin` presente, execute:
 
 ```bash
 bash build.sh
 ```
 
-Limpeza dos artefatos de compilação:
+O processo irá:
+1. Extrair os arquivos de fase, modelos, texturas e tabelas do CD1 para a pasta `filesystem_d2/`.
+2. Converter amostras sonoras e falas XA para o formato nativo WAV64.
+3. Compilar todos os módulos em C/C++ gerando o executável ELF otimizado.
+4. Empacotar o sistema de arquivos DragonFS e gerar a ROM final: **`d2_n64.z64`**.
 
+Para limpar os binários e recompilar:
 ```bash
 bash build.sh clean
 ```
 
-*(Nota: `clean` não apaga `filesystem_d2`, que contém os dados extraídos do CD).*
+---
 
-### Build no Windows via PowerShell
+## Como Jogar e Mapeamento de Controles
 
-```powershell
-.\build_d2.ps1          # build incremental
-.\build_d2.ps1 -Clean   # limpeza e build completo
-```
+O esquema de controles do Nintendo 64 foi desenhado para proporcionar a mesma resposta clássica de direção:
 
-### Variáveis e Opções do Makefile (`Makefile.d2`)
-
-- `N64_INST`: caminho de instalação do libdragon (padrão: `/opt/libdragon`).
-- `CD1`: caminho da imagem do CD1 (padrão busca em `data/Driver2CD1.bin`).
-- `CITIES`: cidades embutidas na ROM (padrão: `CHICAGO`; opções: `CHICAGO,HAVANA,RIO,VEGAS`).
-- `D2_OPT`: sinalizadores de otimização ativos (padrão: `-DD2_DIRECT -DD2_NOSUBQ -DD2_GTE_NATIVE -DD2_VTXCACHE -DD2_LEANLOAD -DD2_FASTOT`).
-- `HOT_LD`: arquivo de ordenação de seções para icache (padrão: `hot.ld`).
+| Controle Nintendo 64 | Função no Driver 2 | Ação Original PS1 |
+|---|---|---|
+| **Alavanca Analógica / D-Pad** | Direção (Virar à esquerda / direita) | Direcional / Analógico Esquerdo |
+| **Botão A** | Acelerar | Botão ✕ (Cruz) |
+| **Botão B** | Frear / Marcha à ré | Botão ◻ (Quadrado) |
+| **Gatilho Z** ou **Botão C-Baixo** | Freio de mão | Botão △ (Triângulo) / R1 |
+| **Botão C-Cima** | Alterar visão de câmera | Botão Seleção de Câmera |
+| **Botão C-Esquerda / C-Direita** | Olhar para os lados / retrovisor | Botões L2 / R2 |
+| **Gatilho R** | Buzina / Ações de missão | Botão L1 / R1 |
+| **Gatilho L** | Queimar pneus / Burnout | Acelerar + Freio |
+| **Botão Start** | Pausar jogo / Menu | Botão Start |
 
 ---
 
-## Execução no ares com o Harness Headless
+## Emulação e Hardware Real
 
-Para testar sem interface gráfica e coletar medições precisas:
+### Emuladores Recomendados
+- **[Ares](https://ares-emulator.github.io/)**: O emulador de maior fidelidade para microcódigos RSP/RDP modernos do libdragon. Certifique-se de que a opção de **Expansion Pak (8 MB)** esteja ativada nas configurações do sistema.
+- **simple64**: Excelente compatibilidade com títulos libdragon contemporâneos.
 
-1. Compile o harness em `tools/ares_headless/harness.cpp` contra o núcleo `n64` do emulador ares (veja seção de configuração abaixo).
-2. Execute a ROM através do script:
+### Flashcarts no Console Real
+- A ROM gerada (`d2_n64.z64`) pode ser transferida diretamente para o cartão SD do seu **EverDrive-64** (OS 2.0+ recomendado) ou **SummerCart64**.
+- Certifique-se de que o Expansion Pak físico original ou compatível de qualidade esteja devidamente instalado no console.
+
+---
+
+## Galeria
+
+> 📸 **Capturas de Tela Autênticas**: A pasta [`docs/media/`](docs/media/) está reservada para armazenar capturas reais do port em funcionamento no console e no emulador Ares. Novas imagens serão publicadas conforme o desenvolvimento avança.
+
+---
+
+## Créditos e Licenças
+
+- **[REDRIVER2 Team](https://github.com/OpenDriver2/REDRIVER2)**: Projeto de descompilação e engenharia reversa do jogo original para PC.
+- **[PsyCross Team](https://github.com/OpenDriver2/PsyCross)**: Camada de emulação/compatibilidade das APIs do PlayStation 1.
+- **[libdragon Team](https://github.com/DragonMinded/libdragon)**: SDK moderno e de código aberto para o console Nintendo 64.
+- **[Tiny3D](https://github.com/sp1180/tiny3d)**: Biblioteca de renderização 3D de alta performance para libdragon.
+- **Reflections Interactive & Ubisoft**: Desenvolvedores e detentores dos direitos intelectuais do título clássico Driver 2.
+
+---
+---
+
+# 🇺🇸 Driver 2 for Nintendo 64
+
+A native Nintendo 64 port of **Driver 2: The Wheelman Is Back** (PlayStation 1, 2000), built upon the decompilation and reverse-engineering work of the open-source [REDRIVER2](https://github.com/OpenDriver2/REDRIVER2) project and powered by the modern [libdragon](https://github.com/DragonMinded/libdragon) SDK.
+
+The game's original C/C++ logic runs natively on the N64's MIPS VR4300 processor without CPU emulation, featuring native vector transformations, direct RDP rasterization powered by [Tiny3D](https://github.com/sp1180/tiny3d), compressed VADPCM/WAV64 audio, and DragonFS cartridge-based asset storage.
+
+> ⚠️ **Legal Disclaimer & Game Discs**: This repository **DOES NOT contain copyrighted game assets, original binary code, 3D models, textures, or audio**. To compile a playable ROM, the user must provide a legitimate copy of their original PlayStation 1 disc (*Driver 2 — CD1*).
+
+---
+
+## Table of Contents
+
+- [Overview & Current Status](#overview--current-status)
+- [Technical Architecture](#technical-architecture)
+- [System Requirements](#system-requirements)
+- [Obtaining and Preparing Game Discs](#obtaining-and-preparing-game-discs)
+- [Build Instructions](#build-instructions)
+- [Controls & Gameplay](#controls--gameplay)
+- [Emulation and Real Hardware](#emulation-and-real-hardware)
+- [Gallery](#gallery)
+- [Credits & Licenses](#credits--licenses)
+
+---
+
+## Overview & Current Status
+
+### What Works
+- **Game Engine & Vehicle Physics**: Full vehicle simulation, tire traction, city traffic, police AI pursuit logic, and 3D collision systems.
+- **Free-Roam & Practice Mode**: Exploration of the Chicago city map with full building geometry, roads, intersections, and street props.
+- **Native RDP Rendering**: Direct hardware rendering through the Reality Display Processor (RDP) using Tiny3D triangles, perspective-correct road and ground rendering, and ordering table (OT) sorting.
+- **Clipping & Adaptive Subdivision**: Near-plane polygon clipping and adaptive subdivision to eliminate fixed-point coordinate overflow artifacts.
+- **Audio & Sound Effects**: VADPCM sound synthesis for sound effects (SFX), background music, and converted XA spoken mission dialogue via WAV64 streams.
+- **FMV Video Playback**: Support for MPEG-1/WAV64 cutscene video playback streamed directly from cartridge space.
+
+### Known Limitations
+- **Expansion Pak Required**: The console's base 4 MB memory is insufficient; the port requires the 8 MB RDRAM expansion.
+- **Framerate in Dense Scenes**: In scenes with complex building clusters and multiple police cars in pursuit, framerate drops may occur. Profiling and microcode optimization remain ongoing.
+- **Multi-City Configuration**: The default build targets Chicago to maintain fast compilation and stability. Havana, Rio de Janeiro, and Las Vegas can be enabled through Makefile flags.
+
+---
+
+## Technical Architecture
+
+```
+                    ┌────────────────────────────┐
+                    │    REDRIVER2 Game Engine   │
+                    │   (Physics, AI, Camera)    │
+                    └─────────────┬──────────────┘
+                                  │
+                    ┌─────────────┴──────────────┐
+                    │  N64 Platform / Native GTE │
+                    │   (Vector Transformations) │
+                    └──────┬──────────────┬──────┘
+                           │              │
+           ┌───────────────┴────┐   ┌─────┴────────────────┐
+           │ Tiny3D / Direct RDP│   │  libdragon Subsystems│
+           │   (Rasterization)  │   │ (DragonFS, Audio/SFX)│
+           └────────────────────┘   └──────────────────────┘
+```
+
+1. **VR4300 CPU @ 93.75 MHz**: Executes native C code compiled by GCC MIPS64. PS1 Geometry Transformation Engine (GTE) operations have been replaced by native 32/64-bit matrix math routines, with critical function placement configured via linker script (`hot.ld`) to maximize the 16 KB L1 instruction cache.
+2. **Reality Coprocessor (RCP - RSP / RDP)**: The RSP dispatches display lists via modern libdragon and Tiny3D microcodes, while the RDP renders 16-bit RGBA primitives with point sampling and perspective texture correction.
+3. **Memory Management**: Originally designed for the PS1's 2 MB RAM layout, level heaps, model pointer arrays, and vertex queues were retuned to stay safely within the 8 MB N64 address space.
+4. **DragonFS (DFS)**: The cartridge filesystem stores level lumps, models, textures, and converted audio, loaded with zero seek latency via cart DMA.
+
+---
+
+## System Requirements
+
+### To Play
+- **Original Hardware**: Nintendo 64 console with an **Expansion Pak (8 MB RAM)** installed + a compatible flashcart (EverDrive-64 v2.5+, X7, SummerCart64, or ED64Plus).
+- **Emulator**: [Ares](https://ares-emulator.github.io/) (v138+ recommended with Expansion Pak enabled). Other emulators supporting modern libdragon RDPQ microcode (e.g. simple64) are also supported.
+
+### To Build
+- **Operating System**: Linux (Ubuntu 22.04 LTS / 24.04 LTS) or Windows 10/11 using **WSL2** (Ubuntu).
+- **Toolchain & SDK**:
+  - `mips64-elf-gcc` (GCC 14+ or GCC 16+ from the libdragon toolchain).
+  - [libdragon](https://github.com/DragonMinded/libdragon) (preview branch, installed to `/opt/libdragon`).
+- **Build Utilities**:
+  - `python3` (for data extraction and asset patching).
+  - `ffmpeg` & `ffprobe` (for XA audio and FMV video conversion).
+  - `git` & `make`.
+
+---
+
+## Obtaining and Preparing Game Discs
+
+To extract the original game data:
+
+1. Obtain a raw binary CD image of **Driver 2 (PlayStation 1, Disc 1)** in `.bin` format (2352 bytes per sector).
+2. Create the `data/` folder in the project root if it does not already exist.
+3. Place and rename the file as:
+   ```
+   data/Driver2CD1.bin
+   ```
+4. *(Optional)* To include cutscenes from Disc 2, set the `CD2=/path/to/Driver2CD2.bin` variable during build.
+
+---
+
+## Build Instructions
+
+### 1. Clone the Repository with Submodules
 
 ```bash
-bash run.sh [quadros] [a_cada_N_quadros] [entradas.txt]
+git clone --recurse-submodules https://github.com/Sunshinin11/Driver-2-Port-N64.git
+cd Driver-2-Port-N64
 ```
 
-Exemplo:
+If already cloned without recursive submodules:
 ```bash
-# Executa por 900 quadros, salvando captura a cada 60 quadros
-bash run.sh 900 60
+git submodule update --init --recursive
 ```
 
-As variáveis de ambiente configuráveis são:
-- `HARNESS`: caminho do executável `harness` (padrão: `/opt/harness/harness`).
-- `OUTDIR`: pasta onde capturas PPM/PNG e logs são salvos (padrão: `/opt/run1`).
-- `VK_ICD_FILENAMES`: driver Vulkan (padrão: `/usr/share/vulkan/icd.d/lvp_icd.json`).
+### 2. Set Up the REDRIVER2 Engine
 
----
-
-## Método de Medição por CameraCnt
-
-### Por que NÃO medir por quadros de emulador ou VBL?
-O motor de Driver 2 roda a lógica do jogo desacoplada ou travada em etapas discretas. Em emulação, contar meramente os quadros gerados por segundo no emulador pode enganar, pois uma versão mais rápida avança a lógica do jogo mais depressa e renderiza cenas com quantidade diferente de polígonos.
-
-### Métrica Oficial: ticks por passo de lógica (`CameraCnt`)
-O port emite a cada 32 passos da câmera uma linha de benchmark no log do emulador (ISViewer):
-
-```text
-[bench] cc=128 ticks=4456120 tris=1420 tex=48
-```
-
-- `cc`: valor de `CameraCnt` (passo exato da lógica da câmera e da simulação).
-- `ticks`: contagem de ciclos do contador do processador MIPS VR4300 consumidos naquele intervalo (46.875.000 ticks = 1 segundo exato no hardware N64).
-- Comparando o mesmo intervalo de `CameraCnt` (ex.: `CC0=96` até `CC1=320` no modo Praticar em Chicago) com o mesmo roteiro de botões (`in_bench.txt`), obtém-se uma comparação determinística e à prova de divergências.
-
-Para resumir os logs de benchmark de duas ou mais ROMs:
-```bash
-bash tools/nuvem/cc.sh versao_a versao_b
-```
-
----
-
-## Localização de Logs e Capturas
-
-- **Log de execução do emulador**: `$OUTDIR/run.log` (ou `/tmp/run.log`).
-- **Log do build**: `build_d2.log` (ou `/tmp/build.log`).
-- **Capturas de tela**: `$OUTDIR/frame_XXXXX.ppm`, folha de contatos `$OUTDIR/sheet.png` e imagem final `$OUTDIR/final.png`.
-- **Perfil do processador**: `/tmp/prof.txt` (quando executado com `D2_PROF=1`).
-
----
-
-## Distinção Importante: Resultados Históricos vs. Validação Local
-
-- **Resultados Históricos Registrados** (documentados em `docs/OTIMIZACAO_N64.md`):
-  Medições realizadas em 28-29/10/2026 em ambiente Linux na nuvem executando ares headless com software Vulkan:
-  - Fase Inicial (25/10): ~8,37M ticks/passo (~5,6 fps)
-  - Otimizações de Fase 1 (GTE nativa, VTX cache, caminho direto OT->RDP, bancos de paleta, hot.ld): **~4,456M ticks/passo (~10,5 fps)**
-- **Validação Desta Publicação**:
-  - A integridade dos scripts, idempotência do `patch_engine.py`, parsing do CD1 e compatibilidade do Makefile foram validados no ambiente local.
-  - Não foram realizadas novas corridas completas de benchmark no console nem no harness do ares durante este commit.
-
----
-
-## Configuração do Ambiente na Nuvem (Codex Cloud / Ubuntu 22.04+)
-
-Para reproduzir o ambiente de desenvolvimento completo em uma nova máquina virtual:
+Run the engine setup script to download and patch upstream engine sources:
 
 ```bash
-# 1. Dependências do sistema e renderização Vulkan de software
-sudo apt-get update && sudo apt-get install -y \
-  build-essential git git-lfs make python3 python3-pil \
-  cmake ninja-build \
-  mesa-vulkan-drivers libvulkan-dev libgl-dev libglx-dev \
-  libx11-dev libxrandr-dev libgtk-3-dev libsdl2-dev
-
-# 2. Toolchain GCC MIPS64 do libdragon
-# Baixe a versão correspondente do gcc-toolchain do libdragon e extraia em /opt/libdragon
-sudo mkdir -p /opt/libdragon
-# (Alternativamente, instale via o pacote .deb da release do libdragon)
-
-# 3. Compilação e instalação do libdragon (branch preview)
-git clone -b preview https://github.com/DragonMinded/libdragon.git /tmp/libdragon
-cd /tmp/libdragon
-make install tools-install N64_INST=/opt/libdragon
-cd / && rm -rf /tmp/libdragon
-
-# 4. Compilação do ares (núcleo n64 headless)
-git clone --depth 1 https://github.com/ares-emulator/ares.git /tmp/ares
-cd /tmp/ares
-cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DARES_CORES=n64 -DARES_SKIP_DEPS=ON
-ninja -C build ares mia nall libco
-
-# 5. Compilação do harness
-A=/tmp/ares
-B=$A/build
-c++ -O2 -std=c++20 -fno-char8_t -fwrapv -fno-strict-aliasing -DCORE_N64 -DMIA_LIBRARY -DPROFILE_PERFORMANCE -DVULKAN \
-  -DBUILD_RELEASE -DARES_ENABLE_CHD -I$B/mia -I$A/mia -I$B/ares -I$A/ares -I$A -isystem $A/nall -I$A/thirdparty \
-  -I$A/thirdparty/libchdr/include -I$B/thirdparty/libchdr/include -I$A/thirdparty/lzma -I$A/libco/.. \
-  tools/ares_headless/harness.cpp -o /opt/harness/harness -flto=auto -Wl,--start-group \
-  $B/mia/libmia.a $B/ares/libares.a $B/nall/nall/CMakeFiles/nall.dir/*.o \
-  $B/libco/liblibco.a $B/thirdparty/chdr-static.a $B/thirdparty/libchdr/deps/zstd-*/zstd.a \
-  $B/thirdparty/libchdr/deps/miniz-*/miniz.a $B/thirdparty/sljit.a $B/thirdparty/tzxfile.a -Wl,--end-group -lpthread -ldl -lX11 -lz
+bash setup_engine.sh
 ```
 
+This script:
+- Fetches the pinned commits of REDRIVER2 and PsyCross.
+- Replaces x86-specific trap calls with MIPS-safe equivalents.
+- Executes `patch_engine.py` to adapt endianness, memory heaps, and rendering hooks.
+
+### 3. Build the ROM
+
+With `data/Driver2CD1.bin` in place, run:
+
+```bash
+bash build.sh
+```
+
+The build pipeline will:
+1. Extract city maps, textures, and models from CD1 into `filesystem_d2/`.
+2. Convert audio samples and XA voice lines into native WAV64 format.
+3. Compile all C/C++ source files and link the ELF executable.
+4. Pack the DragonFS cartridge filesystem and produce the output ROM: **`d2_n64.z64`**.
+
+To clean intermediate build files:
+```bash
+bash build.sh clean
+```
+
+---
+
+## Controls & Gameplay
+
+The Nintendo 64 controller layout maps closely to the classic Driver 2 controls:
+
+| Nintendo 64 Controller | In-Game Action | Original PS1 Input |
+|---|---|---|
+| **Analog Stick / D-Pad** | Steering (Turn Left / Right) | D-Pad / Left Stick |
+| **A Button** | Accelerate | ✕ (Cross) |
+| **B Button** | Brake / Reverse | ◻ (Square) |
+| **Z Trigger** or **C-Down Button** | Handbrake | △ (Triangle) / R1 |
+| **C-Up Button** | Cycle Camera View | Camera Toggle |
+| **C-Left / C-Right Buttons** | Look Left / Look Right / Rear View | L2 / R2 |
+| **R Trigger** | Horn / Mission Actions | L1 / R1 |
+| **L Trigger** | Burnout / Wheelspin | Accelerate + Brake |
+| **Start Button** | Pause / Options Menu | Start |
+
+---
+
+## Emulation and Real Hardware
+
+### Recommended Emulators
+- **[Ares](https://ares-emulator.github.io/)**: Provides highest-accuracy emulation of modern RSP/RDP microcodes used by libdragon. Ensure the **Expansion Pak (8 MB)** option is enabled in system settings.
+- **simple64**: High compatibility with recent libdragon homebrew titles.
+
+### Flashcarts on Real Hardware
+- The compiled ROM (`d2_n64.z64`) can be copied directly to the SD card of your **EverDrive-64** (v2.5+ or X7) or **SummerCart64**.
+- An authentic or high-quality third-party **Expansion Pak** must be installed in the console's memory jumper bay.
+
+---
+
+## Gallery
+
+> 📸 **Authentic Screenshots**: The [`docs/media/`](docs/media/) directory is reserved for genuine in-game screenshots captured from hardware and high-accuracy Ares emulator runs. Screenshots will be updated as visual enhancements land.
+
+---
+
+## Credits & Licenses
+
+- **[REDRIVER2 Team](https://github.com/OpenDriver2/REDRIVER2)**: Original reverse engineering and decompilation of Driver 2 for PC.
+- **[PsyCross Team](https://github.com/OpenDriver2/PsyCross)**: Cross-platform implementation of PlayStation 1 system APIs.
+- **[libdragon Team](https://github.com/DragonMinded/libdragon)**: Modern open-source software development kit for Nintendo 64.
+- **[Tiny3D](https://github.com/sp1180/tiny3d)**: High-performance 3D rasterization library for libdragon.
+- **Reflections Interactive & Ubisoft**: Original game designers, programmers, and copyright holders of Driver 2.

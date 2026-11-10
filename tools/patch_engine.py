@@ -261,7 +261,7 @@ P('Game/C/main.c',
   "\t\tLoadPermanentTPagesFromTIM();\n\t}\n#endif\n#ifdef D2_T3D_WORLD\n\td2_t3d_on_models_loaded();\n#endif\n\t\n\tReportMode(1);\n}")
 P('Game/C/tile.c',
   '#include "tile.h"\n',
-  '#include "tile.h"\n#include "d2_t3d_world.h"\n#include "psx/gtereg.h"\n')
+  '#include "tile.h"\n#include "d2_t3d_world.h"\n#include "d2_ground.h"\n#include "psx/gtereg.h"\n')
 P('Game/C/models.c',
   "\t\tsize = *(int*)mdsfile;\n\t\tmdsfile += sizeof(int);\n\n\t\tif (size)\n\t\t{\n\t\t\t// add the usage bit\n\t\t\tpermanentModelSlotBitfield[i >> 5] |= 1 << (i & 31);\n\t\t\t\n\t\t\tmodel = (MODEL*)mdsfile;\n",
   "\t\tsize = (int)d2_rd32(mdsfile);\n\t\tmdsfile += sizeof(int);\n\n\t\tif (size)\n\t\t{\n\t\t\t// add the usage bit\n\t\t\tpermanentModelSlotBitfield[i >> 5] |= 1 << (i & 31);\n\t\t\t\n\t\t\tmodel = (MODEL*)mdsfile;\n\t\t\td2_swap_model(model, size);\n")
@@ -576,7 +576,7 @@ P('Game/C/draw.c', "#ifdef PSX\n#define MAX_TREE_SHADOW_DISTANCE 7000", "#if def
 # ---- Evita wrap-around de 16 bits no FrustrumCheck16 em DrawMapPSX (explosao de sprites distantes) ----
 P('Game/C/draw.c',
   "model = modelpointers[(ppco->value >> 6) | ((ppco->pos).vy & 1) << 10];\n\n\t\t\t\t\tif (FrustrumCheck16(ppco, model->bounding_sphere) != -1)",
-  "model = modelpointers[(ppco->value >> 6) | ((ppco->pos).vy & 1) << 10];\n\n\t\t\t\t\t{\n\t\t\t\t\t\tint _dx = (ci.nearCell.x + (short)(ppco->pos.vx - ci.nearCell.x)) - camera_position.vx;\n\t\t\t\t\t\tint _dz = (ci.nearCell.z + (short)(ppco->pos.vz - ci.nearCell.z)) - camera_position.vz;\n\t\t\t\t\t\tif (ABS(_dx) > 13000 || ABS(_dz) > 13000) continue;   // N64: predios/arvores/postes mais perto (estrada e carros seguem em VIEW_DRAW_DISTANCE); evita wrap-around de 16 bits no FrustrumCheck16\n\t\t\t\t\t}\n\n\t\t\t\t\tif (FrustrumCheck16(ppco, model->bounding_sphere) != -1)")
+  "model = modelpointers[(ppco->value >> 6) | ((ppco->pos).vy & 1) << 10];\n\n\t\t\t\t\t{\n\t\t\t\t\t\tint _dx = (ci.nearCell.x + (short)(ppco->pos.vx - ci.nearCell.x)) - camera_position.vx;\n\t\t\t\t\t\tint _dz = (ci.nearCell.z + (short)(ppco->pos.vz - ci.nearCell.z)) - camera_position.vz;\n                        int limit = 13000;\n#ifdef D2_TEST_BUILDING_RANGE\n                        const int modelIndex = (ppco->value >> 6) | (ppco->pos.vy & 1) << 10;\n                        const bool staticBuilding =\n                            !(model->shape_flags & (SHAPE_FLAG_SPRITE | SHAPE_FLAG_TILE | SHAPE_FLAG_WATER)) &&\n                            !(model->flags2 & (MODEL_FLAG_PATH | MODEL_FLAG_GRASS | MODEL_FLAG_ANIMOBJ));\n                        if (staticBuilding && pLodModels[modelIndex] && pLodModels[modelIndex] != model) {\n                            const int radius = model->bounding_sphere > 0 ? model->bounding_sphere : 0;\n                            limit += radius;\n                            if (limit > VIEW_DRAW_DISTANCE) limit = VIEW_DRAW_DISTANCE;\n                        }\n#endif\n                        if (ABS(_dx) > limit || ABS(_dz) > limit) continue;\n\t\t\t\t\t}\n\n\t\t\t\t\tif (FrustrumCheck16(ppco, model->bounding_sphere) != -1)")
 P('Game/C/system.h', "#ifdef PSX\n#define\tOTSIZE\t0x1080", "#if defined(PSX) || defined(D2_PSX_FIDELITY)\n#define\tOTSIZE\t0x1080")
 P('Game/driver2.h', "#define ENABLE_GAME_ENCHANCEMENTS\t1\n#define ENABLE_BONUS_CONTENT\t\t1",
   "#ifdef D2_PSX_FIDELITY\n#define ENABLE_GAME_ENCHANCEMENTS\t0\n#define ENABLE_BONUS_CONTENT\t\t0\n#else\n#define ENABLE_GAME_ENCHANCEMENTS\t1\n#define ENABLE_BONUS_CONTENT\t\t1\n#endif")
@@ -856,8 +856,202 @@ import patch_audio_native
 patch_audio_native.register(P, R)
 import patch_gpu_native
 patch_gpu_native.register(P, R)
+P("Game/C/tile.c", '#include "d2_t3d_world.h"', '#include "d2_t3d_world.h"\n#include "d2_ground.h"')
+P("Game/C/tile.c",
+  """	plotContext.flags = 0;
+	plotContext.polySizes = PolySizes;""",
+  """	plotContext.flags = D2_PLOT_GROUND;
+	plotContext.polySizes = PolySizes;""")
+P("Game/C/draw.c",
+  """		model = Z > DRAW_LOD_DIST_LOW ? pLodModels[cop->type] : modelpointers[cop->type];""",
+  """        bool useLod = Z > DRAW_LOD_DIST_LOW;
+#ifdef D2_TEST_BUILDING_RANGE
+        useLod |= ABS(cop->pos.vx - camera_position.vx) > 13000 ||
+                  ABS(cop->pos.vz - camera_position.vz) > 13000;
+#endif
+        model = useLod ? pLodModels[cop->type] : modelpointers[cop->type];""")
+P("Game/C/draw.c",
+  """		if(Z <= DRAW_LOD_DIST_HIGH)
+			PlotBuildingModelSubdivNxN(model, cop->yang, &plotContext, 1);""",
+  """#ifdef D2_TEST_BUILDING_RANGE
+        if (!useLod && Z <= DRAW_LOD_DIST_HIGH)
+#else
+		if(Z <= DRAW_LOD_DIST_HIGH)
+#endif
+			PlotBuildingModelSubdivNxN(model, cop->yang, &plotContext, 1);""")
+P("Game/C/draw.c",
+  """	num_cars_drawn = 0;
+	num_cars_to_draw = 0;""",
+  """	num_cars_drawn = 0;
+#ifdef D2_DIAG_NO_CARS
+    return; // Rendering entry point only. Simulation and collisions still run.
+#endif
+	num_cars_to_draw = 0;""")
+P("Game/C/draw.c", 'int num_cars_drawn = 0;', '#ifdef D2_DIAG_DRAW_CPU\nextern "C" double d2_now_ms(void);\nstruct DrawCpuWindow {\n    double total;\n    unsigned samples;\n};\nstruct DrawCpuSample {\n    DrawCpuWindow &window;\n    const char *name;\n    double start;\n    DrawCpuSample(DrawCpuWindow &w, const char *n) : window(w), name(n), start(d2_now_ms()) {}\n    ~DrawCpuSample() {\n        window.total += d2_now_ms() - start;\n        if (++window.samples == 64) {\n            printInfo("[draw-cpu] %s mean_us=%u samples=%u\\n",\n                      name, (unsigned)(window.total * 1000 / window.samples), window.samples);\n            window.total = 0;\n            window.samples = 0;\n        }\n    }\n};\n#endif\nint num_cars_drawn = 0;')
+P("Game/C/draw.c", 'void DrawAllTheCars(int view)\n{', 'void DrawAllTheCars(int view)\n{\n#ifdef D2_DIAG_DRAW_CPU\n    static DrawCpuWindow cpuWindow;\n    DrawCpuSample cpuSample(cpuWindow, "cars");\n#endif')
+P("Game/C/draw.c", 'int DrawAllBuildings(CELL_OBJECT** objects, int num_buildings)\n{', 'int DrawAllBuildings(CELL_OBJECT** objects, int num_buildings)\n{\n#ifdef D2_DIAG_DRAW_CPU\n    static DrawCpuWindow cpuWindow;\n    DrawCpuSample cpuSample(cpuWindow, "buildings");\n#endif')
 import patch_vram_native
 patch_vram_native.register(P, R)
+P("Game/C/pad.c",
+  '#include <libpad.h>',
+  """#include <libpad.h>
+
+#ifdef D2_N64
+extern "C" void d2_read_buttons(unsigned short buttons[2]);
+#endif""")
+P("Game/C/pad.c",
+  """	PadInitDirect((unsigned char*)padbuffer[0], (unsigned char*)padbuffer[1]);
+	PadStartCom();""",
+  """#ifndef D2_N64
+	PadInitDirect((unsigned char*)padbuffer[0], (unsigned char*)padbuffer[1]);
+	PadStartCom();
+#endif""")
+P("Game/C/pad.c",
+  '\tPadStopCom();',
+  """#ifndef D2_N64
+	PadStopCom();
+#endif""")
+P("Game/C/pad.c",
+  """// [D] [T]
+void MapPad(int pad, PADRAW *pData)
+{
+	unsigned char uVar1;
+
+	ushort i;
+	ushort buttons;
+	ushort mapped;""",
+  """#ifndef D2_N64
+static void MapPadActions(int pad, ushort buttons, const char analog[4]);
+
+// [D] [T]
+void MapPad(int pad, PADRAW *pData)
+{""")
+P("Game/C/pad.c",
+  """	mapped = Pads[pad].direct;
+	buttons = ~((pData->buttons[0] << 8) | (pData->buttons[1])) & 0xffff;
+
+	Pads[pad].direct = buttons;
+	Pads[pad].dirnew = buttons & ~mapped;
+
+	Pads[pad].diranalog[0] = pData->analog[0] - 128;
+	Pads[pad].diranalog[1] = pData->analog[1] - 128;
+	Pads[pad].diranalog[2] = pData->analog[2] - 128;
+	Pads[pad].diranalog[3] = pData->analog[3] - 128;
+""",
+  """	const ushort buttons = ~((pData->buttons[0] << 8) | pData->buttons[1]) & 0xffff;
+    const char analog[4] = {
+        (char)(pData->analog[0] - 128), (char)(pData->analog[1] - 128),
+        (char)(pData->analog[2] - 128), (char)(pData->analog[3] - 128)
+    };
+    MapPadActions(pad, buttons, analog);
+}
+#endif
+
+static void MapPadActions(int pad, ushort buttons, const char analog[4])
+{
+    ushort mapped = Pads[pad].direct;
+    Pads[pad].direct = buttons;
+    Pads[pad].dirnew = buttons & ~mapped;
+    memcpy(Pads[pad].diranalog, analog, sizeof(Pads[pad].diranalog));""")
+P("Game/C/pad.c",
+  'for (i = 0; i < 16; i++)',
+  'for (ushort i = 0; i < 16; i++)')
+P("Game/C/pad.c",
+  """void HandleDualShock(void)
+{
+""",
+  """#ifndef D2_N64
+void HandleDualShock(void)
+{
+""")
+P("Game/C/pad.c",
+  """// [D] [T]
+void HandlePadVibration(int pad)
+{""",
+  """#endif
+
+// [D] [T]
+void HandlePadVibration(int pad)
+{""")
+P("Game/C/pad.c",
+  """#ifndef PSX
+	PsyX_UpdateInput();
+#endif
+
+	if (DuplicatePadData.buffer)
+		memcpy((u_char*)DuplicatePadData.buffer, (u_char*)&padbuffer, DuplicatePadData.size);
+
+	pad = 0;
+	do {
+		PADRAW* padRaw = (PADRAW*)padbuffer[pad];
+
+		if (padRaw->status == 0)
+		{
+			if (padRaw->id == 65 || padRaw->id == 115)
+			{
+				MapPad(pad, padRaw);
+			}
+			else
+			{
+				Pads[pad].type = 1;
+				ClearPad(pad);
+			}
+		}
+		else
+		{
+			Pads[pad].type = 0;
+			ClearPad(pad);
+		}
+
+		pad++;
+	} while (pad < 2);
+
+	HandleDualShock();""",
+  """#ifdef D2_N64
+    // Preserve the two logical slots. An unplugged controller sends no actions.
+    unsigned short buttons[2];
+    d2_read_buttons(buttons);
+    for (pad = 0; pad < 2; pad++)
+    {
+        Pads[pad].type = 2;
+        const char analog[4] = { -128, -128, -128, -128 };
+        MapPadActions(pad, buttons[pad], analog);
+    }
+#else
+#ifndef PSX
+	PsyX_UpdateInput();
+#endif
+
+	if (DuplicatePadData.buffer)
+		memcpy((u_char*)DuplicatePadData.buffer, (u_char*)&padbuffer, DuplicatePadData.size);
+
+	pad = 0;
+	do {
+		PADRAW* padRaw = (PADRAW*)padbuffer[pad];
+
+		if (padRaw->status == 0)
+		{
+			if (padRaw->id == 65 || padRaw->id == 115)
+			{
+				MapPad(pad, padRaw);
+			}
+			else
+			{
+				Pads[pad].type = 1;
+				ClearPad(pad);
+			}
+		}
+		else
+		{
+			Pads[pad].type = 0;
+			ClearPad(pad);
+		}
+
+		pad++;
+	} while (pad < 2);
+
+	HandleDualShock();
+#endif""")
 PATCHES[:] = [x for x in PATCHES if not patch_gpu_native.is_old_rename(x) and not patch_gpu_native.is_dead(x[0])]
 REGEX[:] = [x for x in REGEX if not patch_gpu_native.is_dead(x[0])]
 PATCHES[:] = [x for x in PATCHES if not (x[0].endswith('LIBGPU.C') and "initialize a linked list with it's previous items" in x[1])]

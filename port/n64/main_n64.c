@@ -27,7 +27,16 @@ double d2_now_ms(void) { return (double)timer_ticks() * 1000.0 / (double)TICKS_P
 // Primeiro olhar numa excecao: guarda registradores e enderecos de codigo da pilha em d2_crash[] (o harness le essa area da RAM; a tela do inspector
 // e o ISViewer nao sao confiaveis numa excecao).
 extern void __inspector_exception(exception_t *exc);
-volatile uint32_t d2_crash[160] __attribute__((aligned(16)));
+#ifdef D2_DIAG_FS
+extern void d2_save_read_trace(volatile uint32_t *out);
+#endif
+extern const char __text_start[], __text_end[];
+#ifdef D2_DIAG_FS
+#define D2_CRASH_WORDS 162
+#else
+#define D2_CRASH_WORDS 160
+#endif
+volatile uint32_t d2_crash[D2_CRASH_WORDS] __attribute__((aligned(16)));
 static void d2_exc_handler(exception_t *exc)
 {
     if (!d2_crash[0])
@@ -41,8 +50,11 @@ static void d2_exc_handler(exception_t *exc)
             for (uint32_t a = sp; a < sp + 0x800 && a < 0x80800000u && n < 100; a += 4)
             {
                 uint32_t w = *(volatile uint32_t *)a;
-                if (w >= 0x80000400u && w < 0x800f0000u) d2_crash[40 + n++] = w;
+                if (w >= (uintptr_t)__text_start && w < (uintptr_t)__text_end) d2_crash[40 + n++] = w;
             }
+#ifdef D2_DIAG_FS
+        d2_save_read_trace(&d2_crash[140]);
+#endif
         d2_crash[0] = 0xC0DE0000u | n;
     }
     __inspector_exception(exc);

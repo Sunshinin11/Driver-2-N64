@@ -9,21 +9,22 @@
 #include "PsyX/PsyX_render.h"
 #include "../redriver2/src_rebuild/PsyCross/src/audio/PsyX_SPUAL.h"
 #include "d2_vram.h"
+#include "C/xaplay.h"
 #include <libdragon.h>
 #include <wav64.h>
 #include <string.h>
 #include <stdlib.h>
 #include <stdio.h>
 
+extern int gMasterVolume;
+
 extern "C" {
 // --- ponte libdragon (sys_n64.c)
-typedef struct { unsigned short btn; signed char sx, sy; } d2_pad_raw_t;
 void d2_sys_init(void);
 int  d2_sys_vbl_count(void);
 void d2_sys_set_vbl_cb(void (*f)(void));
 void d2_sys_pump_vbl_cb(void);
 void d2_sys_wait_vbl_until(int target);
-int  d2_pad_poll(int port, d2_pad_raw_t *o);
 
 // --- estado de sistema (era PsyX_main.cpp)
 unsigned int g_swapTime;
@@ -162,6 +163,7 @@ void GR_ReadVRAM(unsigned short *dst, int x, int y, int dst_w, int dst_h)
 // --- audio (SPU): vozes nativas (wav64 VADPCM) sobre o mixer RSP do libdragon; sem SPU RAM nem ADPCM PS1
 #define D2_SPU_RAM_SIZE (128 * 1024)
 #define D2_SPU_VOICES 24
+static constexpr int XA_CHANNEL = D2_SPU_VOICES;
 #define D2_SFX_TAG 0x40000000u
 #define D2_MUS_TAG 0x20000000u
 static u_int s_spuTransfer, s_spuTop = 0x1000;
@@ -357,7 +359,7 @@ static void d2_spu_shape(D2SpuVoice *v, int ch)
 int PsyX_SPUAL_InitSound()
 {
     if (s_spuInited) return 1;
-    audio_init(32000, 4); mixer_init(D2_SPU_VOICES);
+    audio_init(32000, 4); mixer_init(D2_SPU_VOICES + 1);
     for (int i = 0; i < D2_SPU_VOICES; i++)
     {
         mixer_ch_set_limits(i, 16, D2_SPU_MAX_FREQ, 0);
@@ -367,6 +369,7 @@ int PsyX_SPUAL_InitSound()
 }
 void PsyX_SPUAL_ShutdownSound() {
     if (s_spuInited) {
+        UnprepareXA();
         d2_vadpcm_reset();
         mixer_close(); audio_close(); s_spuInited = false;
     }
@@ -407,44 +410,89 @@ int PsyX_SPUAL_GetReverbState() { return 0; }
 u_int PsyX_SPUAL_SetReverbVoice(int, u_int) { return 0; }
 u_int PsyX_SPUAL_GetReverbVoice() { return 0; }
 
-// --- controle: converte o N64 para o formato de pad do PS1 (digital 0x41; bits ativos em 0)
-static u_char *padbuf[2];
-void PsyX_Pad_InitPad(int slot, u_char *padData)
-{
-    if (slot < 0 || slot > 1) return;
-    padbuf[slot] = padData;
-    if (padData) { padData[0] = 0xFF; padData[1] = 0; padData[2] = padData[3] = 0xFF; }
-}
-void PsyX_Pad_Vibrate(int, int, unsigned char *, int) {}
-int PsyX_Pad_GetStatus(int, int slot) { d2_pad_raw_t p; return slot == 0 ? 1 : d2_pad_poll(slot, &p); }
-void PsyX_Pad_InternalPadUpdates()
-{
-    for (int s = 0; s < 2; s++)
-    {
-        if (!padbuf[s]) continue;
-        d2_pad_raw_t p;
-        if (!d2_pad_poll(s, &p)) { padbuf[s][0] = 0xFF; continue; }
-        unsigned short n = p.btn;
-        unsigned short ps = 0xFFFF;                       // PS1: 0 = apertado
-        #define PRESS(cond, bit) if (cond) ps &= ~(bit)
-        const int L = p.sx < -40, R = p.sx > 40, U = p.sy > 40, D = p.sy < -40;
-        PRESS(n & 8, 0x0008);                             // START
-        PRESS((n & 16) || U, 0x0010); PRESS((n & 128) || R, 0x0020); PRESS((n & 32) || D, 0x0040); PRESS((n & 64) || L, 0x0080);
-        PRESS(n & 4, 0x0100);                             // Z -> L2
-        PRESS(n & 512, 0x0800);                           // R -> R1
-        PRESS(n & 256, 0x0400);                           // L -> L1
-        PRESS(n & 1024, 0x1000);                          // C-cima -> Triangulo
-        PRESS(n & 2048, 0x2000);                          // C-baixo -> Circulo
-        PRESS(n & 1, 0x4000);                             // A -> X (acelera)
-        PRESS(n & 2, 0x8000);                             // B -> Quadrado (freio/re)
-        PRESS(n & 4096, 0x0200);                          // C-esq -> R2
-        PRESS(n & 8192, 0x0001);                          // C-dir -> Select
-        padbuf[s][0] = 0x00; padbuf[s][1] = 0x41;
-        padbuf[s][2] = (u_char)(ps & 0xFF);               // byte 2: SELECT/START/direcoes
-        padbuf[s][3] = (u_char)(ps >> 8);                 // byte 3: L2 R2 L1 R1 e botoes de acao
-        #undef PRESS
-    }
-}
-void PsyX_UpdateInput(void) { PsyX_Pad_InternalPadUpdates(); }
 } // extern "C"
 
+static wav64_t *xa_wave;
+static bool xa_prepared, xa_paused;
+static double xa_position;
+static float xa_gain = 1.0f;
+
+void StopXA()
+{
+    if (xa_wave) {
+        mixer_ch_stop(XA_CHANNEL);
+        wav64_close(xa_wave);
+        xa_wave = nullptr;
+    }
+    xa_paused = false;
+}
+
+void UnprepareXA()
+{
+    StopXA();
+    xa_prepared = false;
+}
+
+void PrepareXA()
+{
+    xa_prepared = s_spuInited;
+}
+
+void SetXAVolume(int volume)
+{
+    xa_gain = (10000.0f + volume) / 10000.0f;
+    if (xa_gain < 0.0f) xa_gain = 0.0f;
+    if (xa_gain > 1.0f) xa_gain = 1.0f;
+    if (xa_wave && !xa_paused)
+        mixer_ch_set_vol(XA_CHANNEL, xa_gain, xa_gain);
+}
+
+int XAPrepared()
+{
+    if (xa_wave && !xa_paused && !mixer_ch_playing(XA_CHANNEL))
+        UnprepareXA();
+    return xa_wave ? 2 : xa_prepared;
+}
+
+void PlayXA(int bank, int track)
+{
+    if (!s_spuInited || !XAPrepared() || xa_wave ||
+        bank < 0 || bank >= 4 || track < 0 || track >= 32)
+        return;
+
+    char path[40];
+    snprintf(path, sizeof(path), "/XA64/B%d_T%02d.wav64", bank, track);
+    if (dfs_rom_addr(path) == 0) {
+        UnprepareXA();
+        return;
+    }
+
+    char rom_path[48];
+    snprintf(rom_path, sizeof(rom_path), "rom:%s", path);
+    xa_wave = wav64_load(rom_path, nullptr);
+    if (!xa_wave) {
+        UnprepareXA();
+        return;
+    }
+    mixer_ch_play(XA_CHANNEL, &xa_wave->wave);
+    SetXAVolume(gMasterVolume);
+}
+
+void PauseXA()
+{
+    if (xa_wave && !xa_paused && mixer_ch_playing(XA_CHANNEL)) {
+        xa_position = mixer_ch_get_pos(XA_CHANNEL);
+        mixer_ch_stop(XA_CHANNEL);
+        xa_paused = true;
+    }
+}
+
+void ResumeXA()
+{
+    if (xa_wave && xa_paused) {
+        mixer_ch_play(XA_CHANNEL, &xa_wave->wave);
+        mixer_ch_set_pos(XA_CHANNEL, xa_position);
+        mixer_ch_set_vol(XA_CHANNEL, xa_gain, xa_gain);
+        xa_paused = false;
+    }
+}

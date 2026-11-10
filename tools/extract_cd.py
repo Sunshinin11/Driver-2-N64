@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """Extrai do CD (.bin, ISO9660 Mode2/2352 ou 2048) os arquivos que o jogo precisa para filesystem_d2/DRIVER2/...  (vao para o DragonFS da ROM).
-Pula videos (FMV), audio XA e as cidades nao escolhidas (para a ROM nao ficar enorme enquanto o port nao esta pronto).
+Extrai os dados do jogo e, opcionalmente, converte XA e FMV em arquivos nativos para o cartucho.
 Uso: python3 tools/extract_cd.py --cd1 Driver2CD1.bin --out filesystem_d2 [--cities CHICAGO,HAVANA] [--lang-from <pasta com os .LTXT>]"""
 import argparse, os, shutil, struct, sys
 ap = argparse.ArgumentParser()
@@ -8,6 +8,11 @@ ap.add_argument("--cd1", required=True)
 ap.add_argument("--out", required=True)
 ap.add_argument("--cities", default="CHICAGO")
 ap.add_argument("--lang-from", default="")
+ap.add_argument("--media-only", action="store_true")
+ap.add_argument("--xa-out", help="convert XA speech to WAV64 in this staging directory")
+ap.add_argument("--fmv-out", help="convert selected cinematics into this staging directory")
+ap.add_argument("--fmv-ids", default="all", help="comma-separated render IDs or all")
+ap.add_argument("--cd2", help="optional raw CD2 image for additional cinematics")
 a = ap.parse_args()
 cities = set(c.strip().upper() for c in a.cities.split(",") if c.strip())
 SKIP_DIRS = {"FMV", "XA"}
@@ -33,10 +38,35 @@ def walk(lba, sz, path, out):
         name = name.split(";")[0]
         if fl & 2: walk(elba, esz, path + name + "/", out)
         else: out.append((path + name, elba, esz))
-pvd = sec(16)
-if pvd[1:6] != b"CD001": sys.exit("nao parece um CD ISO9660")
-root = pvd[156:190]
-files = []; walk(struct.unpack("<I", root[2:6])[0], struct.unpack("<I", root[10:14])[0], "", files)
+def scan_index():
+    pvd = sec(16)
+    if pvd[1:6] != b"CD001":
+        sys.exit("nao parece um CD ISO9660")
+    root = pvd[156:190]
+    entries = []
+    walk(struct.unpack_from("<I", root, 2)[0], struct.unpack_from("<I", root, 10)[0], "", entries)
+    return entries
+
+files = scan_index()
+if a.xa_out:
+    from convert_xa_wav64 import convert_xa
+    convert_xa(f, SS, files, a.xa_out)
+if a.fmv_out:
+    from convert_fmv_n64 import convert_fmv
+    selection = None if a.fmv_ids == "all" else {int(n) for n in a.fmv_ids.split(",")}
+    converted = convert_fmv(f, SS, files, a.fmv_out, selection)
+    if a.cd2:
+        cd1, cd1_sector, cd1_offset = f, SS, OFF
+        with open(a.cd2, "rb") as f:
+            SS, OFF = 2352, 24
+            pending = None if selection is None else selection - converted
+            converted |= convert_fmv(f, SS, scan_index(), a.fmv_out, pending)
+        f, SS, OFF = cd1, cd1_sector, cd1_offset
+    if selection is not None and selection - converted:
+        sys.exit(f"FMV render IDs missing from the supplied discs: {sorted(selection - converted)}")
+    print(f"FMV64: {len(converted)} videos")
+if a.media_only:
+    sys.exit(0)
 n = tot = 0
 for path, lba, sz in files:
     parts = path.split("/")

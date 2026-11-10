@@ -15,9 +15,11 @@ filesystem*/
 *.bml
 __pycache__/
 
-# ---- Arquivos temporarios e capturas do emulador ----
+# ---- Arquivos temporarios, patches locais e dumps ----
 *.ppm
 *.raw
+*.patch
+*.diff
 run1/
 b_*/
 prof_*/
@@ -29,8 +31,18 @@ prompt_*.txt
 # ---- Motor REDRIVER2 / PsyCross (baixado/gerado via setup_engine.sh) ----
 port/redriver2/
 
-# ---- Formatos de video e midia PS1 irrelevantes ----
+# ---- Formatos de disco e midia original PS1 ----
+*.bin
+*.cue
+*.iso
+*.img
 *.str
 *.avi
+data/*.bin
+data/*.cue
+data/*.iso
+data/*.img
+
+# ---- Submodulos locais redundantes ----
 port/tiny3d/
 submodules/silent-hill-decomp/

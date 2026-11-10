@@ -10,10 +10,16 @@ def register(P, R):
       "#if USE_CD_FILESYSTEM /*d2cd*/\n// [D] [T]\nvoid WaitCloseLid(void)\n{")
     P('Game/C/spool.c',
       "\n\n// [D] [T]\nvoid StartSpooling(void)\n{\n\tstatic u_char param[8];\n\tstatic u_char result[8];\n\t\n\tif (spoolcounter == 0 || spoolactive)\n\t\treturn;\n\n\tif (XAPrepared())\n\t\treturn;\n\n\tparam[0] = CdlModeSpeed;\n\tCdControlB(CdlSetmode, param, result);\n\n\tif (*result & (CdlStatError | CdlStatShellOpen))\n\t\tWaitCloseLid();\n\t\n\tspoolactive = 1;",
-      "\n#endif /*d2cd*/\n\n// [D] [T]\nvoid StartSpooling(void)\n{\n\tif (spoolcounter == 0 || spoolactive)\n\t\treturn;\n\n\tif (XAPrepared())\n\t\treturn;\n\n\tspoolactive = 1;")
+      "\n#endif /*d2cd*/\n\n// [D] [T]\nvoid StartSpooling(void)\n{\n\tif (spoolcounter == 0 || spoolactive)\n\t\treturn;\n\n\tspoolactive = 1;")
+    P('Game/C/spool.c',
+      "\n#endif /*d2cd*/\n\n// [D] [T]\nvoid StartSpooling(void)\n{\n\tif (spoolcounter == 0 || spoolactive)\n\t\treturn;\n\n\tif (XAPrepared())\n\t\treturn;\n\n\tspoolactive = 1;",
+      "\n#endif /*d2cd*/\n\n// [D] [T]\nvoid StartSpooling(void)\n{\n\tif (spoolcounter == 0 || spoolactive)\n\t\treturn;\n\n\tspoolactive = 1;")
     P('Game/C/spool.c',
       "void UpdateSpool(void)\n{\n\tCdlLOC pos;\n\tSPOOLQ* current;\n\n#if defined(SIMPLE_SPOOL)\n\tif (UpdateSpoolPC())\n\t\treturn;\n#endif\n\n\tif (XAPrepared())\n\t\treturn;\n\n\tcurrent = &spooldata[spoolpos_reading];",
-      "void UpdateSpool(void)\n{\n#if USE_CD_FILESYSTEM /*d2cd*/\n\tCdlLOC pos;\n\tSPOOLQ* current;\n#endif\n\n#if defined(SIMPLE_SPOOL)\n\tif (UpdateSpoolPC())\n\t\treturn;\n#endif\n\n\tif (XAPrepared())\n\t\treturn;\n\n#if USE_CD_FILESYSTEM /*d2cd*/\n\tcurrent = &spooldata[spoolpos_reading];")
+      "void UpdateSpool(void)\n{\n#if USE_CD_FILESYSTEM /*d2cd*/\n\tCdlLOC pos;\n\tSPOOLQ* current;\n#endif\n\n#if defined(SIMPLE_SPOOL)\n\tif (UpdateSpoolPC())\n\t\treturn;\n#endif\n\n#if USE_CD_FILESYSTEM /*d2cd*/\n\tcurrent = &spooldata[spoolpos_reading];")
+    P('Game/C/spool.c',
+      "void UpdateSpool(void)\n{\n#if USE_CD_FILESYSTEM /*d2cd*/\n\tCdlLOC pos;\n\tSPOOLQ* current;\n#endif\n\n#if defined(SIMPLE_SPOOL)\n\tif (UpdateSpoolPC())\n\t\treturn;\n#endif\n\n\tif (XAPrepared())\n\t\treturn;\n\n#if USE_CD_FILESYSTEM /*d2cd*/\n\tcurrent = &spooldata[spoolpos_reading];",
+      "void UpdateSpool(void)\n{\n#if USE_CD_FILESYSTEM /*d2cd*/\n\tCdlLOC pos;\n\tSPOOLQ* current;\n#endif\n\n#if defined(SIMPLE_SPOOL)\n\tif (UpdateSpoolPC())\n\t\treturn;\n#endif\n\n#if USE_CD_FILESYSTEM /*d2cd*/\n\tcurrent = &spooldata[spoolpos_reading];")
     P('Game/C/spool.c',
       "\t// run sector reading\n\tCdIntToPos(current_sector, &pos);\n\tCdControlF(CdlReadS, (u_char*)&pos);\n}\n",
       "\t// run sector reading\n\tCdIntToPos(current_sector, &pos);\n\tCdControlF(CdlReadS, (u_char*)&pos);\n#endif /*d2cd*/\n}\n")

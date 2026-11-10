@@ -12,6 +12,7 @@
 #include "C/mission.h"
 #include "C/tile.h"
 #include "C/texture.h"
+#include "d2_ground.h"
 #include "ASM/rndrasm.h"
 
 
@@ -102,6 +103,31 @@ static inline void vc_campos(int i, SVECTOR *out) { out->vx = s_vcCam[i][0]; out
 // primtab e na OT original, mas não representa um comando da GPU do PS1.
 static inline void d2n_set_ft4(POLY_FT4 *p) { setlen(p, 9); setcode(p, 0xB3); }
 
+// The projection saturates below half the geom screen distance. Keep
+// those quads on the existing path until they can be clipped in 3D.
+static int ground_packet(POLY_FT4 *prim, _pct *pc,
+                         unsigned z0, unsigned z1, unsigned z2, unsigned z3)
+{
+#ifdef D2_DISABLE_GROUND_PERSPECTIVE
+    return sizeof(POLY_FT4);
+#else
+    const unsigned near = d2xf.h / 2 + 1;
+    if (z0 < near || z1 < near || z2 < near || z3 < near ||
+        PRIMTAB_SIZE - (pc->primptr - pc->current->primtab) <
+            60000 + (int)sizeof(D2GroundQuad))
+        return sizeof(POLY_FT4);
+
+    D2GroundQuad *quad = (D2GroundQuad *)prim;
+    setcode(prim, D2_GROUND_CODE);
+    setlen(prim, D2_GROUND_WORDS);
+    quad->depth[0] = z0;
+    quad->depth[1] = z1;
+    quad->depth[2] = z2;
+    quad->depth[3] = z3;
+    return sizeof(D2GroundQuad);
+#endif
+}
+
 // ---------------------------------------------------------------- Tile1x1 (chao, calcadas, agua)
 void Tile1x1(MODEL *model)
 {
@@ -146,8 +172,9 @@ void Tile1x1(MODEL *model)
 			*(ushort *)&prims->u2 = *(ushort *)&polys->uv3;
 			*(ushort *)&prims->u3 = *(ushort *)&polys->uv2;
 
+            const int bytes = ground_packet(prims, &plotContext, A->z, B->z, C->z, D->z);
 			addPrim(plotContext.ot + (Z >> 1) + ofse, prims);
-			plotContext.primptr += sizeof(POLY_FT4);
+			plotContext.primptr += bytes;
 		}
 		polys = (PL_POLYFT4 *)((char *)polys + plotContext.polySizes[ptype]);
 	}
@@ -232,12 +259,34 @@ static inline void mesh_project(MVERTEX (*VSP)[5][5], int numPolys, unsigned int
 	for (int k = 0; k < 9; k++) { src[k] = u[k]; vc_proj((const SVECTOR *)u[k], &xy[k], &z[k], cam ? cam[k] : 0); }
 }
 
-void drawMesh(MVERTEX (*VSP)[5][5], int m, int n, _pct *pc)
+static void draw_mesh(MVERTEX (*VSP)[5][5], int n, _pct *pc,
+                      const VCEnt *const *corners)
 {
 	POLY_FT4 *prim = (POLY_FT4 *)pc->primptr;
 	const int numPolys = n < 2 ? 1 : 4;
-	unsigned int xy[9], z[9]; const MVERTEX *src[9];
-	mesh_project(VSP, numPolys, xy, z, 0, src);
+	unsigned int xy[9], z[9];
+#ifdef D2_TEST_BUILDING_CACHE
+	if (corners)
+	{
+		static const unsigned char cornerSlots[] = { 0, 4, 7, 8 };
+		for (int i = 0; i < 4; ++i)
+		{
+			xy[cornerSlots[i]] = corners[i]->xy;
+			z[cornerSlots[i]] = corners[i]->z;
+		}
+		const MVERTEX (*grid)[5] = *VSP;
+		vc_proj((const SVECTOR *)&grid[0][1], &xy[1], &z[1], nullptr);
+		vc_proj((const SVECTOR *)&grid[0][2], &xy[2], &z[2], nullptr);
+		vc_proj((const SVECTOR *)&grid[0][3], &xy[3], &z[3], nullptr);
+		vc_proj((const SVECTOR *)&grid[1][3], &xy[5], &z[5], nullptr);
+		vc_proj((const SVECTOR *)&grid[2][2], &xy[6], &z[6], nullptr);
+	}
+	else
+#endif
+	{
+		const MVERTEX *src[9];
+		mesh_project(VSP, numPolys, xy, z, nullptr, src);
+	}
 
 	for (int index = 0; index < numPolys; index++)
 	{
@@ -267,11 +316,20 @@ void drawMesh(MVERTEX (*VSP)[5][5], int m, int n, _pct *pc)
 
 			prim->clut = pc->clut;
 			prim->tpage = pc->tpage;
+            pc->primptr = (char *)prim;
+            const int bytes = pc->flags & D2_PLOT_GROUND
+                ? ground_packet(prim, pc, z[mp[0]], z[mp[1]], z[mp[2]], z[mp[3]])
+                : sizeof(POLY_FT4);
 			addPrim(pc->ot + (zz >> 1), prim);
-			prim++;
+			prim = (POLY_FT4 *)((char *)prim + bytes);
 		}
 	}
 	pc->primptr = (char *)prim;
+}
+
+void drawMesh(MVERTEX (*VSP)[5][5], int, int n, _pct *pc)
+{
+	draw_mesh(VSP, n, pc, nullptr);
 }
 
 #ifdef DYNAMIC_LIGHTING
@@ -511,7 +569,12 @@ void PlotBuildingModelSubdivNxN(MODEL *model, int rot, _pct *pc, int n)
 				subdiVerts.verts[0][3].uv.val = uv2;
 
 				makeMesh((MVERTEX(*)[5][5])subdiVerts.verts, sub, sub);
+#ifdef D2_TEST_BUILDING_CACHE
+				const VCEnt *corners[] = { A, B, vc_get(polys->v2), C };
+				draw_mesh(&subdiVerts.verts, sub, pc, corners);
+#else
 				drawMesh((MVERTEX(*)[5][5])subdiVerts.verts, sub, sub, pc);
+#endif
 			}
 		}
 		polys = (PL_POLYFT4 *)((char *)polys + pc->polySizes[ptype]);

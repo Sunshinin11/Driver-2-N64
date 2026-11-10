@@ -44,38 +44,38 @@ void d2_sys_wait_vbl_until(int target)
     }
 }
 
-typedef struct { uint16_t btn; int8_t sx, sy; } d2_pad_raw_t;
-enum { D2_A = 1, D2_B = 2, D2_Z = 4, D2_START = 8, D2_DU = 16, D2_DD = 32, D2_DL = 64, D2_DR = 128,
-       D2_L = 256, D2_R = 512, D2_CU = 1024, D2_CD = 2048, D2_CL = 4096, D2_CR = 8192 };
+// Mapeia o controle diretamente para as acoes do jogo.
+#include <sys/types.h>
+typedef struct DUPLICATION DUPLICATION;
+typedef struct MAPPING MAPPING;
+typedef struct PAD PAD;
+#include "../redriver2/src_rebuild/Game/C/pad.h"
 
-int d2_pad_poll(int port, d2_pad_raw_t *o)
+void d2_read_buttons(uint16_t buttons[2])
 {
-    static int inited;
-    if (!inited) { joypad_init(); inited = 1; }
     joypad_poll();
-    joypad_port_t p = (port == 0) ? JOYPAD_PORT_1 : JOYPAD_PORT_2;
-    uint16_t b = 0;
-    int8_t sx = 0, sy = 0;
-    if (joypad_is_connected(p)) {
-        joypad_inputs_t in = joypad_get_inputs(p);
-        if (in.btn.a)       b |= D2_A;
-        if (in.btn.b)       b |= D2_B;
-        if (in.btn.z)       b |= D2_Z;
-        if (in.btn.start)   b |= D2_START;
-        if (in.btn.d_up)    b |= D2_DU;
-        if (in.btn.d_down)  b |= D2_DD;
-        if (in.btn.d_left)  b |= D2_DL;
-        if (in.btn.d_right) b |= D2_DR;
-        if (in.btn.l)       b |= D2_L;
-        if (in.btn.r)       b |= D2_R;
-        if (in.btn.c_up)    b |= D2_CU;
-        if (in.btn.c_down)  b |= D2_CD;
-        if (in.btn.c_left)  b |= D2_CL;
-        if (in.btn.c_right) b |= D2_CR;
-        sx = in.stick_x; sy = in.stick_y;
+    for (int i = 0; i < 2; i++) {
+        joypad_port_t port = i == 0 ? JOYPAD_PORT_1 : JOYPAD_PORT_2;
+        buttons[i] = 0;
+        if (!joypad_is_connected(port))
+            continue;
+
+        joypad_inputs_t in = joypad_get_inputs(port);
+        if (in.btn.a)                           buttons[i] |= MPAD_CROSS;
+        if (in.btn.b)                           buttons[i] |= MPAD_SQUARE;
+        if (in.btn.z)                           buttons[i] |= MPAD_L2;
+        if (in.btn.start)                       buttons[i] |= MPAD_START;
+        if (in.btn.d_up || in.stick_y > 40)     buttons[i] |= MPAD_D_UP;
+        if (in.btn.d_down || in.stick_y < -40)  buttons[i] |= MPAD_D_DOWN;
+        if (in.btn.d_left || in.stick_x < -40)  buttons[i] |= MPAD_D_LEFT;
+        if (in.btn.d_right || in.stick_x > 40)  buttons[i] |= MPAD_D_RIGHT;
+        if (in.btn.l)                           buttons[i] |= MPAD_L1;
+        if (in.btn.r)                           buttons[i] |= MPAD_R1;
+        if (in.btn.c_up)                        buttons[i] |= MPAD_TRIANGLE;
+        if (in.btn.c_down)                      buttons[i] |= MPAD_CIRCLE;
+        if (in.btn.c_left)                      buttons[i] |= MPAD_R2;
+        if (in.btn.c_right)                     buttons[i] |= MPAD_SELECT;
     }
-    o->btn = b; o->sx = sx; o->sy = sy;
-    return 1;
 }
 
 // ---- Arquivos do jogo: o jogo faz fopen("DRIVER2\\DATA\\...") como no PC; aqui viram "rom:/DRIVER2/DATA/..." (DragonFS no cartucho). ----

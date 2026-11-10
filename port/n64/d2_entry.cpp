@@ -52,7 +52,7 @@ extern "C" int d2_run_game(void)
     _replay_buffer = g_Replay_buffer;
 
     gDrawDistance = D2_DRAW_DISTANCE;
-    gNoFMV = 1;            // videos (FMV) ficam para o fim do projeto: o jogo pula direto
+    gNoFMV = 0;            // FMV_main pula os renders ausentes no cartucho
     gUserLanguage = 0;     // ingles (traducao PT-BR fica para o fim)
     return redriver2_main(1, argv);
 }
