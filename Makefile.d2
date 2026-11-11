@@ -21,13 +21,15 @@ GAME_OBJS := $(patsubst %.c,$(OBJ_DIR)/%.o,$(GAME_SRCS))
 PSYX_C   := $(addprefix $(SRC)/PsyCross/src/psx/,ABS.C LIBGTE.C LIBAPI.C LIBGPU.C LIBSN.C LIBMCRD.C LIBSPU.C)
 PSYX_CPP := $(addprefix $(SRC)/PsyCross/src/gte/,half_float.cpp)
 PSYX_OBJS := $(patsubst %.C,$(OBJ_DIR)/%.o,$(PSYX_C)) $(patsubst %.cpp,$(OBJ_DIR)/%.o,$(PSYX_CPP))
+# espacos entre funcoes quentes (tools/hot_layout.py): evitam conflito no cache de instrucoes
+HOT_PAD := $(wildcard port/n64/d2_hotpad.cpp)
 PLAT_C    := port/n64/main_n64.c port/n64/psyx_n64.c port/n64/sys_n64.c
-PLAT_CXX  := port/n64/d2_entry.cpp port/n64/psyx_backend.cpp port/n64/libetc_n64.cpp port/n64/fs_n64.cpp port/n64/psyx_rdp.cpp port/n64/n64_gpu_api.cpp port/n64/d2_gpu_state.cpp port/n64/stubs_n64.cpp port/n64/fmv_n64.cpp port/n64/xf_native.cpp port/n64/d2_vtxcache.cpp
+PLAT_CXX  := port/n64/d2_entry.cpp port/n64/psyx_backend.cpp port/n64/libetc_n64.cpp port/n64/fs_n64.cpp port/n64/psyx_rdp.cpp port/n64/n64_gpu_api.cpp port/n64/d2_gpu_state.cpp port/n64/stubs_n64.cpp port/n64/fmv_n64.cpp port/n64/xf_native.cpp port/n64/d2_vtxcache.cpp $(HOT_PAD)
 PLAT_OBJS := $(patsubst %.c,$(OBJ_DIR)/%.o,$(PLAT_C)) $(patsubst %.cpp,$(OBJ_DIR)/%.o,$(PLAT_CXX))
 OBJS := $(GAME_OBJS) $(PSYX_OBJS) $(PLAT_OBJS)
 
 D2_INC = -I$(SRC)/Game -I$(SRC)/PsyCross/include -I$(SRC)/PsyCross/include/psx -Iport/compat -Iport/n64
-N64_LDFLAGS += $(D2_LDEXTRA)
+N64_LDFLAGS += $(D2_LDEXTRA) --wrap=memset
 # funcoes quentes juntas no inicio do .text (o cache de instrucoes do VR4300 tem 16 KB: espalhadas, elas se expulsam). Gerado por tools/hot.py.
 HOT_LD ?= hot.ld
 ifneq ($(wildcard $(HOT_LD)),)
@@ -131,7 +133,7 @@ endif
 $(T3D_DIR)/build/libt3d.a:
 	$(MAKE) -C $(T3D_DIR)
 
-$(BUILD_DIR)/d2_n64.elf: $(OBJS) | $(T3D_DIR)/build/libt3d.a
+$(BUILD_DIR)/d2_n64.elf: $(OBJS) $(wildcard $(HOT_LD)) | $(T3D_DIR)/build/libt3d.a
 
 -include $(OBJS:.o=.d)
 

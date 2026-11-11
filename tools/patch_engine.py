@@ -1058,6 +1058,24 @@ PATCHES[:] = [x for x in PATCHES if not (x[0].endswith('LIBGPU.C') and "initiali
 PATCHES[:] = [x for x in PATCHES if x[0] not in patch_gte_removal.GONE]
 REGEX[:] = [x for x in REGEX if x[0] not in patch_gte_removal.GONE]
 
+# --- telemetria: ticks por regiao (carros/predios/tiles), lidos em psyx_rdp.cpp ([custo]) ---
+P("Game/C/draw.c", '#include "event.h"', '#include "event.h"\n#include "d2_ticks.h"')
+P("Game/C/draw.c", '    DrawCpuSample cpuSample(cpuWindow, "cars");\n#endif', '    DrawCpuSample cpuSample(cpuWindow, "cars");\n#endif\n\tD2TickScope d2TkCars(&d2_tk_cars);')
+P("Game/C/draw.c", '    DrawCpuSample cpuSample(cpuWindow, "buildings");\n#endif', '    DrawCpuSample cpuSample(cpuWindow, "buildings");\n#endif\n\tD2TickScope d2TkBlds(&d2_tk_blds);')
+P("Game/C/tile.c", '#include "d2_ground.h"\n#include "psx/gtereg.h"', '#include "d2_ground.h"\n#include "d2_ticks.h"\n#include "psx/gtereg.h"')
+P("Game/C/tile.c", "void DrawTILES(PACKED_CELL_OBJECT** tiles, int tile_amount)\n{", "void DrawTILES(PACKED_CELL_OBJECT** tiles, int tile_amount)\n{\n\tD2TickScope d2TkT(&d2_tk_tiles);")
+
+# --- chao: quad nao subdividido quando a perspectiva correta do RDP ja cobre (cantos alem do plano proximo, UV <= 63) ---
+P("Game/C/tile.c", "\tplotContext.ot += ofse;\n\n\tmakeMesh((MVERTEX(*)[5][5])subdivVerts, m, n);",
+  "\tplotContext.ot += ofse;\n\n\tif (n >= 2 && (plotContext.flags & D2_PLOT_GROUND) && d2_ground_single_ok((MVERTEX(*)[5][5])subdivVerts))\n\t\tn = 1;\n\n\tmakeMesh((MVERTEX(*)[5][5])subdivVerts, m, n);")
+P("Game/C/tile.c", '#include "d2_ground.h"\n#include "d2_ticks.h"', '#include "d2_ground.h"\nint d2_ground_single_ok(MVERTEX (*VSP)[5][5]);\n#include "d2_ticks.h"')
+
+# carros especiais (spool): os tamanhos dos modelos chegam em little-endian e o laco de CheckSpecialSpool nunca termina (blocos negativos) -> trava.
+# Desligado ate o carregador ser convertido para big-endian (civ_ai ja trata specModelValid == 0: o carro especial so nao aparece).
+P('Game/C/spool.c',
+  "\tif (allowSpecSpooling && \n\t\tspecSpoolComplete != 1 && ",
+  "\tif (0 /*d2spec*/ && allowSpecSpooling && \n\t\tspecSpoolComplete != 1 && ")
+
 def prune():
     import shutil
     for d in patch_gpu_native.DEAD:

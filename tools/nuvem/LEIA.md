@@ -40,3 +40,18 @@ Todos os scripts em `tools/nuvem/` e na raiz respeitam essas variáveis de ambie
 - O Ares do harness e determinista: repetir a mesma ROM da exatamente o mesmo numero. A incerteza vem de mudar o layout do codigo (hot.ld, tamanho das funcoes), que desloca o resultado por alguns por cento; so aceite ganho do quadro inteiro acima de 3% ou confirmado por timer de regiao.
 - Log do jogador x harness: as janelas iniciais (cc 32..96, mesma rua parada) dao 3,4M x 3,3M ticks (+2%); as diferencas maiores aparecem so depois, quando o jogador dirige para outra area com mais transito. Nao compare cenas diferentes.
 - Em medidas de nova versao, rode tambem a versao anterior no mesmo instante; nao reutilize numeros de outra sessao.
+
+## libdragon: fila RSPQ mais funda (referencia: Half-Life N64, halo-64)
+`tools/libdragon-rspq-buffer.patch` sobe RSPQ_DRAM_LOWPRI_BUFFER_SIZE de 0x200 para 0x1000 palavras (2 KB -> 16 KB por buffer, +32 KB de RAM).
+Aplicar no checkout do libdragon (`git apply`), `make libdragon && make install`, e recompilar o jogo. Sem o patch o jogo funciona, so com a fila padrao.
+
+## Telemetria no log (uma linha por 300 quadros)
+`[frametime]` (VBlanks entre apresentacoes: mediana, p95, >2 VB, histograma), `[heap]` (usado, livre aproximado, menor livre) e `[custo]` (ticks CP0/quadro em carros, predios e tiles).
+
+## Otimizacoes desta rodada (perfil de gameplay no Ares headless, `D2_PROF=1`)
+- Perfil da cena de jogo: submissao de poligonos (`d2_native_ft4_inner`, `rdpq_triangle_rsp` + `floor/floorf`, `tri_core`) ~35%, projecao `vc_proj` ~10%, trocas de paleta/janela ~8%, `memset` ~5%.
+- `rsp_ft4` agora divide quads com extensao de UV > 64 texels em grade bilinear (cada celula cabe na janela CI4 64x64); antes ~17-20% dos quads iam para o caminho da CPU (`tri_core` + `rdpq_triangle_rsp`). `[ft4_stat]` mostra `rej_dim`.
+- `draw_ground_perspective` monta os triangulos com perspectiva direto (sem `floorf` e sem a divisao por triangulo do `rdpq_triangle`).
+- `memset` rapido (`--wrap=memset`, 64 bits por store) para a limpeza da OT e dos buffers do RSPQ (~80 KB/quadro).
+- Contadores `[ft4_stat]` (rsp/cpu/rej_*) corrigidos.
+- Resultado no mesmo roteiro (`/tmp/in_gp.txt`: menu -> jogo, Ares headless): 2,947M -> 2,702M ticks/quadro (media dos 6 ultimos [cyc]); mediana de 4 VB -> 3 VB.
