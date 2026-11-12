@@ -38,6 +38,7 @@ port/redriver2/
 *.img
 *.str
 *.avi
+data/
 data/*.bin
 data/*.cue
 data/*.iso
