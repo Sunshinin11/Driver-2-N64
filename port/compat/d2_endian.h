@@ -21,6 +21,8 @@ static inline void d2_put_uvw(void *p, unsigned int v) { unsigned char *b = (uns
 /* modelos (MDS/modelos de carro): troca os campos curtos/inteiros no lugar */
 void d2_swap_model(void *model, int size);
 void d2_swap_car_models(char *lump, int lump_size);
+void d2_swap_model_hdr(void *model);
+void d2_swap_model_geo_force(void *model, int size);
 #ifdef __cplusplus
 }
 #endif

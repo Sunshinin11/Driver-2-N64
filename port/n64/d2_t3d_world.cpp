@@ -3,6 +3,7 @@
 #include <t3d/t3dmath.h>
 #include <t3d/t3dmodel.h>
 #include <stdlib.h>
+#include <malloc.h>
 #include <math.h>
 
 #include "d2_t3d_world.h"
@@ -359,6 +360,7 @@ struct ConvertedPoly {
     int pass_type; // 0 = untextured/shaded, 1 = textured CI4
 };
 
+static void d2_car_bake_reset(void);
 void d2_t3d_on_models_loaded(void)
 {
     if (!s_t3d_inited) {
@@ -366,6 +368,7 @@ void d2_t3d_on_models_loaded(void)
     }
     // Ensure RSP is idle before freeing any previous level's blocks
     rspq_wait();
+    d2_car_bake_reset();
     d2_t3d_reset_materials();
     memset(s_t3d_live_model, 0, sizeof(s_t3d_live_model));
 
@@ -1122,3 +1125,7 @@ void d2_t3d_draw_queued_buildings(void)
 
 #include "d2_t3d_world_order.inc"
 
+#ifndef D2_CAR_CULL
+#define D2_CAR_CULL T3D_FLAG_CULL_FRONT
+#endif
+#include "d2_t3d_cars.inc"

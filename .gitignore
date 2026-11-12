@@ -18,8 +18,8 @@ __pycache__/
 # ---- Arquivos temporarios, patches locais e dumps ----
 *.ppm
 *.raw
-*.patch
-*.diff
+/*.patch
+/*.diff
 run1/
 b_*/
 prof_*/

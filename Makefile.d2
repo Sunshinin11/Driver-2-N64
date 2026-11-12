@@ -2,7 +2,7 @@
 # E1: o jogo (Game/**/*.c, compilado como C++ - igual ao premake do projeto original) + camada N64 (port/n64).
 BUILD_DIR = build_d2
 OBJ_DIR   = $(BUILD_DIR)/o
-N64_ROM_SAVETYPE = none
+N64_ROM_SAVETYPE = sram256k
 LIBDRAGON_PREVIEW = 2
 N64_INST ?= /opt/libdragon
 include $(N64_INST)/include/n64.mk
@@ -11,7 +11,7 @@ N64_CXXFLAGS ?= $(N64_CFLAGS)
 
 SRC  = port/redriver2/src_rebuild
 FS_DIR = filesystem_d2
-GAME_OPT ?= -Os
+GAME_OPT ?= -O2 -fno-strict-aliasing -fwrapv -fno-delete-null-pointer-checks
 
 # xaplay.c precisa de OpenAL (audio de CD no PC): sera substituido por camada N64 propria.
 GAME_SRCS := $(filter-out $(SRC)/Game/C/xaplay.c,$(wildcard $(SRC)/Game/C/*.c)) \
@@ -21,13 +21,15 @@ GAME_OBJS := $(patsubst %.c,$(OBJ_DIR)/%.o,$(GAME_SRCS))
 PSYX_C   := $(addprefix $(SRC)/PsyCross/src/psx/,ABS.C LIBGTE.C LIBAPI.C LIBGPU.C LIBSN.C LIBMCRD.C LIBSPU.C)
 PSYX_CPP := $(addprefix $(SRC)/PsyCross/src/gte/,half_float.cpp)
 PSYX_OBJS := $(patsubst %.C,$(OBJ_DIR)/%.o,$(PSYX_C)) $(patsubst %.cpp,$(OBJ_DIR)/%.o,$(PSYX_CPP))
+# espacos entre funcoes quentes (tools/hot_layout.py): evitam conflito no cache de instrucoes
+HOT_PAD := $(wildcard port/n64/d2_hotpad.cpp)
 PLAT_C    := port/n64/main_n64.c port/n64/psyx_n64.c port/n64/sys_n64.c
-PLAT_CXX  := port/n64/d2_entry.cpp port/n64/psyx_backend.cpp port/n64/libetc_n64.cpp port/n64/fs_n64.cpp port/n64/psyx_rdp.cpp port/n64/n64_gpu_api.cpp port/n64/d2_gpu_state.cpp port/n64/stubs_n64.cpp port/n64/fmv_n64.cpp port/n64/xf_native.cpp port/n64/d2_vtxcache.cpp
+PLAT_CXX  := port/n64/d2_entry.cpp port/n64/psyx_backend.cpp port/n64/libetc_n64.cpp port/n64/fs_n64.cpp port/n64/psyx_rdp.cpp port/n64/n64_gpu_api.cpp port/n64/d2_gpu_state.cpp port/n64/stubs_n64.cpp port/n64/fmv_n64.cpp port/n64/xf_native.cpp port/n64/d2_vtxcache.cpp $(HOT_PAD)
 PLAT_OBJS := $(patsubst %.c,$(OBJ_DIR)/%.o,$(PLAT_C)) $(patsubst %.cpp,$(OBJ_DIR)/%.o,$(PLAT_CXX))
 OBJS := $(GAME_OBJS) $(PSYX_OBJS) $(PLAT_OBJS)
 
 D2_INC = -I$(SRC)/Game -I$(SRC)/PsyCross/include -I$(SRC)/PsyCross/include/psx -Iport/compat -Iport/n64
-N64_LDFLAGS += $(D2_LDEXTRA)
+N64_LDFLAGS += $(D2_LDEXTRA) --wrap=memset
 # funcoes quentes juntas no inicio do .text (o cache de instrucoes do VR4300 tem 16 KB: espalhadas, elas se expulsam). Gerado por tools/hot.py.
 HOT_LD ?= hot.ld
 ifneq ($(wildcard $(HOT_LD)),)
@@ -44,7 +46,7 @@ OBJS += $(BUILD_DIR)/port/n64/rsp_d2gpu.o
 
 T3D_DIR = submodules/tiny3d
 N64_LDFLAGS := $(T3D_DIR)/build/libt3d.a $(N64_LDFLAGS)
-D2_OPT += -DD2_T3D_WORLD=1 -DD2_T3D_QUEUE=1
+D2_OPT += -DD2_T3D_WORLD=1
 D2_INC += -I$(T3D_DIR)/src
 PLAT_OBJS += $(OBJ_DIR)/port/n64/d2_t3d_world.o
 OBJS += $(OBJ_DIR)/port/n64/d2_t3d_world.o
@@ -99,7 +101,7 @@ $(OBJ_DIR)/port/n64/%.o: port/n64/%.cpp
 # DragonFS: arquivos do jogo extraidos do seu CD1 (nao entram no git). CITIES = cidades na ROM (CHICAGO,HAVANA,RIO,VEGAS).
 CD1     ?= $(or $(wildcard data/Driver2CD1.bin),$(wildcard data/install/Driver2CD1.bin),../ReDriver 2/data/install/Driver2CD1.bin)
 LANGDIR ?= $(or $(wildcard port/redriver2/data/DRIVER2/LANG),../ReDriver 2/data/DRIVER2/LANG)
-CITIES  ?= CHICAGO
+CITIES  ?= CHICAGO,HAVANA,VEGAS,RIO
 stage-data:
 	@mkdir -p $(FS_DIR)
 	@if [ -f "$(CD1)" ] || [ ! -d $(FS_DIR)/DRIVER2 ]; then python3 tools/extract_cd.py --cd1 "$(CD1)" --out $(FS_DIR) --cities "$(CITIES)" --lang-from "$(LANGDIR)"; fi
@@ -124,11 +126,16 @@ $(BUILD_DIR)/d2_n64.dfs: stage-data
 ifneq ($(strip $(MEDIA_ARGS)),)
 	@python3 tools/extract_cd.py --cd1 "$(CD1)" --out "$(FS_DIR)" --media-only $(MEDIA_ARGS)
 endif
+	@echo "    [LEVPACK] $(FS_STAGE)/DRIVER2/LEVPACK.BIN"
+	@python3 tools/pack_levels.py $(FS_STAGE)/DRIVER2 $(FS_STAGE)/DRIVER2/LEVPACK.BIN --remove
 	@echo "    [DFS] $@"
 	$(N64_MKDFS) $@ $(FS_STAGE)
 	@if [ "$$(wc -c < "$@")" -gt 65011712 ]; then rm -f "$@"; echo "DragonFS exceeds 62 MiB. Reduce FMV_IDS or CITIES."; exit 1; fi
 
-$(BUILD_DIR)/d2_n64.elf: $(OBJS)
+$(T3D_DIR)/build/libt3d.a:
+	$(MAKE) -C $(T3D_DIR)
+
+$(BUILD_DIR)/d2_n64.elf: $(OBJS) $(wildcard $(HOT_LD)) | $(T3D_DIR)/build/libt3d.a
 
 -include $(OBJS:.o=.d)
 

@@ -33,7 +33,10 @@ O código original em C/C++ executa diretamente no processador MIPS VR4300 do N6
 ### O Que Funciona
 - **Lógica e Física do Jogo**: Simulação completa dos veículos, tráfego urbano, inteligência artificial da polícia e colisões 3D fielmente adaptadas.
 - **Exploração e Modo Praticar**: Navegação livre pela cidade de Chicago com renderização de edifícios, malha viária, cruzamentos e sinalização.
-- **Renderizador RDP Nativo**: Renderização em hardware através do Reality Display Processor (RDP) com pipeline de triângulos Tiny3D, correção de perspectiva de pistas e planos de chão, e ordenação por tabela de exibição (OT).
+- **Renderizador Híbrido RDP / Tiny3D**:
+  - **Edifícios e Cenário Urbano**: Processados e rasterizados via microcódigo RSP do **Tiny3D** (`d2_t3d_world.cpp`), com transformações matriciais em hardware e intercalação na Ordering Table (OT) do PS1.
+  - **Malha Viária e Pistas**: Renderizadas diretamente no RDP com correção de perspectiva de quads (`draw_ground_perspective`), eliminando distorções de mapeamento afim.
+  - **Veículos, Sprites e HUD**: Projetados na CPU VR4300 com comandos diretos ao RDP (`psyx_rdp.cpp`).
 - **Subdivisão e Clipping**: Projeção com clipping de planos próximos e subdivisão adaptativa de polígonos para contornar limitações de precisão de ponto fixo.
 - **Áudio e Efeitos Sonoros**: Motor de som VADPCM reproduzindo efeitos sonoros (SFX), música do jogo em tempo real e faixas de fala XA convertidas em formato WAV64.
 - **Vídeos e Cinemáticas (FMV)**: Suporte à reprodução de vídeos em formato MPEG-1/WAV64 através de streaming de cartucho.
@@ -108,8 +111,8 @@ Para extrair os recursos originais do jogo:
 ### 1. Clonar o Repositório com Submódulos
 
 ```bash
-git clone --recurse-submodules https://github.com/Sunshinin11/Driver-2-Port-N64.git
-cd Driver-2-Port-N64
+git clone --recurse-submodules https://github.com/Sunshinin11/Driver-2-N64.git
+cd Driver-2-N64
 ```
 
 Se você já clonou sem a opção recursiva, inicialize os submódulos:
@@ -183,7 +186,7 @@ O esquema de controles do Nintendo 64 foi desenhado para proporcionar a mesma re
 
 ## Galeria
 
-> 📸 **Capturas de Tela Autênticas**: A pasta [`docs/media/`](docs/media/) está reservada para armazenar capturas reais do port em funcionamento no console e no emulador Ares. Novas imagens serão publicadas conforme o desenvolvimento avança.
+> 📸 **Capturas Autorizadas Pendentes**: A pasta [`docs/media/`](docs/media/) está reservada para armazenar capturas reais do port em funcionamento no console e no emulador Ares. As imagens de gameplay estão em fase de homologação e serão adicionadas diretamente a esse diretório pelo desenvolvedor. Nenhuma imagem simulada ou de terceiros foi incluída.
 
 ---
 
@@ -227,7 +230,10 @@ The game's original C/C++ logic runs natively on the N64's MIPS VR4300 processor
 ### What Works
 - **Game Engine & Vehicle Physics**: Full vehicle simulation, tire traction, city traffic, police AI pursuit logic, and 3D collision systems.
 - **Free-Roam & Practice Mode**: Exploration of the Chicago city map with full building geometry, roads, intersections, and street props.
-- **Native RDP Rendering**: Direct hardware rendering through the Reality Display Processor (RDP) using Tiny3D triangles, perspective-correct road and ground rendering, and ordering table (OT) sorting.
+- **Hybrid RDP / Tiny3D Rendering**:
+  - **Buildings & Urban Scenery**: Rasterized via **Tiny3D** RSP microcode (`d2_t3d_world.cpp`), using hardware matrix transformations and interleaving with the PS1 Ordering Table (OT) buckets.
+  - **Roads & Ground Planes**: Rendered directly through RDP commands with hardware perspective quad correction (`draw_ground_perspective`), eliminating affine texture warping.
+  - **Vehicles, Dynamic Props & HUD**: Projected on the VR4300 CPU and dispatched directly to RDPQ display lists (`psyx_rdp.cpp`).
 - **Clipping & Adaptive Subdivision**: Near-plane polygon clipping and adaptive subdivision to eliminate fixed-point coordinate overflow artifacts.
 - **Audio & Sound Effects**: VADPCM sound synthesis for sound effects (SFX), background music, and converted XA spoken mission dialogue via WAV64 streams.
 - **FMV Video Playback**: Support for MPEG-1/WAV64 cutscene video playback streamed directly from cartridge space.
@@ -302,8 +308,8 @@ To extract the original game data:
 ### 1. Clone the Repository with Submodules
 
 ```bash
-git clone --recurse-submodules https://github.com/Sunshinin11/Driver-2-Port-N64.git
-cd Driver-2-Port-N64
+git clone --recurse-submodules https://github.com/Sunshinin11/Driver-2-N64.git
+cd Driver-2-N64
 ```
 
 If already cloned without recursive submodules:
@@ -377,7 +383,7 @@ The Nintendo 64 controller layout maps closely to the classic Driver 2 controls:
 
 ## Gallery
 
-> 📸 **Authentic Screenshots**: The [`docs/media/`](docs/media/) directory is reserved for genuine in-game screenshots captured from hardware and high-accuracy Ares emulator runs. Screenshots will be updated as visual enhancements land.
+> 📸 **Authorized Screenshots Pending**: The [`docs/media/`](docs/media/) directory is reserved for genuine in-game screenshots captured from hardware and high-accuracy Ares emulator runs. Gameplay captures are undergoing authorization and will be added directly to this folder by the developer. No simulated or third-party placeholder images are included.
 
 ---
 

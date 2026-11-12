@@ -2,11 +2,17 @@
 #include <fmv.h>
 #include <mpeg1.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include "C/fmvplay.h"
 
-static void CheckSkip(void *ctx, int, float, fmv_control_t *control)
+static void CheckSkip(void *ctx, int, float time_sec, fmv_control_t *control)
 {
     bool *skip = static_cast<bool *>(ctx);
+#ifdef D2_TEST_FMV
+    if (time_sec > 4.0f) { control->stop(control); return; }   // teste: toca ~4 s de cada video
+#else
+    (void)time_sec;
+#endif
     joypad_poll();
     if (joypad_get_buttons_pressed(JOYPAD_PORT_1).start) {
         *skip = true;
@@ -33,6 +39,7 @@ int FMV_main(RENDER_ARGS *args)
             rspq_wait();
             audio_init(32000, 4);
             mixer_init(1);
+            wav64_init_compression(2);   /* audio dos videos em ULC */
             audio_started = true;
         }
         char rom_path[40];
@@ -40,7 +47,7 @@ int FMV_main(RENDER_ARGS *args)
         fmv_parms_t options = {};
         options.disable_display_init = true;
         options.disable_subtitles = !args->subtitle;
-        options.decode_ahead_pics = 3;
+        options.decode_ahead_pics = 1;
         options.osd_callback = CheckSkip;
         options.osd_ctx = &skip;
         fmv_play(rom_path, &options);

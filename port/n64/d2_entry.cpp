@@ -53,6 +53,9 @@ extern "C" int d2_run_game(void)
 
     gDrawDistance = D2_DRAW_DISTANCE;
     gNoFMV = 0;            // FMV_main pula os renders ausentes no cartucho
+#if defined(D2_TEST_MISSION) || defined(D2_NOFMV)
+    gNoFMV = 1;            // teste de cidades: sem videos
+#endif
     gUserLanguage = 0;     // ingles (traducao PT-BR fica para o fim)
     return redriver2_main(1, argv);
 }

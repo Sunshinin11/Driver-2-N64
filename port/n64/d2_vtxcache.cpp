@@ -36,10 +36,20 @@ static inline void vc_begin(const SVECTOR *src)
 	d2x_cam(&s_vcCam0);
 	if (++s_vcCur == 0) { for (int i = 0; i < 256; i++) s_vc[i].gen = 0; s_vcCur = 1; }
 }
+// projecao so para desenho (nao altera o estado do GTE emulado do jogo): soma de produtos em 32 bits (a translacao e multipla de 4096,
+// entao (tr<<12 + S)>>12 == tr + (S>>12)) e divisao H/SZ por uma unica instrucao divu em vez da tabela UNR do PS1 (diferenca <= 1/65536 em h)
 static __attribute__((noinline)) void vc_proj(const SVECTOR *v, unsigned int *xy, unsigned int *z, short *cam)
 {
-	unsigned int sz, h; int sx, sy, a1, a2, a3;
-	d2x_proj(&s_vcCam0, v->vx, v->vy, v->vz, &sx, &sy, &sz, &h, &a1, &a2, &a3);
+	const int vx = v->vx, vy = v->vy, vz = v->vz;
+	const int a1 = (int)(s_vcCam0.tx >> 12) + ((s_vcCam0.r11 * vx + s_vcCam0.r12 * vy + s_vcCam0.r13 * vz) >> 12);
+	const int a2 = (int)(s_vcCam0.ty >> 12) + ((s_vcCam0.r21 * vx + s_vcCam0.r22 * vy + s_vcCam0.r23 * vz) >> 12);
+	const int a3 = (int)(s_vcCam0.tz >> 12) + ((s_vcCam0.r31 * vx + s_vcCam0.r32 * vy + s_vcCam0.r33 * vz) >> 12);
+	const unsigned int sz = (unsigned int)d2x_clamp(a3, 0, 0xffff);
+	unsigned int h = 0x1ffff;
+	if (s_vcCam0.h < sz * 2) { h = (s_vcCam0.h << 16) / sz; if (h > 0x1ffff) h = 0x1ffff; }
+	const int ir1 = d2x_clamp(a1, -0x8000, 0x7fff), ir2 = d2x_clamp(a2, -0x8000, 0x7fff);
+	const int sx = d2x_clamp((int)(((long long)s_vcCam0.ofx + (long long)ir1 * (int)h) >> 16), -0x400, 0x3ff);
+	const int sy = d2x_clamp((int)(((long long)s_vcCam0.ofy + (long long)ir2 * (int)h) >> 16), -0x400, 0x3ff);
 	*xy = ((unsigned int)(unsigned short)sy << 16) | (unsigned short)sx;
 	*z = sz;
 	if (cam) { cam[0] = (short)d2x_clamp(a1, -0x8000, 0x7fff); cam[1] = (short)d2x_clamp(a2, -0x8000, 0x7fff); cam[2] = (short)d2x_clamp(a3, -0x8000, 0x7fff); }
@@ -325,6 +335,24 @@ static void draw_mesh(MVERTEX (*VSP)[5][5], int n, _pct *pc,
 		}
 	}
 	pc->primptr = (char *)prim;
+}
+
+// Chao com perspectiva correta (D2GroundQuad): o quad nao precisa ser subdividido em 2x2 quando os 4 cantos estao alem do plano
+// proximo e a extensao de UV cabe na janela de 64 texels; devolve 1 nesse caso (4 projecoes em vez de 9 + malha + 4 quads).
+int d2_ground_single_ok(MVERTEX (*VSP)[5][5])
+{
+	d2x_cam(&s_vcCam0);
+	const unsigned int near = d2xf.h / 2 + 1;
+	int umin = 255, umax = 0, vmin = 255, vmax = 0;
+	for (int k = 0; k < 4; k++)
+	{
+		unsigned int xy, z;
+		vc_proj((const SVECTOR *)&(*VSP)[0][k], &xy, &z, nullptr);
+		if (z < near) return 0;
+		const int u = (*VSP)[0][k].uv.s.u0, v = (*VSP)[0][k].uv.s.v0;
+		if (u < umin) umin = u; if (u > umax) umax = u; if (v < vmin) vmin = v; if (v > vmax) vmax = v;
+	}
+	return (umax - umin) <= 63 && (vmax - vmin) <= 63;
 }
 
 void drawMesh(MVERTEX (*VSP)[5][5], int, int n, _pct *pc)

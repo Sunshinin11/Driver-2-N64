@@ -191,15 +191,35 @@ PM(_INL, ['gte_ReadRotMatrix','gte_ReadColorMatrix','gte_ReadLightMatrix'],
 # ---- modelos: swap + helpers ----
 P('Game/C/models.c',
   "// [D] [T]\nvoid ProcessMDSLump(char *lump_file, int lump_size)\n{",
-  """static int d2_force_geo = 0;
+  """static int d2_force_geo = 0, d2_skip_col = 0;
+void d2_swap_model_hdr(void *mp)
+{
+	unsigned char* b = (unsigned char*)mp;
+	d2_swap16_array(b, 3);
+	d2_swap16_array(b + 8, 4);
+	d2_swap32_array(b + 16, 5);
+}
+
+void d2_swap_model_geo(void *mp, int size);
 void d2_swap_model(void *mp, int size)
+{
+	d2_swap_model_hdr(mp);
+	d2_swap_model_geo(mp, size);
+}
+
+// carro especial (spool.c): o cabecalho ja foi convertido; aqui so a geometria (instance_number do arquivo != -1)
+void d2_swap_model_geo_force(void *mp, int size)
+{
+	d2_force_geo = 1; d2_skip_col = 1;
+	d2_swap_model_geo(mp, size);
+	d2_force_geo = 0; d2_skip_col = 0;
+}
+
+void d2_swap_model_geo(void *mp, int size)
 {
 	MODEL* m = (MODEL*)mp;
 	unsigned char* b = (unsigned char*)mp;
 	int offs[5], k, end, o;
-	d2_swap16_array(b, 3);
-	d2_swap16_array(b + 8, 4);
-	d2_swap32_array(b + 16, 5);
 	if (m->instance_number != -1 && !d2_force_geo)
 		return;		// geometria vem do modelo pai
 
@@ -217,7 +237,7 @@ void d2_swap_model(void *mp, int size)
 		if (end > m->normals)
 			d2_swap16_array(b + m->normals, (end - m->normals) / 2);
 	}
-	if (m->collision_block)
+	if (m->collision_block && !d2_skip_col)
 	{
 		o = m->collision_block;
 		d2_swap32_array(b + o, 1);
@@ -253,6 +273,119 @@ void ProcessMDSLump(char *lump_file, int lump_size)
 P('Game/C/models.c',
   "\tmodelAmts = *(int *)lump_file;\n",
   "\tmodelAmts = (int)d2_rd32(lump_file);\n")
+# ---- carro especial (modelos spoolados do disco em spool.c): conversao little-endian -> big-endian ----
+P('Game/C/spool.c',
+  "		int cleanModelOfs = ((int *)specmallocptr)[0];",
+  "		d2_swap32_array(specmallocptr, 3);\n\t\tint cleanModelOfs = ((int *)specmallocptr)[0];")
+P('Game/C/spool.c',
+  "		model = (MODEL*)(specmallocptr + sizeof(int) * 3);\n\n\t\twhichCP = baseSpecCP;",
+  "		model = (MODEL*)(specmallocptr + sizeof(int) * 3);\n\t\td2_swap_model_hdr(model);\n\t\td2_swap_model_geo_force(model, ((int*)specmallocptr)[0]);\n\n\t\twhichCP = baseSpecCP;")
+P('Game/C/spool.c',
+  "		model = (MODEL *)(specmallocptr + lowOffset);\n\t\tbuildNewCarFromModel(SPECIAL_CAR_SLOT, 0, (char*)model, model);",
+  "		model = (MODEL *)(specmallocptr + lowOffset);\n\t\td2_swap_model_hdr(model);\n\t\td2_swap_model_geo_force(model, ((int*)specmallocptr)[2]);\n\t\tbuildNewCarFromModel(SPECIAL_CAR_SLOT, 0, (char*)model, model);")
+for _n, _t, _first in (('Clean', 'poly_block);', 'lastCleanBlock-1'), ('Dam', 'poly_block);', 'lengthDamBlock-1'), ('Low', 'poly_block);', 'lengthLowBlock - 1')):
+    P('Game/C/spool.c',
+      "\tpolyBlock = GET_RELOC_MODEL_DATA(int, gCar%sModelPtr[SPECIAL_CAR_SLOT], poly_block);\n" % _n,
+      "\tif (specBlocksToLoad == %s)\n\t\td2_swap_model_hdr(gCar%sModelPtr[SPECIAL_CAR_SLOT]);\n\tpolyBlock = GET_RELOC_MODEL_DATA(int, gCar%sModelPtr[SPECIAL_CAR_SLOT], poly_block);\n" % (_first, _n, _n))
+    P('Game/C/spool.c',
+      "\t\tmodelMemory = polyBlock;\n\n#if MODEL_RELOCATE_POINTERS\n\t\tgCar%sModelPtr[SPECIAL_CAR_SLOT]->vertices" % _n,
+      "\t\tmodelMemory = polyBlock;\n\t\td2_swap_model_geo_force(gCar%sModelPtr[SPECIAL_CAR_SLOT], (int)((char*)polyBlock - (char*)gCar%sModelPtr[SPECIAL_CAR_SLOT]));\n\n#if MODEL_RELOCATE_POINTERS\n\t\tgCar%sModelPtr[SPECIAL_CAR_SLOT]->vertices" % (_n, _n, _n))
+
+# ---- saves (config/progresso) no SRAM do cartucho: loadsave.c usava fopen no PC ----
+P('Game/C/loadsave.c',
+  "\tFILE* fp = fopen(filePath, \"rb\");\n\tif (fp)\n\t{\n\t\tfseek(fp, 0, SEEK_END);\n\t\tfileSize = ftell(fp);\n\t\tfseek(fp, 0, SEEK_SET);\n\n\t\tfread((char*)_other_buffer, 1, fileSize, fp);\n\n\t\tfclose(fp);\n\n\t\tif (fileSize <= CalcConfigDataSize())",
+  "\tfileSize = d2_save_read(\"config\", (char*)_other_buffer, 8000);\n\tif (fileSize > 0)\n\t{\n\t\tif (fileSize <= CalcConfigDataSize())")
+P('Game/C/loadsave.c',
+  "\tFILE* fp = fopen(filePath, \"rb\");\n\tif (fp)\n\t{\n\t\tfseek(fp, 0, SEEK_END);\n\t\tfileSize = ftell(fp);\n\t\tfseek(fp, 0, SEEK_SET);\n\n\t\tfread((char*)_other_buffer, 1, fileSize, fp);\n\n\t\tfclose(fp);\n\n\t\tif (fileSize <= CalcGameDataSize())",
+  "\tfileSize = d2_save_read(\"progress\", (char*)_other_buffer, 8000);\n\tif (fileSize > 0)\n\t{\n\t\tif (fileSize <= CalcGameDataSize())")
+P('Game/C/loadsave.c',
+  "\tFILE* fp = fopen(filePath, \"wb\");\n\tif (fp)\n\t{\n\t\tfwrite((char*)_other_buffer, 1, dataSize, fp);\n\t\tfclose(fp);\n\n\t\terror = 0;\n\t}",
+  "\tif (dataSize > 0 && d2_save_write(\"config\", (char*)_other_buffer, dataSize))\n\t\terror = 0;")
+P('Game/C/loadsave.c',
+  "\tFILE* fp = fopen(filePath, \"wb\");\n\tif (fp)\n\t{\n\t\tfwrite((char*)_other_buffer, 1, dataSize, fp);\n\t\tfclose(fp);\n\t}\n#else",
+  "\tif (dataSize > 0)\n\t\td2_save_write(\"progress\", (char*)_other_buffer, dataSize);\n#else")
+
+# ---- cutscenes/perseguicoes dentro do jogo: o bloco de replay (cabecalho, fluxos, cameras, pings) vem em little-endian ----
+P('Game/C/cutscene.c',
+  "// [D] [T]\nint LoadCutsceneToBuffer(int subindex)\n{",
+  """static void d2_swap_saved_player(SAVED_PLAYER_POS* p)
+{
+	p->type = d2_bs16(p->type); p->direction = d2_bs16(p->direction);
+	p->vx = d2_bs32(p->vx); p->vy = d2_bs32(p->vy); p->vz = d2_bs32(p->vz);
+	p->felony = d2_bs32(p->felony); p->totaldamage = d2_bs16(p->totaldamage);
+	d2_swap16_array(p->damage, 6);
+}
+
+static void d2_swap_saved_car(SAVED_CAR_POS* c)
+{
+	c->totaldamage = d2_bs16(c->totaldamage);
+	d2_swap16_array(c->damage, 6);
+	c->direction = d2_bs16(c->direction);
+	c->vx = d2_bs32(c->vx); c->vy = d2_bs32(c->vy); c->vz = d2_bs32(c->vz);
+}
+
+// bloco de cutscene = REPLAY_SAVE_HEADER + fluxos (REPLAY_STREAM_HEADER + dados em bytes) + cameras + pings
+static void d2_swap_cutscene_blob(char* blob, int size)
+{
+	REPLAY_SAVE_HEADER* rh = (REPLAY_SAVE_HEADER*)blob;
+	char* pt;
+	int i;
+
+	if (d2_rd32(&rh->magic) != DRIVER2_REPLAY_MAGIC && d2_rd32(&rh->magic) != REDRIVER2_CHASE_MAGIC)
+		return;		// ja convertido ou nao e um bloco de replay
+
+	rh->magic = d2_bs32(rh->magic);
+	d2_swap_saved_player(&rh->SavedData.PlayerPos);
+	for (i = 0; i < 6; i++)
+		d2_swap_saved_car(&rh->SavedData.CarPos[i]);
+	d2_swap32_array(rh->wantedCar, 2);
+	rh->MissionNumber = d2_bs32(rh->MissionNumber);
+	rh->HaveStoredData = d2_bs32(rh->HaveStoredData);
+
+	pt = (char*)(rh + 1);
+	for (i = 0; i < rh->NumReplayStreams; i++)
+	{
+		REPLAY_STREAM_HEADER* sh = (REPLAY_STREAM_HEADER*)pt;
+		int dataSize;
+		sh->SourceType.flags = d2_bs16(sh->SourceType.flags);
+		sh->SourceType.rotation = d2_bs16(sh->SourceType.rotation);
+		d2_swap32_array(&sh->SourceType.position, 3);
+		sh->SourceType.totaldamage = d2_bs32(sh->SourceType.totaldamage);
+		d2_swap32_array(sh->SourceType.damage, 6);
+		sh->Size = d2_bs32(sh->Size);
+		sh->Length = d2_bs32(sh->Length);
+		dataSize = (sh->Size + sizeof(PADRECORD)) & -4;
+		pt += sizeof(REPLAY_STREAM_HEADER) + dataSize;
+	}
+
+	if (rh->magic != REDRIVER2_CHASE_MAGIC)
+	{
+		PLAYBACKCAMERA* cam = (PLAYBACKCAMERA*)pt;
+		for (i = 0; i < MAX_REPLAY_CAMERAS; i++, cam++)
+		{
+			d2_swap32_array(&cam->position, 3);
+			d2_swap16_array(&cam->angle, 4);
+			cam->FrameCnt = d2_bs32(cam->FrameCnt);
+			cam->CameraPosvy = d2_bs16(cam->CameraPosvy); cam->scr_z = d2_bs16(cam->scr_z);
+			cam->gCameraMaxDistance = d2_bs16(cam->gCameraMaxDistance); cam->gCameraAngle = d2_bs16(cam->gCameraAngle);
+		}
+		pt = (char*)cam;
+	}
+
+	{
+		PING_PACKET* pp = (PING_PACKET*)pt;
+		for (i = 0; i < MAX_REPLAY_PINGS; i++)
+			pp[i].frame = d2_bs16(pp[i].frame);
+	}
+}
+
+// [D] [T]
+int LoadCutsceneToBuffer(int subindex)
+{""")
+P('Game/C/cutscene.c',
+  "\t\t\tLoadfileSeg(filename, CutsceneBuffer.currentPointer, offset, size);\n",
+  "\t\t\tLoadfileSeg(filename, CutsceneBuffer.currentPointer, offset, size);\n\t\t\td2_swap_cutscene_blob(CutsceneBuffer.currentPointer, size);\n")
+
 P('Game/C/main.c',
   '#include "draw.h"\n',
   '#include "draw.h"\n#include "d2_t3d_world.h"\n')
@@ -268,6 +401,12 @@ P('Game/C/models.c',
 P('Game/C/main.c',
   "\t\t\tcar_models_lump = (char*)ptr;\n",
   "\t\t\tcar_models_lump = (char*)ptr;\n\t\t\td2_swap_car_models((char*)ptr, seg_size);\n")
+
+# lógica presa ao quadro desenhado: o ramo "nao PSX" fazia 1 StepGame por quadro, entao o jogo andava em camera lenta quando o quadro
+# passava de 2 vblanks. Usa o mecanismo do PS1 (varios passos por quadro desenhado, teto de 3) com o relogio de vblank.
+P('Game/C/main.c',
+  "#else\n\tcnt = FastForward ? 7 : 1;\n\twhile (--cnt >= 0)\n\t\tStepGame();\n#endif",
+  "#else\n\t{\n\t\tstatic int lastStepVbl = -1;\n\t\tconst int nowVbl = VSync(-1);\n\t\tcnt = FastForward ? 7 : 1;\n#ifndef D2_NO_MULTISTEP\n\t\tif (!FastForward)\n\t\t{\n\t\t\tif (lastStepVbl < 0) lastStepVbl = nowVbl - 2;\n\t\t\tint owed = (nowVbl - lastStepVbl) >> 1;\n\t\t\tif (owed < 1) owed = 1;\n\t\t\tif (owed > 3 || CameraCnt < 100) { owed = 1; lastStepVbl = nowVbl; }\n\t\t\telse lastStepVbl += owed * 2;\n\t\t\tcnt = owed;\n\t\t}\n#endif\n\t\twhile (--cnt >= 0)\n\t\t{\n\t\t\tif (cnt != 0)\n\t\t\t\tInitCamera(&MainPlayer);\n\t\t\tStepGame();\n\t\t\tif (cnt != 0)\n\t\t\t\tClearCurrentDrawBuffers();\n\t\t}\n\t\t{ static int logN = 0; if ((++logN % 120) == 0) fprintf(stderr, \"[passos] CameraCnt=%d vbl=%d\\n\", CameraCnt, nowVbl); }\n\t}\n#endif")
 # captura de movimento (Tanner/pedestres): lump inteiro e int16 little-endian
 P('Game/C/motion_c.c',
   "\t\tmemcpy((u_char*)MotionCaptureData[ThisMotion], (u_char*)lump_ptr, size);\n",
@@ -568,8 +707,27 @@ P('Game/C/tile.c', "if (Z <= DRAW_LOD_DIST_HIGH)\n\t\t{\n\t\t\tif (Low2HighDetai
 P('Game/C/tile.c', "\t\t\tif (Z < 2000)\n\t\t\t\tTileNxN(pModel, 4, 75);", "\t\t\tif (Z < 2000 && player[0].playerType == PLAYER_TYPE_PEDESTRIAN)\n\t\t\t\tTileNxN(pModel, 4, 75);\n\t\t\telse if (Z < 2000)\n\t\t\t\tTileNxN(pModel, 2, 35);")
 
 P('Game/C/cars.c', "#else\n#define CAR_LOD_SWITCH_DISTANCE 5500", "#else\n#define CAR_LOD_SWITCH_DISTANCE 3500")
+# ---- carroceria dos carros pelo RSP/Tiny3D (port/n64/d2_t3d_cars.inc): de dia e sem dano de textura; o resto segue o caminho original ----
+P('Game/C/cars.c',
+  "#else\n\t\tplotCarPolyGT3(car->numGT3, car->pGT3, car->vlist, car->nlist, &_pg, palette);\n#endif",
+  "#else\n\t\t{\n\t\t\tCAR_POLY* restPolys = car->pGT3; int restNum = car->numGT3;\n\t\t\tif (!d2_t3d_car_body(car->numGT3, car->pGT3, car->vlist, car->nlist, _pg.pciv_clut, _pg.damageLevel, palette, &_pg.primptr, _pg.ot, &restPolys, &restNum))\n\t\t\t\tplotCarPolyGT3(car->numGT3, car->pGT3, car->vlist, car->nlist, &_pg, palette);\n\t\t\telse if (restNum > 0)\n\t\t\t\tplotCarPolyGT3(restNum, restPolys, car->vlist, car->nlist, &_pg, palette);\n\t\t}\n#endif")
+P('Game/C/cars.c',
+  "void plotNewCarModel(CAR_MODEL* car, int palette)\n{",
+  "extern \"C\" int d2_t3d_car_body(int, CAR_POLY*, SVECTOR*, SVECTOR*, unsigned short*, unsigned char*, int, unsigned char**, void*, CAR_POLY**, int*);\nextern \"C\" void d2_t3d_car_models_changed(void);\nvoid plotNewCarModel(CAR_MODEL* car, int palette)\n{")
+P('Game/C/cars.c',
+  "\tpolySrcModel = (MODEL*)polySrc;\n",
+  "\tpolySrcModel = (MODEL*)polySrc;\n\td2_t3d_car_models_changed();\t// N64: a lista de poligonos deste modelo vai ser refeita\n")
 P('Game/C/tile.c', '#include "mission.h"\n#include "draw.h"', '#include "mission.h"\n#include "players.h"\n#include "draw.h"')
 # ---- Fidelidade PS1 no N64: remove expansoes de limites/efeitos/conteudo feitas para PC, sem ativar caminhos de plataforma PSX ----
+# LEVPACK: cabecalho do nivel lido do pacote comprimido
+P('Game/C/system.c', "CdlFILE currentfileinfo;\n",
+  "extern \"C\" int d2_lev_header(const char *path, void *dst, int off, int n);\nCdlFILE currentfileinfo;\n")
+P('Game/C/system.c', '\tFILE* levFp = fopen(filename, "rb");\n\n\tif (levFp)\n\t{\n\t\t// store level name as it\'s required by loadsectorsPC\n',
+  '\tif (d2_lev_header(filename, citylumps[GameLevel], 8, sizeof(citylumps[GameLevel])))\n\t{\n\t\tstrcpy(g_CurrentLevelFileName, filename);\n\t\tcitystart[GameLevel] = 0;\n\t\td2_swap32_array(citylumps[GameLevel], sizeof(citylumps[GameLevel]) / 4);\n\t\treturn;\n\t}\n\n\tFILE* levFp = fopen(filename, "rb");\n\n\tif (levFp)\n\t{\n\t\t// store level name as it\'s required by loadsectorsPC\n')
+P('Game/C/system.c', "extern \"C\" int d2_lev_header(const char *path, void *dst, int off, int n);\n",
+  "extern int d2_read_sectors(char *dest, int sector, int nsectors);\nextern \"C\" int d2_lev_header(const char *path, void *dst, int off, int n);\nextern \"C\" int d2_pack_load(const char *path, char *dst, int offset, int size);\nextern \"C\" int d2_pack_exists(const char *path);\n")
+P('Game/C/system.c', '\tstrcpy(namebuffer, g_CurrentLevelFileName);\n\tFS_FixPathSlashes(namebuffer);\n\n\tFILE* fp = fopen(namebuffer, "rb");\n',
+  '\tif (d2_read_sectors(addr, sector, nsectors) > 0)\n\t{\n\t\tShowLoading();\n\t\treturn 1;\n\t}\n\n\tstrcpy(namebuffer, g_CurrentLevelFileName);\n\tFS_FixPathSlashes(namebuffer);\n\n\tFILE* fp = fopen(namebuffer, "rb");\n')
 R('Game/dr2limits.h', r'#ifndef PSX', '#if !defined(PSX) && !defined(D2_PSX_FIDELITY)')
 P('Game/C/camera.h', "#ifdef PSX\n#define VIEW_DRAW_DISTANCE 16000", "#if defined(PSX) || defined(D2_PSX_FIDELITY)\n#define VIEW_DRAW_DISTANCE 16000")
 P('Game/C/draw.c', "#ifdef PSX\n#define MAX_TREE_SHADOW_DISTANCE 7000", "#if defined(PSX) || defined(D2_PSX_FIDELITY)\n#define MAX_TREE_SHADOW_DISTANCE 7000")
@@ -863,21 +1021,6 @@ P("Game/C/tile.c",
   """	plotContext.flags = D2_PLOT_GROUND;
 	plotContext.polySizes = PolySizes;""")
 P("Game/C/draw.c",
-  """						if (ABS(_dx) > 13000 || ABS(_dz) > 13000) continue;   // N64: predios/arvores/postes mais perto (estrada e carros seguem em VIEW_DRAW_DISTANCE); evita wrap-around de 16 bits no FrustrumCheck16""",
-  """                        int limit = 13000;
-#ifdef D2_TEST_BUILDING_RANGE
-                        const int modelIndex = (ppco->value >> 6) | (ppco->pos.vy & 1) << 10;
-                        const bool staticBuilding =
-                            !(model->shape_flags & (SHAPE_FLAG_SPRITE | SHAPE_FLAG_TILE | SHAPE_FLAG_WATER)) &&
-                            !(model->flags2 & (MODEL_FLAG_PATH | MODEL_FLAG_GRASS | MODEL_FLAG_ANIMOBJ));
-                        if (staticBuilding && pLodModels[modelIndex] && pLodModels[modelIndex] != model) {
-                            const int radius = model->bounding_sphere > 0 ? model->bounding_sphere : 0;
-                            limit += radius;
-                            if (limit > VIEW_DRAW_DISTANCE) limit = VIEW_DRAW_DISTANCE;
-                        }
-#endif
-                        if (ABS(_dx) > limit || ABS(_dz) > limit) continue;""")
-P("Game/C/draw.c",
   """		model = Z > DRAW_LOD_DIST_LOW ? pLodModels[cop->type] : modelpointers[cop->type];""",
   """        bool useLod = Z > DRAW_LOD_DIST_LOW;
 #ifdef D2_TEST_BUILDING_RANGE
@@ -902,6 +1045,7 @@ P("Game/C/draw.c",
     return; // Rendering entry point only. Simulation and collisions still run.
 #endif
 	num_cars_to_draw = 0;""")
+P("Game/C/draw.c", 'int num_cars_drawn = 0;', '#ifdef D2_DIAG_DRAW_CPU\nextern "C" double d2_now_ms(void);\nstruct DrawCpuWindow {\n    double total;\n    unsigned samples;\n};\nstruct DrawCpuSample {\n    DrawCpuWindow &window;\n    const char *name;\n    double start;\n    DrawCpuSample(DrawCpuWindow &w, const char *n) : window(w), name(n), start(d2_now_ms()) {}\n    ~DrawCpuSample() {\n        window.total += d2_now_ms() - start;\n        if (++window.samples == 64) {\n            printInfo("[draw-cpu] %s mean_us=%u samples=%u\\n",\n                      name, (unsigned)(window.total * 1000 / window.samples), window.samples);\n            window.total = 0;\n            window.samples = 0;\n        }\n    }\n};\n#endif\nint num_cars_drawn = 0;')
 P("Game/C/draw.c", 'void DrawAllTheCars(int view)\n{', 'void DrawAllTheCars(int view)\n{\n#ifdef D2_DIAG_DRAW_CPU\n    static DrawCpuWindow cpuWindow;\n    DrawCpuSample cpuSample(cpuWindow, "cars");\n#endif')
 P("Game/C/draw.c", 'int DrawAllBuildings(CELL_OBJECT** objects, int num_buildings)\n{', 'int DrawAllBuildings(CELL_OBJECT** objects, int num_buildings)\n{\n#ifdef D2_DIAG_DRAW_CPU\n    static DrawCpuWindow cpuWindow;\n    DrawCpuSample cpuSample(cpuWindow, "buildings");\n#endif')
 import patch_vram_native
@@ -1072,24 +1216,17 @@ PATCHES[:] = [x for x in PATCHES if not (x[0].endswith('LIBGPU.C') and "initiali
 PATCHES[:] = [x for x in PATCHES if x[0] not in patch_gte_removal.GONE]
 REGEX[:] = [x for x in REGEX if x[0] not in patch_gte_removal.GONE]
 
-# --- Tiny3D: predios/tiles distantes entram na fila do mundo T3D (perto continua subdividido) ---
-P("Game/C/draw.c", '#include "event.h"', '#include "event.h"\n#include "d2_t3d_world.h"\n#include "d2_xf.h"\n#include "d2_ticks.h"')
-P("Game/C/draw.c",
-  "\t\telse\n\t\t\tPlotBuildingModel(model, cop->yang, &plotContext);",
-  "\t\telse\n\t\t{\n#ifdef D2_T3D_QUEUE\n\t\t\tint t3dIdx = cop->type;\n\t\t\tif (Z > DRAW_LOD_DIST_LOW + DRAW_LOD_DIST_LOW / 4 && Low2LowerDetailTable && Low2LowerDetailTable[t3dIdx] != 0xFFFF)\n\t\t\t\tt3dIdx = Low2LowerDetailTable[t3dIdx];\n\t\t\tif (d2_t3d_has_model(t3dIdx))\n\t\t\t\td2_t3d_queue_building(t3dIdx, cop->yang, Z, d2xf.tr[0], d2xf.tr[1], d2xf.tr[2]);\n\t\t\telse\n#endif\n\t\t\tPlotBuildingModel(model, cop->yang, &plotContext);\n\t\t}")
-P("Game/C/tile.c", '#include "d2_ground.h"\n#include "psx/gtereg.h"', '#include "d2_ground.h"\n#include "d2_xf.h"\n#include "d2_ticks.h"\n#include "psx/gtereg.h"')
-P("Game/C/tile.c",
-  "#ifdef DYNAMIC_LIGHTING\n\t\t\t(gEnableDlights ? Tile1x1Lit : Tile1x1)(pModel);",
-  "#ifdef D2_T3D_QUEUE\n\t\t\tif (d2_t3d_has_model(Z > DRAW_LOD_DIST_LOW ? (Low2LowerDetailTable[model_number] != 0xFFFF ? Low2LowerDetailTable[model_number] : model_number) : model_number))\n\t\t\t{\n\t\t\t\tint t3dIdx = Z > DRAW_LOD_DIST_LOW ? (Low2LowerDetailTable[model_number] != 0xFFFF ? Low2LowerDetailTable[model_number] : model_number) : model_number;\n\t\t\t\td2_t3d_set_tile_tint(plotContext.colour);\n\t\t\t\td2_t3d_queue_tile(t3dIdx, yang, Z, d2xf.tr[0], d2xf.tr[1], d2xf.tr[2]);\n\t\t\t\tcontinue;\n\t\t\t}\n#endif\n#ifdef DYNAMIC_LIGHTING\n\t\t\t(gEnableDlights ? Tile1x1Lit : Tile1x1)(pModel);")
-
-
-# --- custo separado: carros (ticks CP0 acumulados em DrawAllTheCars e predios/tiles), lido pela telemetria de quadros ---
-
-# --- LOD dos predios no caminho T3D: troca de modelo mais longe (menos pop-in; o T3D e barato por poligono) ---
+# --- telemetria: ticks por regiao (carros/predios/tiles), lidos em psyx_rdp.cpp ([custo]) ---
+P("Game/C/draw.c", '#include "event.h"', '#include "event.h"\n#include "d2_ticks.h"')
 P("Game/C/draw.c", '    DrawCpuSample cpuSample(cpuWindow, "cars");\n#endif', '    DrawCpuSample cpuSample(cpuWindow, "cars");\n#endif\n\tD2TickScope d2TkCars(&d2_tk_cars);')
 P("Game/C/draw.c", '    DrawCpuSample cpuSample(cpuWindow, "buildings");\n#endif', '    DrawCpuSample cpuSample(cpuWindow, "buildings");\n#endif\n\tD2TickScope d2TkBlds(&d2_tk_blds);')
-# --- custo separado: tiles ---
+P("Game/C/tile.c", '#include "d2_ground.h"\n#include "psx/gtereg.h"', '#include "d2_ground.h"\n#include "d2_ticks.h"\n#include "psx/gtereg.h"')
 P("Game/C/tile.c", "void DrawTILES(PACKED_CELL_OBJECT** tiles, int tile_amount)\n{", "void DrawTILES(PACKED_CELL_OBJECT** tiles, int tile_amount)\n{\n\tD2TickScope d2TkT(&d2_tk_tiles);")
+
+# --- chao: quad nao subdividido quando a perspectiva correta do RDP ja cobre (cantos alem do plano proximo, UV <= 63) ---
+P("Game/C/tile.c", "\tplotContext.ot += ofse;\n\n\tmakeMesh((MVERTEX(*)[5][5])subdivVerts, m, n);",
+  "\tplotContext.ot += ofse;\n\n\tif (n >= 2 && (plotContext.flags & D2_PLOT_GROUND) && d2_ground_single_ok((MVERTEX(*)[5][5])subdivVerts))\n\t\tn = 1;\n\n\tmakeMesh((MVERTEX(*)[5][5])subdivVerts, m, n);")
+P("Game/C/tile.c", '#include "d2_ground.h"\n#include "d2_ticks.h"', '#include "d2_ground.h"\nint d2_ground_single_ok(MVERTEX (*VSP)[5][5]);\n#include "d2_ticks.h"')
 
 def prune():
     import shutil
@@ -1100,6 +1237,27 @@ def prune():
                 for f in fs:
                     if f.lower().endswith(('.c', '.cpp')): os.remove(os.path.join(r, f))
         elif os.path.exists(fp): os.remove(fp)
+
+# ---- teste: -DD2_TEST_MISSION=N entra direto na missao N (modo Take a Drive), sem menus ----
+P('Game/C/main.c',
+  "\tSetState(STATE_INITFRONTEND, (void*)2);\n\n\tLoadCurrentProfile(1);\n",
+  "\tSetState(STATE_INITFRONTEND, (void*)2);\n\n\tLoadCurrentProfile(1);\n#ifdef D2_TEST_MISSION\n#ifndef D2_TEST_TYPE\n#define D2_TEST_TYPE GAME_TAKEADRIVE\n#endif\n\tSetFEDrawMode();\n\tgInFrontend = 0;\n\tAttractMode = 0;\n\tgCurrentMissionNumber = D2_TEST_MISSION;\n\tGameType = D2_TEST_TYPE;\n\tSetState(STATE_GAMELAUNCH);\n#endif\n")
+
+# ---- DATA/GFX/REPLAYS dentro do LEVPACK: Loadfile / LoadfileSeg / FileExists consultam o pacote primeiro ----
+P('Game/C/system.c',
+  "int Loadfile(char* name, char* addr)\n{\n\tint nread;\n\tunsigned char res[8];\n\tchar namebuffer[64];\n\n#if USE_PC_FILESYSTEM\n\tint fileSize;\n\n\tsprintf(namebuffer, \"%s%s\", gDataFolder, name);\n\tFS_FixPathSlashes(namebuffer);\n",
+  "int Loadfile(char* name, char* addr)\n{\n\tint nread;\n\tunsigned char res[8];\n\tchar namebuffer[64];\n\n#if USE_PC_FILESYSTEM\n\tint fileSize;\n\n\tsprintf(namebuffer, \"%s%s\", gDataFolder, name);\n\tFS_FixPathSlashes(namebuffer);\n\t{ int d2r = d2_pack_load(namebuffer, addr, 0, -1); if (d2r >= 0) return d2r; }\n")
+P('Game/C/system.c',
+  "\tsprintf(namebuffer, \"%s%s\", gDataFolder, filename);\n\tFS_FixPathSlashes(namebuffer);\n\n\tFILE* fp = fopen(namebuffer, \"rb\");\n\tif (fp)\n\t{\n\t\tfclose(fp);\n\t\treturn 1;",
+  "\tsprintf(namebuffer, \"%s%s\", gDataFolder, filename);\n\tFS_FixPathSlashes(namebuffer);\n\tif (d2_pack_exists(namebuffer)) return 1;\n\n\tFILE* fp = fopen(namebuffer, \"rb\");\n\tif (fp)\n\t{\n\t\tfclose(fp);\n\t\treturn 1;")
+P('Game/C/system.c',
+  "\tsprintf(namebuffer, \"%s%s\", gDataFolder, name);\n\tFS_FixPathSlashes(namebuffer);\n\n\tFILE* fptr = fopen(namebuffer, \"rb\");\n\tif (fptr)\n\t{\n\t\tfseek(fptr, 0, SEEK_END);\n\t\tfileSize = ftell(fptr);\n\n\t\tif (loadsize == -1",
+  "\tsprintf(namebuffer, \"%s%s\", gDataFolder, name);\n\tFS_FixPathSlashes(namebuffer);\n\t{ int d2r = d2_pack_load(namebuffer, addr, offset, loadsize); if (d2r >= 0) return d2r; }\n\n\tFILE* fptr = fopen(namebuffer, \"rb\");\n\tif (fptr)\n\t{\n\t\tfseek(fptr, 0, SEEK_END);\n\t\tfileSize = ftell(fptr);\n\n\t\tif (loadsize == -1")
+
+# ---- teste: -DD2_TEST_FMV toca cada video por alguns segundos e segue (sem menus) ----
+P('Game/C/main.c',
+  "#ifdef D2_TEST_MISSION\n#ifndef D2_TEST_TYPE",
+  "#ifdef D2_TEST_FMV\n\t{\n\t\tstatic const unsigned char d2_ids[] = { 0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20,21,22,23,24,25,26,27,28,96,97,98,99 };\n\t\tint d2i;\n\t\tfor (d2i = 0; d2i < (int)sizeof(d2_ids); d2i++)\n\t\t{\n\t\t\tfprintf(stderr, \"[fmvtest] inicio id=%d\\n\", d2_ids[d2i]);\n\t\t\tPlayFMV(d2_ids[d2i]);\n\t\t\tfprintf(stderr, \"[fmvtest] fim id=%d\\n\", d2_ids[d2i]);\n\t\t}\n\t}\n#endif\n#ifdef D2_TEST_MISSION\n#ifndef D2_TEST_TYPE")
 
 def main():
     ok = skipped = missing = 0

@@ -78,6 +78,65 @@ void d2_read_buttons(uint16_t buttons[2])
     }
 }
 
+
+// ---- Saves (configuracao e progresso): SRAM do cartucho (256 kbit). Duas fichas de 8 KB: 0 = config, 1 = progresso. ----
+// Cada ficha: { magic, tamanho, soma } + dados. A leitura confere magic e soma; ficha invalida = "sem dados salvos".
+#define D2_SRAM_BASE   0x08000000u
+#define D2_SAVE_SLOT   8192
+#define D2_SAVE_MAGIC  0x44325356u   /* 'D2SV' */
+typedef struct { uint32_t magic, size, sum, pad; } d2_save_hdr_t;
+static uint8_t d2_save_buf[D2_SAVE_SLOT] __attribute__((aligned(64)));
+static int d2_save_slot_of(const char *name) { return name[0] == 'c' ? 0 : 1; }
+static uint32_t d2_save_sum(const uint8_t *p, uint32_t n) { uint32_t a = 0x811c9dc5u; while (n--) { a ^= *p++; a *= 16777619u; } return a; }
+static void d2_sram_setup(void)
+{
+    static int done;
+    if (done) return;
+    done = 1;
+    *(volatile uint32_t *)0xA4600024 = 0x05;   /* PI_BSD_DOM2_LAT */
+    *(volatile uint32_t *)0xA4600028 = 0x0C;   /* PWD */
+    *(volatile uint32_t *)0xA460002C = 0x0D;   /* PGS */
+    *(volatile uint32_t *)0xA4600030 = 0x02;   /* RLS */
+}
+static void d2_sram_read(uint32_t off, void *dst, uint32_t n)
+{
+    d2_sram_setup();
+    data_cache_hit_writeback_invalidate(dst, n);
+    dma_read_raw_async(dst, D2_SRAM_BASE + off, n);
+    dma_wait();
+    data_cache_hit_invalidate(dst, n);
+}
+static void d2_sram_write(uint32_t off, const void *src, uint32_t n)
+{
+    d2_sram_setup();
+    data_cache_hit_writeback((void *)src, n);
+    dma_write_raw_async(src, D2_SRAM_BASE + off, n);
+    dma_wait();
+}
+/* devolve o tamanho lido (>0) ou 0 se nao ha dados validos */
+int d2_save_read(const char *name, char *dst, int max)
+{
+    const uint32_t off = (uint32_t)d2_save_slot_of(name) * D2_SAVE_SLOT;
+    d2_sram_read(off, d2_save_buf, D2_SAVE_SLOT);
+    const d2_save_hdr_t *h = (const d2_save_hdr_t *)d2_save_buf;
+    if (h->magic != D2_SAVE_MAGIC || h->size == 0 || h->size > D2_SAVE_SLOT - sizeof(*h) || (int)h->size > max) return 0;
+    if (d2_save_sum(d2_save_buf + sizeof(*h), h->size) != h->sum) return 0;
+    memcpy(dst, d2_save_buf + sizeof(*h), h->size);
+    return (int)h->size;
+}
+/* 1 = gravou */
+int d2_save_write(const char *name, const char *src, int size)
+{
+    if (size <= 0 || size > (int)(D2_SAVE_SLOT - sizeof(d2_save_hdr_t))) return 0;
+    d2_save_hdr_t *h = (d2_save_hdr_t *)d2_save_buf;
+    memset(d2_save_buf, 0, D2_SAVE_SLOT);
+    memcpy(d2_save_buf + sizeof(*h), src, (size_t)size);
+    h->magic = D2_SAVE_MAGIC; h->size = (uint32_t)size; h->sum = d2_save_sum(d2_save_buf + sizeof(*h), (uint32_t)size);
+    d2_sram_write((uint32_t)d2_save_slot_of(name) * D2_SAVE_SLOT, d2_save_buf, D2_SAVE_SLOT);
+    d2_sram_read((uint32_t)d2_save_slot_of(name) * D2_SAVE_SLOT, d2_save_buf, sizeof(*h));   /* confere que gravou */
+    return h->magic == D2_SAVE_MAGIC;
+}
+
 // ---- Arquivos do jogo: o jogo faz fopen("DRIVER2\\DATA\\...") como no PC; aqui viram "rom:/DRIVER2/DATA/..." (DragonFS no cartucho). ----
 #include <stdio.h>
 #include <string.h>

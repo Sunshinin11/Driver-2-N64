@@ -38,8 +38,9 @@ def convert_xa(disc, sector_size, files, output):
                 raw = Path(tmp) / f"{name}.str"
                 wav = raw.with_suffix(".wav")
                 raw.write_bytes(data)
-                subprocess.run(["ffmpeg", "-nostdin", "-loglevel", "error", "-xerror",
+                subprocess.run(["ffmpeg", "-nostdin", "-loglevel", "error",
                                 "-f", "psxstr", "-i", str(raw), "-map", "0:a:0",
-                                "-ac", "1", "-ar", "22050", str(wav)], check=True)
-                subprocess.run([audioconv, "--wav-compress", "1", "-o", str(output), str(wav)],
+                                "-af", "aresample=out_sample_rate=22050:out_chlayout=mono:out_sample_fmt=flt:rematrix_maxval=1,alimiter=limit=0.72:level=disabled",
+                                "-c:a", "pcm_s16le", "-map_metadata", "-1", "-fflags", "+bitexact", "-flags:a", "+bitexact", str(wav)], check=True)
+                subprocess.run([audioconv, "--wav-compress", os.environ.get("D2_XA_COMP", "ulc,quality=50"), "-o", str(output), str(wav)],
                                check=True)

@@ -44,9 +44,9 @@ def convert_fmv(disc, sector_size, files, output, selection):
                       "-f", "psxstr", "-i", str(raw)]
             encoded = Path(tmp) / f"{stem}.m1v"
             subprocess.run(ffmpeg + [
-                "-map", "0:v:0", "-vf", "scale=192:144,setsar=1,fps=24",
+                "-map", "0:v:0", "-vf", "setpts=PTS/2,scale=192:144,setsar=1,fps=24",
                 "-c:v", "mpeg1video", "-pix_fmt", "yuv420p", "-bf", "0",
-                "-b:v", "100k", "-f", "mpeg1video", str(encoded)], check=True)
+                "-b:v", os.environ.get("D2_FMV_VBR", "64k"), "-f", "mpeg1video", str(encoded)], check=True)
 
             probe = subprocess.run([
                 "ffprobe", "-v", "error", "-f", "psxstr", "-select_streams", "a:0",
@@ -55,8 +55,8 @@ def convert_fmv(disc, sector_size, files, output, selection):
             if probe.stdout.strip():
                 audio = Path(tmp) / f"{stem}.wav"
                 subprocess.run(ffmpeg + ["-map", "0:a:0", "-ac", "1", "-ar",
-                                         "16000", str(audio)], check=True)
-                subprocess.run([audioconv, "--wav-compress", "1", "-o", str(output), str(audio)],
+                                         os.environ.get("D2_FMV_AR", "16000"), str(audio)], check=True)
+                subprocess.run([audioconv, "--wav-compress", os.environ.get("D2_FMV_ACOMP", "ulc,quality=45"), "-o", str(output), str(audio)],
                                check=True)
             video.write_bytes(encoded.read_bytes())
             found.add(number)

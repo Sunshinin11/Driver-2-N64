@@ -359,7 +359,7 @@ static void d2_spu_shape(D2SpuVoice *v, int ch)
 int PsyX_SPUAL_InitSound()
 {
     if (s_spuInited) return 1;
-    audio_init(32000, 4); mixer_init(D2_SPU_VOICES + 1);
+    audio_init(32000, 4); mixer_init(D2_SPU_VOICES + 1); wav64_init_compression(2);
     for (int i = 0; i < D2_SPU_VOICES; i++)
     {
         mixer_ch_set_limits(i, 16, D2_SPU_MAX_FREQ, 0);

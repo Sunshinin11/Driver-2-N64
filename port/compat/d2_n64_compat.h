@@ -10,6 +10,8 @@ extern "C" {
 #endif
 FILE *d2_fopen(const char *path, const char *mode); /* port/n64/sys_n64.c: redireciona para rom:/ (DragonFS) */
 void d2_audio_pump(void);
+int d2_save_read(const char *name, char *dst, int max);
+int d2_save_write(const char *name, const char *src, int size);
 void d2_vadpcm_set_current_lump(int lump);
 void d2_vadpcm_reset(void);
 int d2_LoadColor(void *rect, void *data);   /* upload de paleta / imagem de 16 bits: a VRAM guarda RGBA5551 do RDP */
