@@ -46,13 +46,42 @@ extern FILE *d2_fopen(const char *path, const char *mode);
 #include <stdlib.h>
 #include <debug.h>
 #include <stdint.h>
+#ifndef D2_LPK_CACHE_BLOCKS
+#define D2_LPK_CACHE_BLOCKS 1
+#endif
+#ifndef D2_LPK_PROFILE
+#define D2_LPK_PROFILE 0
+#endif
+#if D2_LPK_CACHE_BLOCKS < 1 || D2_LPK_CACHE_BLOCKS > 4
+#error "D2_LPK_CACHE_BLOCKS deve ser 1, 2, 3 ou 4"
+#endif
+#if D2_LPK_PROFILE
+#include <libdragon.h>
+#define LPK_STAT(expr) do { expr; } while (0)
+#else
+#define LPK_STAT(expr) do {} while (0)
+#endif
 namespace {
 struct LpkFile { char name[48]; uint32_t size, nsec, mapIdx; };
 enum { LPK_BLOCK_BYTES = 8 * 2048, LPK_MAX_MAP = 5400, LPK_MAX_BLOCKS = 4200, LPK_MAX_FILES = 128, LPK_MARGIN = 256 };
 // tudo em .bss (~40 KB): o heap do N64 esta no limite, nada e alocado em tempo de execucao
-unsigned char lpkSlot[LPK_BLOCK_BYTES + LPK_MARGIN] __attribute__((aligned(16)));
+// Cache fixo: nenhuma alocacao no heap; o padrao preserva um bloco.
+struct LpkCacheSlot {
+    unsigned char data[LPK_BLOCK_BYTES + LPK_MARGIN] __attribute__((aligned(16)));
+    uint32_t block, lastUse;
+    bool valid;
+};
+LpkCacheSlot lpkCache[D2_LPK_CACHE_BLOCKS];
+#if D2_LPK_CACHE_BLOCKS > 1
+uint32_t lpkCacheClock;
+#endif
+#if D2_LPK_PROFILE
+struct LpkStats {
+    uint32_t hits, misses, evictions, decoded, raw, errors;
+    uint32_t ioTicks, decodeTicks, inputBytes, outputBytes;
+} lpkStats;
+#endif
 uint16_t lpkMapBuf[LPK_MAX_MAP]; uint32_t lpkBlocks[LPK_MAX_BLOCKS + 1]; LpkFile lpkFiles[LPK_MAX_FILES];
-int lpkSlotBlock = -1;
 FILE *lpkFp; bool lpkTried, lpkOk;
 uint32_t lpkNFiles, lpkNBlocks, lpkNPool, lpkDataOff, lpkMapOff; const LpkFile *lpkMapFile;
 
@@ -119,26 +148,68 @@ const LpkFile *lpk_find(const char *path)
     }
     return NULL;
 }
+static bool lpk_read_payload(uint32_t offset, void *dst, uint32_t bytes)
+{
+#if D2_LPK_PROFILE
+    const uint32_t t0 = (uint32_t)get_ticks();
+#endif
+    const bool ok = fseek(lpkFp, offset, SEEK_SET) == 0 && fread(dst, 1, bytes, lpkFp) == bytes;
+    LPK_STAT(lpkStats.ioTicks += (uint32_t)get_ticks() - t0);
+    LPK_STAT(if (ok) lpkStats.inputBytes += bytes; else lpkStats.errors++);
+    return ok;
+}
 const unsigned char *lpk_block(uint32_t b)
 {
-    if (lpkSlotBlock == (int)b) return lpkSlot;
-    lpkSlotBlock = -1;
-
+    if (b >= lpkNBlocks) { LPK_STAT(lpkStats.errors++); return NULL; }
+    int victim = 0;
+#if D2_LPK_CACHE_BLOCKS == 1
+    if (lpkCache[0].valid && lpkCache[0].block == b) {
+        LPK_STAT(lpkStats.hits++);
+        return lpkCache[0].data;
+    }
+#else
+    const uint32_t now = ++lpkCacheClock;
+    for (int i = 0; i < D2_LPK_CACHE_BLOCKS; i++) {
+        if (lpkCache[i].valid && lpkCache[i].block == b) {
+            lpkCache[i].lastUse = now;
+            LPK_STAT(lpkStats.hits++);
+            return lpkCache[i].data;
+        }
+    }
+    for (int i = 0; i < D2_LPK_CACHE_BLOCKS; i++) {
+        if (!lpkCache[i].valid) { victim = i; break; }
+        if (now - lpkCache[i].lastUse > now - lpkCache[victim].lastUse) victim = i;
+    }
+#endif
+    LPK_STAT(lpkStats.misses++);
+    LPK_STAT(if (lpkCache[victim].valid) lpkStats.evictions++);
+    lpkCache[victim].valid = false;
+    unsigned char *lpkSlot = lpkCache[victim].data;
     const uint32_t o0 = lpkBlocks[b], o1 = lpkBlocks[b + 1];
     const bool raw = (o0 & 0x80000000u) != 0;
     const uint32_t csize = (o1 & 0x7FFFFFFFu) - (o0 & 0x7FFFFFFFu);
     const uint32_t rawBytes = (b == lpkNBlocks - 1) ? (lpkNPool - b * 8) * 2048 : LPK_BLOCK_BYTES;
-    if (csize > rawBytes || fseek(lpkFp, lpkDataOff + (o0 & 0x7FFFFFFFu), SEEK_SET) != 0) return NULL;
-    if (raw)
-    {
-        if (fread(lpkSlot, 1, csize, lpkFp) != csize) return NULL;
+    if (csize > rawBytes || (raw && csize != rawBytes)) { LPK_STAT(lpkStats.errors++); return NULL; }
+    if (raw) {
+        if (!lpk_read_payload(lpkDataOff + (o0 & 0x7FFFFFFFu), lpkSlot, csize)) return NULL;
+        LPK_STAT(lpkStats.raw++);
+    } else {
+        unsigned char *cp = lpkSlot + rawBytes + LPK_MARGIN - csize;
+        if (!lpk_read_payload(lpkDataOff + (o0 & 0x7FFFFFFFu), cp, csize)) return NULL;
+#if D2_LPK_PROFILE
+        const uint32_t t0 = (uint32_t)get_ticks();
+#endif
+        const bool ok = lz4_decode(cp, (int)csize, lpkSlot, (int)rawBytes);
+        LPK_STAT(lpkStats.decodeTicks += (uint32_t)get_ticks() - t0);
+        if (!ok) { LPK_STAT(lpkStats.errors++); return NULL; }
+        LPK_STAT(lpkStats.decoded++);
     }
-    else
-    {
-        unsigned char *cp = lpkSlot + rawBytes + LPK_MARGIN - csize;      // dados comprimidos no fim do buffer
-        if (fread(cp, 1, csize, lpkFp) != csize || !lz4_decode(cp, (int)csize, lpkSlot, (int)rawBytes)) return NULL;
-    }
-    lpkSlotBlock = (int)b;
+    LPK_STAT(lpkStats.outputBytes += rawBytes);
+    lpkCache[victim].block = b;
+#if D2_LPK_CACHE_BLOCKS > 1
+    lpkCache[victim].lastUse = now;
+#endif
+    lpkCache[victim].valid = true;
     return lpkSlot;
 }
 // le 'n' bytes a partir do byte 'off' do arquivo (dentro do pacote); devolve bytes lidos
@@ -160,6 +231,17 @@ long lpk_read(const LpkFile *f, long off, void *dst, long n)
     }
     return done;
 }
+}
+// Chamado a cada 300 quadros; sem leituras de timer quando o perfil esta desligado.
+extern "C" void d2_lpk_report(void)
+{
+#if D2_LPK_PROFILE
+    debugf("[lpk] blocks=%u cache_bytes=%u hit=%u miss=%u evict=%u decode=%u raw=%u io_ticks=%u decode_ticks=%u in=%u out=%u errors=%u (janela de 300 quadros; hit/miss por consulta de setor)\n",
+        (unsigned)D2_LPK_CACHE_BLOCKS, (unsigned)sizeof(lpkCache), lpkStats.hits,
+        lpkStats.misses, lpkStats.evictions, lpkStats.decoded, lpkStats.raw,
+        lpkStats.ioTicks, lpkStats.decodeTicks, lpkStats.inputBytes, lpkStats.outputBytes, lpkStats.errors);
+    memset(&lpkStats, 0, sizeof(lpkStats));
+#endif
 }
 // arquivos de dados inteiros (DATA/GFX/REPLAYS) vindos do pacote: devolve bytes lidos, ou -1 se o arquivo nao esta no pacote
 extern "C" int d2_pack_load(const char *path, char *dst, int offset, int size)

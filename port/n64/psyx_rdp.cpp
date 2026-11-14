@@ -18,6 +18,7 @@ extern "C" {
 #include "d2_vram.h"
 #include "d2_ground.h"
 #include "d2_ticks.h"
+extern "C" void d2_lpk_report(void);
 extern "C" { unsigned int d2_tk_cars, d2_tk_blds, d2_tk_tiles; }
 // memset rapido (o da libc roda ~1 ciclo/byte): preenche com palavras de 64 bits; usado via --wrap=memset (Makefile.d2).
 // Cerca de 80 KB por quadro passam por aqui (limpeza da OT e dos buffers do RSPQ).
@@ -1006,6 +1007,7 @@ void PsyX_EndScene(void)
             debugf("[janela] missPagina=%u missFaixa=%u w>32=%u h>32=%u (por quadro)\n", s_dbgMissPage / 300, s_dbgMissRange / 300, s_dbgBigW / 300, s_dbgBigH / 300); s_dbgMissPage = s_dbgMissRange = s_dbgBigW = s_dbgBigH = 0;
             debugf("[prims] chao n=%u tk=%u | ft4 n=%u tk=%u | direto n=%u tk=%u (por quadro; tk=ticks)\n", s_nGround / 300, s_tkGround / 300, s_nFt4 / 300, s_tkFt4 / 300, s_nDirect / 300, s_tkDirect / 300);
             s_tkGround = s_tkFt4 = s_tkDirect = s_nGround = s_nFt4 = s_nDirect = 0;
+            d2_lpk_report();
             debugf("[custo] carros=%u predios=%u tiles=%u ticks/quadro\n", d2_tk_cars / 300, d2_tk_blds / 300, d2_tk_tiles / 300); d2_tk_cars = d2_tk_blds = d2_tk_tiles = 0;
             memset(hist, 0, sizeof hist); n = slow = 0;
         }
