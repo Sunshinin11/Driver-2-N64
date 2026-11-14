@@ -1,8 +1,20 @@
-# Build do Driver 2 N64 no WSL (mostra o progresso ao vivo e grava build_d2.log).
-#   .\build_d2.ps1           -> compila (incremental)
-#   .\build_d2.ps1 -Clean    -> limpa tudo e compila do zero (necessario quando mudam as opcoes de compilacao)
-param([switch]$Clean)
+# Build do Driver 2 no WSL. Substitui apenas d2_n64.z64.
+# Padrao: um bloco LEVPACK, perfil desligado.
+param(
+    [switch]$Clean,
+    [ValidateSet(1, 2, 3, 4)][int]$LpkCacheBlocks = 1,
+    [switch]$LpkProfile
+)
+$ErrorActionPreference = 'Stop'
 $here = $PSScriptRoot
-if ($Clean) { wsl --cd "$here" bash -lc "bash build.sh clean" }
-wsl --cd "$here" bash -lc "bash build.sh 2>&1 | tee build_d2.log"
-if (Test-Path "$here\d2_n64.z64") { Write-Host "`nBUILD OK: $here\d2_n64.z64" -ForegroundColor Green } else { Write-Host "`nBUILD FALHOU (veja build_d2.log)" -ForegroundColor Red }
+if ($Clean) {
+    wsl --cd "$here" bash -lc 'bash build.sh clean'
+    if ($LASTEXITCODE -ne 0) { throw 'Falha ao limpar o build no WSL.' }
+}
+$profileValue = if ($LpkProfile) { 1 } else { 0 }
+Write-Host "LEVPACK: blocos=$LpkCacheBlocks perfil=$profileValue" -ForegroundColor Cyan
+wsl --cd "$here" bash -lc "set -o pipefail; bash build.sh LPK_CACHE_BLOCKS=$LpkCacheBlocks LPK_PROFILE=$profileValue 2>&1 | tee build_d2.log"
+if ($LASTEXITCODE -ne 0) { throw 'BUILD FALHOU. Confira a saida e build_d2.log, se atualizado.' }
+$romPath = Join-Path $here 'd2_n64.z64'
+if (-not (Test-Path -LiteralPath $romPath)) { throw 'Build terminou sem gerar d2_n64.z64.' }
+Write-Host "`nBUILD OK: $romPath" -ForegroundColor Green

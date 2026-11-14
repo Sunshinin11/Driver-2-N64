@@ -52,3 +52,6 @@ submodules/silent-hill-decomp/
 *.ram
 /a30b79d_fontes.tgz
 /telemetria_resumo.txt
+
+# Resumos de coletas nomeadas (gerados pelo teste LEVPACK)
+/telemetria_*_resumo.txt

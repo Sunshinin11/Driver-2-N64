@@ -75,3 +75,20 @@ Verificacao local: tools/test_lpk_cache.py compila o codigo real do carregador e
 WebAssembly com I/O simulado e executa em Node. Cobre LRU, blocos brutos/comprimidos,
 ultimo bloco parcial, leitura entre blocos, erros e perfil ligado/desligado. Nao
 substitui compilacao MIPS, teste visual no Ares ou medicao em hardware real.
+
+## Teste guiado pelo PowerShell
+
+Na pasta D2_N64, executar primeiro:
+
+    powershell -ExecutionPolicy Bypass -File .\testar_levpack.ps1 -Blocos 1
+
+Percorrer a rota habitual durante 180 segundos. Depois repetir com:
+
+    powershell -ExecutionPolicy Bypass -File .\testar_levpack.ps1 -Blocos 2
+
+Os dois testes ligam o mesmo perfil e substituem a mesma d2_n64.z64. Geram
+telemetria_lpk1.log / telemetria_lpk2.log, stderr e registro de build com flags,
+SHA256 e tamanho da ROM. A coleta so inicia se o build tiver sucesso e as flags
+corresponderem. A execucao anterior da mesma configuracao e substituida.
+O script encerra o Ares aberto, inicia a ROM para jogar e fecha no fim da coleta.
+A configuracao normal continua: .\build_d2.ps1 (1 bloco, perfil desligado).
