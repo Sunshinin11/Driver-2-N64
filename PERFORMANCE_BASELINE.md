@@ -92,3 +92,35 @@ SHA256 e tamanho da ROM. A coleta so inicia se o build tiver sucesso e as flags
 corresponderem. A execucao anterior da mesma configuracao e substituida.
 O script encerra o Ares aberto, inicia a ROM para jogar e fecha no fim da coleta.
 A configuracao normal continua: .\build_d2.ps1 (1 bloco, perfil desligado).
+
+## A/B historico com conteudo completo (14/11/2026)
+
+Executar .\build_ab_a30b79d_completo.ps1 para preparar e compilar uma arvore
+isolada em /tmp, diretamente do commit a30b79da425814c27c1a5405fdb670ac32d69d6c.
+A pasta atual e d2_n64.z64 nao sao substituidas. Saida separada:
+d2_n64_a30b79d_completo.z64; registro: build_a30b79d_completo.log.
+
+Somente oito arquivos diferem da base: Makefile.d2 (selecao e empacotamento),
+fs_n64.cpp (LEVPACK original), patch_engine.py (sete patches de acesso ao pacote),
+convert_xa_wav64.py, convert_fmv_n64.py, pack_levels.py e inicializacao do codec
+ULC em psyx_backend.cpp/fmv_n64.cpp. Fontes de conteudo vindos de 49edd99.
+Nenhum fonte e copiado da arvore de trabalho atual. Manifesto de hashes gerado.
+
+Preservados exatamente: renderizador, carros, chao, paletas, hot.ld, flags de
+compilacao (inclusive -Os seletivo original), logica, conversores de musica/SFX,
+SDK selecionado pelo ambiente e commit Tiny3D da base. Libdragon/toolchain do
+ambiente nao sao restaurados a uma versao antiga; comparar ROMs com o mesmo SDK.
+Sem multistep posterior, saves novos, correcao posterior de carro especial,
+cache LRU recente, perfil LPK ou ajuste posterior de volume XA.
+
+O LEVPACK e a conversao de midia sao necessarios para acomodar o conteudo completo
+em 64 MiB. Essa ROM testa o motor historico com essa integracao; nao e um binario
+identico ao historico com apenas arquivos extras no DFS. As limitacoes de missoes,
+cutscenes e carro especial da base continuam. Os videos usam a conversao do
+pacote completo (incluindo parametros de qualidade/tempo desse conversor).
+
+O build exige os dois discos em data/, internet para fontes fixados, SDK e ffmpeg,
+e python3-lz4 no WSL. So copia a ROM apos verificar tamanho <=64 MiB, quatro cidades
+no pacote e 33 videos no staging. Fontes atuais e ROM principal ficam preservados.
+Nenhuma compilacao MIPS ou validacao visual desta variante foi feita nesta sessao
+porque o WSL devolveu Wsl/E_ACCESSDENIED. Nao ha ganho de desempenho declarado.
