@@ -47,8 +47,6 @@ OBJS += $(BUILD_DIR)/port/n64/rsp_d2gpu.o
 T3D_DIR = submodules/tiny3d
 N64_LDFLAGS := $(T3D_DIR)/build/libt3d.a $(N64_LDFLAGS)
 D2_OPT += -DD2_T3D_WORLD=1
-# carros: volta ao desenho original (o caminho de carroceria pelo T3D/RSP ficou mais lento e com defeitos); remova a linha abaixo para reativar
-D2_OPT += -DD2_NO_T3D_CARS
 D2_INC += -I$(T3D_DIR)/src
 PLAT_OBJS += $(OBJ_DIR)/port/n64/d2_t3d_world.o
 OBJS += $(OBJ_DIR)/port/n64/d2_t3d_world.o

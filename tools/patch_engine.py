@@ -712,16 +712,12 @@ P('Game/C/tile.c', "if (Z <= DRAW_LOD_DIST_HIGH)\n\t\t{\n\t\t\tif (Low2HighDetai
 P('Game/C/tile.c', "\t\t\tif (Z < 2000)\n\t\t\t\tTileNxN(pModel, 4, 75);", "\t\t\tif (Z < 2000 && player[0].playerType == PLAYER_TYPE_PEDESTRIAN)\n\t\t\t\tTileNxN(pModel, 4, 75);\n\t\t\telse if (Z < 2000)\n\t\t\t\tTileNxN(pModel, 2, 35);")
 
 P('Game/C/cars.c', "#else\n#define CAR_LOD_SWITCH_DISTANCE 5500", "#else\n#define CAR_LOD_SWITCH_DISTANCE 3500")
-# ---- carroceria dos carros pelo RSP/Tiny3D (port/n64/d2_t3d_cars.inc): de dia e sem dano de textura; o resto segue o caminho original ----
-P('Game/C/cars.c',
-  "#else\n\t\tplotCarPolyGT3(car->numGT3, car->pGT3, car->vlist, car->nlist, &_pg, palette);\n#endif",
-  "#else\n\t\t{\n\t\t\tCAR_POLY* restPolys = car->pGT3; int restNum = car->numGT3;\n\t\t\tif (!d2_t3d_car_body(car->numGT3, car->pGT3, car->vlist, car->nlist, _pg.pciv_clut, _pg.damageLevel, palette, &_pg.primptr, _pg.ot, &restPolys, &restNum))\n\t\t\t\tplotCarPolyGT3(car->numGT3, car->pGT3, car->vlist, car->nlist, &_pg, palette);\n\t\t\telse if (restNum > 0)\n\t\t\t\tplotCarPolyGT3(restNum, restPolys, car->vlist, car->nlist, &_pg, palette);\n\t\t}\n#endif")
-P('Game/C/cars.c',
-  "void plotNewCarModel(CAR_MODEL* car, int palette)\n{",
-  "extern \"C\" int d2_t3d_car_body(int, CAR_POLY*, SVECTOR*, SVECTOR*, unsigned short*, unsigned char*, int, unsigned char**, void*, CAR_POLY**, int*);\nextern \"C\" void d2_t3d_car_models_changed(void);\nvoid plotNewCarModel(CAR_MODEL* car, int palette)\n{")
-P('Game/C/cars.c',
-  "\tpolySrcModel = (MODEL*)polySrc;\n",
-  "\tpolySrcModel = (MODEL*)polySrc;\n\td2_t3d_car_models_changed();\t// N64: a lista de poligonos deste modelo vai ser refeita\n")
+# Restaura tambem arvores ja remendadas pela antiga integracao Tiny3D dos carros.
+# Em fontes limpos, estes regex nao alteram nada. Mantem spool/saves separados.
+R('Game/C/cars.c', r'\t\t\{\r?\n\t\t\tCAR_POLY\* restPolys = car->pGT3; int restNum = car->numGT3;\r?\n.*?\t\t\}\r?\n#endif',
+  '\t\tplotCarPolyGT3(car->numGT3, car->pGT3, car->vlist, car->nlist, &_pg, palette);\n#endif', re.S)
+R('Game/C/cars.c', r'^extern "C" (?:int d2_t3d_car_body|void d2_t3d_car_models_changed)\([^\r\n]*\);\r?\n', '', re.M)
+R('Game/C/cars.c', r'^\t*d2_t3d_car_models_changed\(\);[^\r\n]*\r?\n', '', re.M)
 P('Game/C/tile.c', '#include "mission.h"\n#include "draw.h"', '#include "mission.h"\n#include "players.h"\n#include "draw.h"')
 # ---- Fidelidade PS1 no N64: remove expansoes de limites/efeitos/conteudo feitas para PC, sem ativar caminhos de plataforma PSX ----
 # LEVPACK: cabecalho do nivel lido do pacote comprimido

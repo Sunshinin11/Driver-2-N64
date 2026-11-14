@@ -1455,7 +1455,6 @@ static const uint8_t s_shadeLut[256] = {
     255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255,
     255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255
 };
-extern "C" const unsigned char* d2_rdp_shade_lut(void) { return s_shadeLut; }
 static inline uint32_t shade_rgba(unsigned r, unsigned g, unsigned b)
 {
     return ((uint32_t)s_shadeLut[r & 255] << 24) |
@@ -2020,11 +2019,9 @@ int d2_native_vram_packet(P_TAG *tag)
     }
     return 0;
 }
-extern "C" void d2_t3d_car_draw(unsigned int);
 extern "C" int d2_native_dispatch(P_TAG *tag)
 {
     if (__builtin_expect(tag->code == 0xB3 || tag->code == 0x2C, 1)) { const unsigned t0 = cnt0(); const int r = d2_native_ft4((POLY_FT4*)tag); s_tkFt4 += cnt0() - t0; s_nFt4++; return r; }
-    if (tag->code == 0xB5 && getlen(tag) == 2) { d2_t3d_car_draw(((const unsigned int *)tag)[P_LEN + 1]); s_rspOfx = s_rspOfy = 0x7fffffff; s_rspTexOu = s_rspTexOv = -1; return 2; }   // carroceria de carro pelo T3D (d2_t3d_cars.inc)
     if (tag->code == D2_GROUND_CODE && getlen(tag) == D2_GROUND_WORDS) {
         D2GroundQuad *quad = (D2GroundQuad *)tag;
         const unsigned t0 = cnt0();
