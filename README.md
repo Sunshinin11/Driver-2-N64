@@ -1,3 +1,5 @@
+> **Referencia de performance:** o commit `a30b79d` (10/11/2026) e o melhor resultado historico informado pelo autor. Consulte [PERFORMANCE_BASELINE.md](PERFORMANCE_BASELINE.md) antes de otimizar ou reverter o port.
+
 # Driver 2 — Nintendo 64 Port
 
 [🇧🇷 Português](#-driver-2-para-nintendo-64) | [🇺🇸 English](#-driver-2-for-nintendo-64)

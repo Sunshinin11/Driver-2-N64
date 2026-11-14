@@ -415,6 +415,9 @@ u_int PsyX_SPUAL_GetReverbVoice() { return 0; }
 static wav64_t *xa_wave;
 static bool xa_prepared, xa_paused;
 static double xa_position;
+#ifndef D2_XA_GAIN
+#define D2_XA_GAIN 0.45f   // ganho do XA (vozes): ~ -7 dB
+#endif
 static float xa_gain = 1.0f;
 
 void StopXA()
@@ -443,6 +446,7 @@ void SetXAVolume(int volume)
     xa_gain = (10000.0f + volume) / 10000.0f;
     if (xa_gain < 0.0f) xa_gain = 0.0f;
     if (xa_gain > 1.0f) xa_gain = 1.0f;
+    xa_gain *= D2_XA_GAIN;     // vozes (XA) ficavam muito mais altas que musica e efeitos (esses passam por D2_SPU_MASTER_VOL)
     if (xa_wave && !xa_paused)
         mixer_ch_set_vol(XA_CHANNEL, xa_gain, xa_gain);
 }

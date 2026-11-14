@@ -47,3 +47,8 @@ data/*.img
 # ---- Submodulos locais redundantes ----
 port/tiny3d/
 submodules/silent-hill-decomp/
+
+# Estado local do emulador e materiais gerados para comparacao A/B
+*.ram
+/a30b79d_fontes.tgz
+/telemetria_resumo.txt

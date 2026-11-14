@@ -1,0 +1,696 @@
+diff --git a/Makefile.d2 b/Makefile.d2
+index 98348f8..9cf378b 100644
+--- a/Makefile.d2
++++ b/Makefile.d2
+@@ -21,13 +21,15 @@ GAME_OBJS := $(patsubst %.c,$(OBJ_DIR)/%.o,$(GAME_SRCS))
+ PSYX_C   := $(addprefix $(SRC)/PsyCross/src/psx/,ABS.C LIBGTE.C LIBAPI.C LIBGPU.C LIBSN.C LIBMCRD.C LIBSPU.C)
+ PSYX_CPP := $(addprefix $(SRC)/PsyCross/src/gte/,half_float.cpp)
+ PSYX_OBJS := $(patsubst %.C,$(OBJ_DIR)/%.o,$(PSYX_C)) $(patsubst %.cpp,$(OBJ_DIR)/%.o,$(PSYX_CPP))
++# espacos entre funcoes quentes (tools/hot_layout.py): evitam conflito no cache de instrucoes
++HOT_PAD := $(wildcard port/n64/d2_hotpad.cpp)
+ PLAT_C    := port/n64/main_n64.c port/n64/psyx_n64.c port/n64/sys_n64.c
+-PLAT_CXX  := port/n64/d2_entry.cpp port/n64/psyx_backend.cpp port/n64/libetc_n64.cpp port/n64/fs_n64.cpp port/n64/psyx_rdp.cpp port/n64/n64_gpu_api.cpp port/n64/d2_gpu_state.cpp port/n64/stubs_n64.cpp port/n64/fmv_n64.cpp port/n64/xf_native.cpp port/n64/d2_vtxcache.cpp
++PLAT_CXX  := port/n64/d2_entry.cpp port/n64/psyx_backend.cpp port/n64/libetc_n64.cpp port/n64/fs_n64.cpp port/n64/psyx_rdp.cpp port/n64/n64_gpu_api.cpp port/n64/d2_gpu_state.cpp port/n64/stubs_n64.cpp port/n64/fmv_n64.cpp port/n64/xf_native.cpp port/n64/d2_vtxcache.cpp $(HOT_PAD)
+ PLAT_OBJS := $(patsubst %.c,$(OBJ_DIR)/%.o,$(PLAT_C)) $(patsubst %.cpp,$(OBJ_DIR)/%.o,$(PLAT_CXX))
+ OBJS := $(GAME_OBJS) $(PSYX_OBJS) $(PLAT_OBJS)
+ 
+ D2_INC = -I$(SRC)/Game -I$(SRC)/PsyCross/include -I$(SRC)/PsyCross/include/psx -Iport/compat -Iport/n64
+-N64_LDFLAGS += $(D2_LDEXTRA)
++N64_LDFLAGS += $(D2_LDEXTRA) --wrap=memset
+ # funcoes quentes juntas no inicio do .text (o cache de instrucoes do VR4300 tem 16 KB: espalhadas, elas se expulsam). Gerado por tools/hot.py.
+ HOT_LD ?= hot.ld
+ ifneq ($(wildcard $(HOT_LD)),)
+@@ -131,7 +133,7 @@ endif
+ $(T3D_DIR)/build/libt3d.a:
+ 	$(MAKE) -C $(T3D_DIR)
+ 
+-$(BUILD_DIR)/d2_n64.elf: $(OBJS) | $(T3D_DIR)/build/libt3d.a
++$(BUILD_DIR)/d2_n64.elf: $(OBJS) $(wildcard $(HOT_LD)) | $(T3D_DIR)/build/libt3d.a
+ 
+ -include $(OBJS:.o=.d)
+ 
+diff --git a/port/n64/d2_ticks.h b/port/n64/d2_ticks.h
+new file mode 100644
+index 0000000..1a79660
+--- /dev/null
++++ b/port/n64/d2_ticks.h
+@@ -0,0 +1,10 @@
++#pragma once
++// Ticks do contador CP0 acumulados por regiao do quadro; lidos e zerados pela telemetria em psyx_rdp.cpp.
++#ifdef __cplusplus
++extern "C" { extern unsigned int d2_tk_cars, d2_tk_blds, d2_tk_tiles; }
++struct D2TickScope {
++    unsigned int *acc; unsigned int t0;
++    D2TickScope(unsigned int *a) : acc(a) { __asm__ volatile("mfc0 %0,$9" : "=r"(t0)); }
++    ~D2TickScope() { unsigned int t1; __asm__ volatile("mfc0 %0,$9" : "=r"(t1)); *acc += t1 - t0; }
++};
++#endif
+diff --git a/port/n64/d2_vtxcache.cpp b/port/n64/d2_vtxcache.cpp
+index 12e0122..6822019 100644
+--- a/port/n64/d2_vtxcache.cpp
++++ b/port/n64/d2_vtxcache.cpp
+@@ -36,10 +36,20 @@ static inline void vc_begin(const SVECTOR *src)
+ 	d2x_cam(&s_vcCam0);
+ 	if (++s_vcCur == 0) { for (int i = 0; i < 256; i++) s_vc[i].gen = 0; s_vcCur = 1; }
+ }
++// projecao so para desenho (nao altera o estado do GTE emulado do jogo): soma de produtos em 32 bits (a translacao e multipla de 4096,
++// entao (tr<<12 + S)>>12 == tr + (S>>12)) e divisao H/SZ por uma unica instrucao divu em vez da tabela UNR do PS1 (diferenca <= 1/65536 em h)
+ static __attribute__((noinline)) void vc_proj(const SVECTOR *v, unsigned int *xy, unsigned int *z, short *cam)
+ {
+-	unsigned int sz, h; int sx, sy, a1, a2, a3;
+-	d2x_proj(&s_vcCam0, v->vx, v->vy, v->vz, &sx, &sy, &sz, &h, &a1, &a2, &a3);
++	const int vx = v->vx, vy = v->vy, vz = v->vz;
++	const int a1 = (int)(s_vcCam0.tx >> 12) + ((s_vcCam0.r11 * vx + s_vcCam0.r12 * vy + s_vcCam0.r13 * vz) >> 12);
++	const int a2 = (int)(s_vcCam0.ty >> 12) + ((s_vcCam0.r21 * vx + s_vcCam0.r22 * vy + s_vcCam0.r23 * vz) >> 12);
++	const int a3 = (int)(s_vcCam0.tz >> 12) + ((s_vcCam0.r31 * vx + s_vcCam0.r32 * vy + s_vcCam0.r33 * vz) >> 12);
++	const unsigned int sz = (unsigned int)d2x_clamp(a3, 0, 0xffff);
++	unsigned int h = 0x1ffff;
++	if (s_vcCam0.h < sz * 2) { h = (s_vcCam0.h << 16) / sz; if (h > 0x1ffff) h = 0x1ffff; }
++	const int ir1 = d2x_clamp(a1, -0x8000, 0x7fff), ir2 = d2x_clamp(a2, -0x8000, 0x7fff);
++	const int sx = d2x_clamp((int)(((long long)s_vcCam0.ofx + (long long)ir1 * (int)h) >> 16), -0x400, 0x3ff);
++	const int sy = d2x_clamp((int)(((long long)s_vcCam0.ofy + (long long)ir2 * (int)h) >> 16), -0x400, 0x3ff);
+ 	*xy = ((unsigned int)(unsigned short)sy << 16) | (unsigned short)sx;
+ 	*z = sz;
+ 	if (cam) { cam[0] = (short)d2x_clamp(a1, -0x8000, 0x7fff); cam[1] = (short)d2x_clamp(a2, -0x8000, 0x7fff); cam[2] = (short)d2x_clamp(a3, -0x8000, 0x7fff); }
+@@ -327,6 +337,24 @@ static void draw_mesh(MVERTEX (*VSP)[5][5], int n, _pct *pc,
+ 	pc->primptr = (char *)prim;
+ }
+ 
++// Chao com perspectiva correta (D2GroundQuad): o quad nao precisa ser subdividido em 2x2 quando os 4 cantos estao alem do plano
++// proximo e a extensao de UV cabe na janela de 64 texels; devolve 1 nesse caso (4 projecoes em vez de 9 + malha + 4 quads).
++int d2_ground_single_ok(MVERTEX (*VSP)[5][5])
++{
++	d2x_cam(&s_vcCam0);
++	const unsigned int near = d2xf.h / 2 + 1;
++	int umin = 255, umax = 0, vmin = 255, vmax = 0;
++	for (int k = 0; k < 4; k++)
++	{
++		unsigned int xy, z;
++		vc_proj((const SVECTOR *)&(*VSP)[0][k], &xy, &z, nullptr);
++		if (z < near) return 0;
++		const int u = (*VSP)[0][k].uv.s.u0, v = (*VSP)[0][k].uv.s.v0;
++		if (u < umin) umin = u; if (u > umax) umax = u; if (v < vmin) vmin = v; if (v > vmax) vmax = v;
++	}
++	return (umax - umin) <= 63 && (vmax - vmin) <= 63;
++}
++
+ void drawMesh(MVERTEX (*VSP)[5][5], int, int n, _pct *pc)
+ {
+ 	draw_mesh(VSP, n, pc, nullptr);
+diff --git a/port/n64/psyx_rdp.cpp b/port/n64/psyx_rdp.cpp
+index 80c779f..b81a9ef 100644
+--- a/port/n64/psyx_rdp.cpp
++++ b/port/n64/psyx_rdp.cpp
+@@ -5,6 +5,7 @@
+ #include <string.h>
+ #include <stdio.h>
+ #include <stdlib.h>
++#include <malloc.h>
+ #include "psx/types.h"
+ #include "psx/libgte.h"
+ #include "psx/libgpu.h"
+@@ -15,7 +16,25 @@
+ 
+ extern "C" {
+ #include "d2_vram.h"
+-#include "d2_ground.h"   // VRAM nativa (metade esquerda com bytes trocados, metade direita ja no formato do RDP)
++#include "d2_ground.h"
++#include "d2_ticks.h"
++extern "C" { unsigned int d2_tk_cars, d2_tk_blds, d2_tk_tiles; }
++// memset rapido (o da libc roda ~1 ciclo/byte): preenche com palavras de 64 bits; usado via --wrap=memset (Makefile.d2).
++// Cerca de 80 KB por quadro passam por aqui (limpeza da OT e dos buffers do RSPQ).
++extern "C" void *__real_memset(void *, int, size_t);
++extern "C" void *__wrap_memset(void *p, int c, size_t n)
++{
++    if (n < 64) return __real_memset(p, c, n);
++    unsigned char *d = (unsigned char *)p;
++    const unsigned long long v = 0x0101010101010101ull * (unsigned char)c;
++    while (((uintptr_t)d & 7) && n) { *d++ = (unsigned char)c; n--; }
++    unsigned long long *q = (unsigned long long *)d;
++    while (n >= 32) { q[0] = v; q[1] = v; q[2] = v; q[3] = v; q += 4; n -= 32; }
++    while (n >= 8) { *q++ = v; n -= 8; }
++    d = (unsigned char *)q;
++    while (n--) *d++ = (unsigned char)c;
++    return p;
++}   // VRAM nativa (metade esquerda com bytes trocados, metade direita ja no formato do RDP)
+ extern DRAWENV activeDrawEnv;
+ extern DISPENV activeDispEnv;
+ void d2_sys_note_frame(void);      // sys_n64.c
+@@ -620,6 +639,8 @@ static TexSlot s_winTag;
+ #ifndef D2_WINALIGN
+ #define D2_WINALIGN 16
+ #endif
++static unsigned int s_tkGround, s_tkFt4, s_tkDirect, s_nGround, s_nFt4, s_nDirect;
++static unsigned int s_dbgMissPage, s_dbgMissRange, s_dbgBigW, s_dbgBigH;
+ static bool upload_pal(int clut);
+ static bool upload_win(int px, int py, int clut, int u0, int v0, int w, int h)
+ {
+@@ -627,12 +648,19 @@ static bool upload_win(int px, int py, int clut, int u0, int v0, int w, int h)
+     bool hit = s_tmemWin && s_win.px == px && s_win.py == py && u0 >= s_win.wu0 && u0 + w <= s_win.wu0 + 64 && v0 >= s_win.wv0 && v0 + h <= s_win.wv0 + 64;
+     if (hit && s_win.vw != s_vramWrites)
+     {
+-        hit = false;          // a VRAM mudou desde a carga (raro durante o jogo): recarrega
++        // a VRAM mudou em algum lugar: so recarrega se as celulas cobertas pela janela mudaram de fato
++        const unsigned int sg = cell_signature(px + (s_win.wu0 >> 2), py + s_win.wv0, 16, 64);
++        if (sg != s_win.sig) hit = false; else s_win.vw = s_vramWrites;
+     }
+     upload_pal_bank(clut);
++    if (!hit) { if (!s_tmemWin || s_win.px != px || s_win.py != py) s_dbgMissPage++; else s_dbgMissRange++; if (w > 32) s_dbgBigW++; if (h > 32) s_dbgBigH++; }
+     if (hit) { s_cWinHit++; s_upOu = s_win.wu0; s_upOv = s_win.wv0; s_lastUp.slot = &s_winTag; return true; }
+ 
+-    // Origem centralizada e alinhada a 16 para cobrir o maximo de quads vizinhos do mesmo modelo
++    // Origem em grade de 32 texels quando o quad cabe (poucas posicoes possiveis => mais reaproveitamento entre quads vizinhos);
++    // senao, centralizada e alinhada a 16 para cobrir o maximo de quads vizinhos do mesmo modelo
++    int gu = u0 & ~31, gv = v0 & ~31;
++    if (u0 + w > gu + 64 || gu + 64 > 256) gu = -1;
++    if (v0 + h > gv + 64 || gv + 64 > 256) gv = -1;
+     int opt_wu = (u0 + (w >> 1)) - 32;
+     if (opt_wu < 0) opt_wu = 0;
+     if (opt_wu > 192) opt_wu = 192;
+@@ -641,6 +669,7 @@ static bool upload_win(int px, int py, int clut, int u0, int v0, int w, int h)
+     if (u0 + w > wu0 + 64) wu0 = ((u0 + w - 64) + 15) & ~15;
+     if (wu0 + 64 > 256) wu0 = 192;
+     if (wu0 < 0) wu0 = 0;
++    if (gu >= 0) wu0 = gu;
+ 
+     int opt_wv = (v0 + (h >> 1)) - 32;
+     if (opt_wv < 0) opt_wv = 0;
+@@ -650,7 +679,8 @@ static bool upload_win(int px, int py, int clut, int u0, int v0, int w, int h)
+     if (v0 + h > wv0 + 64) wv0 = ((v0 + h - 64) + 15) & ~15;
+     if (wv0 + 64 > 256) wv0 = 192;
+     if (wv0 < 0) wv0 = 0;
+-    s_win.px = px; s_win.py = py; s_win.wu0 = wu0; s_win.wv0 = wv0; s_win.vw = s_vramWrites;
++    if (gv >= 0) wv0 = gv;
++    s_win.px = px; s_win.py = py; s_win.wu0 = wu0; s_win.wv0 = wv0; s_win.vw = s_vramWrites; s_win.sig = cell_signature(px + (wu0 >> 2), py + wv0, 16, 64);
+     s_shLastUse = ++s_useCounter;
+     if (!s_leanTiles)
+     {
+@@ -953,6 +983,24 @@ void PsyX_EndScene(void)
+     if (!s_scene) { d2_sys_note_frame(); return; }
+     s_scene = false;
+     D2DBG("[rdp] EndScene f=%d vbl=%d tris=%d tex=%d\n", d2_rdp_frames, d2_sys_vbl_count(), s_triCount, s_texTriCount);
++    {   // telemetria: VBlanks entre apresentacoes (mediana, p95, proporcao > 2 VBlanks), heap e custo por regiao; janela de 300 quadros
++        static int lastVbl = -1; static unsigned int hist[8]; static unsigned int n, slow;
++        const int v = d2_sys_vbl_count();
++        if (lastVbl >= 0) { int d = v - lastVbl; if (d < 1) d = 1; if (d > 7) d = 7; hist[d]++; n++; if (d > 2) slow++; }
++        lastVbl = v;
++        if (n >= 300)
++        {
++            unsigned int acc = 0, med = 0, p95 = 0;
++            for (int i = 1; i < 8; i++) { acc += hist[i]; if (!med && acc * 2 >= n) med = i; if (!p95 && acc * 100 >= n * 95) p95 = i; }
++            debugf("[frametime] n=%u mediana=%uVB p95=%uVB >2VB=%u.%u%% h=%u,%u,%u,%u,%u,%u,%u\n", n, med, p95, slow * 100 / n, (slow * 1000 / n) % 10, hist[1], hist[2], hist[3], hist[4], hist[5], hist[6], hist[7]);
++            { struct mallinfo mi = mallinfo(); static int minFree = 0x7FFFFFFF; int fr = (int)(0x800000 - mi.uordblks); if (fr < minFree) minFree = fr; debugf("[heap] usado=%d livre_aprox=%d menor_livre=%d quadros=%d\n", (int)mi.uordblks, fr, minFree, d2_rdp_frames); }
++            debugf("[janela] missPagina=%u missFaixa=%u w>32=%u h>32=%u (por quadro)\n", s_dbgMissPage / 300, s_dbgMissRange / 300, s_dbgBigW / 300, s_dbgBigH / 300); s_dbgMissPage = s_dbgMissRange = s_dbgBigW = s_dbgBigH = 0;
++            debugf("[prims] chao n=%u tk=%u | ft4 n=%u tk=%u | direto n=%u tk=%u (por quadro; tk=ticks)\n", s_nGround / 300, s_tkGround / 300, s_nFt4 / 300, s_tkFt4 / 300, s_nDirect / 300, s_tkDirect / 300);
++            s_tkGround = s_tkFt4 = s_tkDirect = s_nGround = s_nFt4 = s_nDirect = 0;
++            debugf("[custo] carros=%u predios=%u tiles=%u ticks/quadro\n", d2_tk_cars / 300, d2_tk_blds / 300, d2_tk_tiles / 300); d2_tk_cars = d2_tk_blds = d2_tk_tiles = 0;
++            memset(hist, 0, sizeof hist); n = slow = 0;
++        }
++    }
+     if ((d2_rdp_frames % 30) == 0) { static unsigned int lastc; unsigned int cc; __asm__ volatile("mfc0 %0,$9" : "=r"(cc)); debugf("[cyc] %u ticks/frame\n", (cc - lastc) / 30); lastc = cc; }
+     if ((d2_rdp_frames % 30) == 0) {  debugf("[fps] f=%d vbl=%d sub=%d calls=%d tris=%d tex=%d hit=%u miss=%u texels=%u stepped=%u pm=%u,%u,%u pt=%u,%u,%u\n", d2_rdp_frames, d2_sys_vbl_count(), s_subTri, s_calls, s_triCount, s_texTriCount, s_dbgHit, s_dbgMiss, s_dbgTex, s_dbgTexStep, s_dbgPM[0],s_dbgPM[1],s_dbgPM[2],s_dbgPT[0],s_dbgPT[1],s_dbgPT[2]); }
+     s_dbgHit = s_dbgMiss = s_dbgTex = s_dbgTexStep = 0; memset(s_dbgPM,0,sizeof s_dbgPM); memset(s_dbgPT,0,sizeof s_dbgPT);
+@@ -1560,9 +1608,58 @@ static unsigned int s_dCnt;
+ int d2_direct_poly_i(P_TAG *tag);
+ int d2_direct_poly(P_TAG *tag);
+ // quad texturizado de 4 bits (pagina em x >= 512): o RSP monta os dois triangulos, com 7 palavras de comando em vez de ~30 escritas pela CPU
+-static bool rsp_ft4(const short *xs, const short *ys, const unsigned char *us, const unsigned char *vs, int tpage, int clut, uint32_t col, int ofx, int ofy, int alpha = 255)
++static bool rsp_ft4(const short *xs, const short *ys, const unsigned char *us, const unsigned char *vs, int tpage, int clut, uint32_t col, int ofx, int ofy, int alpha = 255);
++// Quads com extensao de UV > 64 texels nao cabem na janela CI4 64x64: divide em grade bilinear (ns x nt) em que cada celula cabe
++// na janela e envia cada uma ao RSP (antes iam todos para o caminho da CPU: tri_core + rdpq_triangle_rsp). Vertices compartilhados
++// sao calculados uma vez so (sem frestas). Se alguma celula ainda nao couber, nada e enviado e o quad cai no caminho da CPU.
++static int d2_ext(int a, int b, int c, int d) { int m = a > b ? a : b; if (c > m) m = c; if (d > m) m = d; return m; }
++static int d2_ab(int v) { return v < 0 ? -v : v; }
++static __attribute__((noinline, cold)) bool rsp_ft4_split(const short *xs, const short *ys, const unsigned char *us, const unsigned char *vs, int tpage, int clut, uint32_t col, int ofx, int ofy, int alpha)
+ {
+-    if (!s_d2gpuOvl || s_texFormat != TF_4_BIT || s_ctxSx16 != 65536 || s_ctxSy16 != 65536) return false;
++    const int es = d2_ext(d2_ab(us[1] - us[0]), d2_ab(us[3] - us[2]), d2_ab(vs[1] - vs[0]), d2_ab(vs[3] - vs[2]));
++    const int et = d2_ext(d2_ab(us[2] - us[0]), d2_ab(us[3] - us[1]), d2_ab(vs[2] - vs[0]), d2_ab(vs[3] - vs[1]));
++    int ns = (es + 61) / 62, nt = (et + 61) / 62;
++    if (ns < 1) ns = 1;
++    if (nt < 1) nt = 1;
++    if (ns > 5 || nt > 5 || ns * nt > 16) return false;
++    short gx[6][6], gy[6][6]; unsigned char gu[6][6], gv[6][6];
++    const int den = ns * nt;
++    for (int j = 0; j <= nt; j++)
++        for (int i = 0; i <= ns; i++)
++        {
++            const int w0 = (ns - i) * (nt - j), w1 = i * (nt - j), w2 = (ns - i) * j, w3 = i * j;
++            const int bx = 32768, hd = den >> 1;
++            gx[j][i] = (short)(((w0 * (xs[0] + bx) + w1 * (xs[1] + bx) + w2 * (xs[2] + bx) + w3 * (xs[3] + bx) + hd) / den) - bx);
++            gy[j][i] = (short)(((w0 * (ys[0] + bx) + w1 * (ys[1] + bx) + w2 * (ys[2] + bx) + w3 * (ys[3] + bx) + hd) / den) - bx);
++            gu[j][i] = (unsigned char)((w0 * us[0] + w1 * us[1] + w2 * us[2] + w3 * us[3] + hd) / den);
++            gv[j][i] = (unsigned char)((w0 * vs[0] + w1 * vs[1] + w2 * vs[2] + w3 * vs[3] + hd) / den);
++        }
++    for (int j = 0; j < nt; j++)
++        for (int i = 0; i < ns; i++)
++        {
++            int umn = 255, umx = 0, vmn = 255, vmx = 0;
++            for (int k = 0; k < 4; k++)
++            {
++                const int uu = gu[j + (k >> 1)][i + (k & 1)], vv = gv[j + (k >> 1)][i + (k & 1)];
++                if (uu < umn) umn = uu; if (uu > umx) umx = uu; if (vv < vmn) vmn = vv; if (vv > vmx) vmx = vv;
++            }
++            if (umx - umn > 64 || vmx - vmn > 64) return false;
++        }
++    for (int j = 0; j < nt; j++)
++        for (int i = 0; i < ns; i++)
++        {
++            const short qx[4] = { gx[j][i], gx[j][i + 1], gx[j + 1][i], gx[j + 1][i + 1] };
++            const short qy[4] = { gy[j][i], gy[j][i + 1], gy[j + 1][i], gy[j + 1][i + 1] };
++            const unsigned char qu[4] = { gu[j][i], gu[j][i + 1], gu[j + 1][i], gu[j + 1][i + 1] };
++            const unsigned char qv[4] = { gv[j][i], gv[j][i + 1], gv[j + 1][i], gv[j + 1][i + 1] };
++            if (!rsp_ft4(qx, qy, qu, qv, tpage, clut, col, ofx, ofy, alpha)) return false;   // so ocorre por falha de carga de janela (nada enviado antes: raro)
++        }
++    return true;
++}
++static bool rsp_ft4(const short *xs, const short *ys, const unsigned char *us, const unsigned char *vs, int tpage, int clut, uint32_t col, int ofx, int ofy, int alpha)
++{
++    if (!s_d2gpuOvl || s_ctxSx16 != 65536 || s_ctxSy16 != 65536) { s_ft4RejScale++; return false; }
++    if (s_texFormat != TF_4_BIT) { s_ft4RejFmt++; return false; }
+     short minx = xs[0], maxx = xs[0], miny = ys[0], maxy = ys[0];
+     int umin = us[0], umax = us[0], vmin = vs[0], vmax = vs[0];
+     for (int i = 1; i < 4; i++)
+@@ -1574,9 +1671,10 @@ static bool rsp_ft4(const short *xs, const short *ys, const unsigned char *us, c
+     }
+     const int sx0 = (minx + ofx) << 2, sx1 = (maxx + ofx) << 2, sy0 = (miny + ofy) << 2, sy1 = (maxy + ofy) << 2;
+     if (sx1 < s_ctxCx0 || sx0 >= s_ctxCx1 || sy1 < s_ctxCy0 || sy0 >= s_ctxCy1) return true;     // fora do recorte: nada a desenhar
+-    if (sx0 < -4096 || sx1 > 4095 || sy0 < -4096 || sy1 > 4095 || sx1 - sx0 > 16000 || sy1 - sy0 > 16000) return false;
++    if (sx0 < -4096 || sx1 > 4095 || sy0 < -4096 || sy1 > 4095 || sx1 - sx0 > 16000 || sy1 - sy0 > 16000) { s_ft4RejClip++; return false; }
+     const int uw = (umax > umin) ? (umax - umin) : 1, vh = (vmax > vmin) ? (vmax - vmin) : 1;
+-    if (uw > 64 || vh > 64 || !upload_win((tpage & 15) * 64, ((tpage >> 4) & 1) * 256, clut, umin, vmin, uw, vh)) return false;
++    if (uw > 64 || vh > 64) { if (rsp_ft4_split(xs, ys, us, vs, tpage, clut, col, ofx, ofy, alpha)) return true; s_ft4RejDim++; return false; }
++    if (!upload_win((tpage & 15) * 64, ((tpage >> 4) & 1) * 256, clut, umin, vmin, uw, vh)) { s_ft4RejUp++; return false; }
+     if (s_rspOfx != ofx || s_rspOfy != ofy)
+     {
+         s_rspOfx = ofx; s_rspOfy = ofy;
+@@ -1692,50 +1790,43 @@ static bool draw_ground_perspective(const POLY_FT4 *p, const unsigned short *dep
+         !upload_region(p->tpage, p->clut, umin, vmin, width, height, 1))
+         return false;
+ 
+-    float vertices[4][9];
++    // triangulos com perspectiva montados direto (sem floorf/divisao por triangulo de rdpq_triangle): mesmos dados que
++    // rdpq_triangle_rsp enviaria (x,y s13.2; cor; s,t s10.5; w e 1/w em s16.16), 4 vertices computados uma vez para os 2 triangulos
++    const uint32_t rgbaG = ((uint32_t)s_shadeLut[p->r0] << 24) | ((uint32_t)s_shadeLut[p->g0] << 16) | ((uint32_t)s_shadeLut[p->b0] << 8) | 255u;
++    struct GV { int16_t x, y; int16_t s, t; int32_t w, iw; } gv[4];
+     for (int i = 0; i < 4; ++i) {
+-        vertices[i][0] = (x[i] + ofx) * sx;
+-        vertices[i][1] = (y[i] + ofy) * sy;
+-        vertices[i][2] = s_shadeLut[p->r0] / 255.0f;
+-        vertices[i][3] = s_shadeLut[p->g0] / 255.0f;
+-        vertices[i][4] = s_shadeLut[p->b0] / 255.0f;
+-        vertices[i][5] = 1.0f;
+-        vertices[i][6] = u[i] - s_upOu;
+-        vertices[i][7] = v[i] - s_upOv;
+-        vertices[i][8] = 1.0f / depth[i];
++        gv[i].x = (int16_t)fl4((x[i] + ofx) * sx);
++        gv[i].y = (int16_t)fl4((y[i] + ofy) * sy);
++        gv[i].s = (int16_t)((u[i] - s_upOu) * 32);
++        gv[i].t = (int16_t)((v[i] - s_upOv) * 32);
++        const unsigned d = depth[i] ? depth[i] : 1u;
++        gv[i].w = d >= 32768u ? 0x7FFFFFFF : (int32_t)(d << 16);
++        gv[i].iw = (int32_t)(65536u / d);
+     }
+     rdpq_mode_persp(true);
+-    rdpq_triangle(&TRIFMT_SHADE_TEX, vertices[0], vertices[1], vertices[2]);
+-    rdpq_triangle(&TRIFMT_SHADE_TEX, vertices[1], vertices[3], vertices[2]);
++    __rdpq_autosync_use(AUTOSYNC_PIPE | AUTOSYNC_TILE(0) | AUTOSYNC_TMEM(0));
++    static const unsigned char tri[2][3] = { { 0, 1, 2 }, { 1, 3, 2 } };
++    for (int k = 0; k < 2; ++k)
++    {
++        for (int m = 0; m < 3; ++m)
++        {
++            const GV &g = gv[tri[k][m]];
++            rspq_write(RDPQ_OVL_ID, RDPQ_CMD_TRIANGLE_DATA, 32 * m, ((uint32_t)(uint16_t)g.x << 16) | (uint16_t)g.y, 0, rgbaG,
++                       ((uint32_t)(uint16_t)g.s << 16) | (uint16_t)g.t, (uint32_t)g.w, (uint32_t)g.iw);
++        }
++        rdpq_write(20, RDPQ_OVL_ID, RDPQ_CMD_TRIANGLE, 0xC000 | ((RDPQ_CMD_TRI | 6) << 8));
++    }
+     rdpq_mode_persp(false);
+     s_triCount += 2;
+     s_texTriCount += 2;
+     return true;
+ }
+ 
+-static int d2_native_ft4_inner(POLY_FT4 *p, const unsigned short *depth)
++static __attribute__((noinline, cold)) int d2_ft4_cpu(POLY_FT4 *p)
+ {
+-    if (!activeDrawEnv.dfe || !s_scene) return 9;
+-    if (!ensure_slots()) return 9;
+-
+-    const RECT16 &c = activeDrawEnv.clip;
+-    if (c.x != s_clipKey[0] || c.y != s_clipKey[1] || c.w != s_clipKey[2] || c.h != s_clipKey[3] ||
+-        (activeDispEnv.disp.x | (activeDispEnv.disp.w << 16)) != s_clipKey[4] ||
+-        (activeDispEnv.disp.y | (activeDispEnv.disp.h << 16)) != s_clipKey[5]) GR_SetupClipMode(&c, 1);
+-    activeDrawEnv.tpage = p->tpage;
+-    s_texFormat = (TexFormat)((p->tpage >> 7) & 3);
+-    begin_batch(s_texFormat != TF_32_BIT_RGBA, BM_NONE);
+     const int ofx = activeDrawEnv.ofs[0] - activeDispEnv.disp.x;
+     const int ofy = activeDrawEnv.ofs[1] - activeDispEnv.disp.y;
+-
+-    s_ft4Total++;
+-    if (depth && draw_ground_perspective(p, depth, ofx, ofy)) return 9;
+-    {
+-        const short xs[4] = { p->x0, p->x1, p->x2, p->x3 }, ys[4] = { p->y0, p->y1, p->y2, p->y3 };
+-        const unsigned char us[4] = { p->u0, p->u1, p->u2, p->u3 }, vs[4] = { p->v0, p->v1, p->v2, p->v3 };
+-        const uint32_t col = ((uint32_t)s_shadeLut[p->r0] << 16) | ((uint32_t)s_shadeLut[p->g0] << 8) | s_shadeLut[p->b0];
+-        if (rsp_ft4(xs, ys, us, vs, p->tpage, p->clut, col, ofx, ofy)) return 9;
+-    }
++    s_ft4Cpu++;
+     const short *xy[4] = { &p->x0, &p->x1, &p->x2, &p->x3 };
+     const unsigned char *uv[4] = { &p->u0, &p->u1, &p->u2, &p->u3 };
+     const uint32_t col = calc_vertex_color(p->r0, p->g0, p->b0, BM_NONE, true);
+@@ -1762,6 +1853,31 @@ static int d2_native_ft4_inner(POLY_FT4 *p, const unsigned short *depth)
+     tri_core(&q[1], &q[3], &q[2], p->tpage, p->clut);
+     return 9;
+ }
++static int d2_native_ft4_inner(POLY_FT4 *p, const unsigned short *depth)
++{
++    if (!activeDrawEnv.dfe || !s_scene) return 9;
++    if (!ensure_slots()) return 9;
++
++    const RECT16 &c = activeDrawEnv.clip;
++    if (c.x != s_clipKey[0] || c.y != s_clipKey[1] || c.w != s_clipKey[2] || c.h != s_clipKey[3] ||
++        (activeDispEnv.disp.x | (activeDispEnv.disp.w << 16)) != s_clipKey[4] ||
++        (activeDispEnv.disp.y | (activeDispEnv.disp.h << 16)) != s_clipKey[5]) GR_SetupClipMode(&c, 1);
++    activeDrawEnv.tpage = p->tpage;
++    s_texFormat = (TexFormat)((p->tpage >> 7) & 3);
++    begin_batch(s_texFormat != TF_32_BIT_RGBA, BM_NONE);
++    const int ofx = activeDrawEnv.ofs[0] - activeDispEnv.disp.x;
++    const int ofy = activeDrawEnv.ofs[1] - activeDispEnv.disp.y;
++
++    s_ft4Total++;
++    if (depth && draw_ground_perspective(p, depth, ofx, ofy)) return 9;
++    {
++        const short xs[4] = { p->x0, p->x1, p->x2, p->x3 }, ys[4] = { p->y0, p->y1, p->y2, p->y3 };
++        const unsigned char us[4] = { p->u0, p->u1, p->u2, p->u3 }, vs[4] = { p->v0, p->v1, p->v2, p->v3 };
++        const uint32_t col = ((uint32_t)s_shadeLut[p->r0] << 16) | ((uint32_t)s_shadeLut[p->g0] << 8) | s_shadeLut[p->b0];
++        if (rsp_ft4(xs, ys, us, vs, p->tpage, p->clut, col, ofx, ofy)) { s_ft4Rsp++; return 9; }
++    }
++    return d2_ft4_cpu(p);
++}
+ int d2_native_ft4(POLY_FT4 *p)
+ {
+     return d2_native_ft4_inner(p, nullptr);
+@@ -1895,14 +2011,16 @@ int d2_native_vram_packet(P_TAG *tag)
+ }
+ extern "C" int d2_native_dispatch(P_TAG *tag)
+ {
+-    if (__builtin_expect(tag->code == 0xB3 || tag->code == 0x2C, 1)) return d2_native_ft4((POLY_FT4*)tag);
++    if (__builtin_expect(tag->code == 0xB3 || tag->code == 0x2C, 1)) { const unsigned t0 = cnt0(); const int r = d2_native_ft4((POLY_FT4*)tag); s_tkFt4 += cnt0() - t0; s_nFt4++; return r; }
+     if (tag->code == D2_GROUND_CODE && getlen(tag) == D2_GROUND_WORDS) {
+         D2GroundQuad *quad = (D2GroundQuad *)tag;
++        const unsigned t0 = cnt0();
+         d2_native_ft4_inner(&quad->prim, quad->depth);
++        s_tkGround += cnt0() - t0; s_nGround++;
+         return D2_GROUND_WORDS;
+     }
+     const int type = tag->code & 0xF0;
+-    if (__builtin_expect(type == 0x20 || type == 0x30, 1)) return d2_direct_poly(tag);
++    if (__builtin_expect(type == 0x20 || type == 0x30, 1)) { const unsigned t0 = cnt0(); const int r = d2_direct_poly(tag); s_tkDirect += cnt0() - t0; s_nDirect++; return r; }
+     if (type == 0xE0) return d2_native_drawenv(tag);
+     if (type == 0x40 || type == 0x50) return d2_native_line(tag);
+     if (type == 0x60 || type == 0x70) return d2_native_rect(tag);
+@@ -1927,6 +2045,48 @@ extern "C" void d2_ot_register(void *ot, int n)
+     if (s_otRegN < 8) { s_otReg[s_otRegN].base = b; s_otReg[s_otRegN].n = n; s_otRegN++; return; }
+     s_otReg[s_otRegRR].base = b; s_otReg[s_otRegRR].n = n; s_otRegRR = (s_otRegRR + 1) & 7;
+ }
++static inline int d2_hibit(unsigned m)       // indice do bit mais alto (m != 0), sem o clz de software da libgcc
++{
++    int r = 0;
++    if (m >> 16) { m >>= 16; r = 16; }
++    if (m >> 8) { m >>= 8; r += 8; }
++    if (m >> 4) { m >>= 4; r += 4; }
++    static const signed char t[16] = { 0, 0, 1, 1, 2, 2, 2, 2, 3, 3, 3, 3, 3, 3, 3, 3 };
++    return r + t[m];
++}
++// baldes ocupados: addPrim marca 1 bit por balde (indice = endereco fisico/8); o desenho percorre so os marcados e o clear zera so eles
++extern "C" { unsigned int d2_otbits[0x7FFFFF / 256 + 1]; }
++extern "C" void d2_ot_clear(void *ot, int n)
++{
++    const uintptr_t b = (uintptr_t)ot;
++    bool known = false;
++    for (int i = 0; i < s_otRegN; i++) if (s_otReg[i].base == b && s_otReg[i].n == n) { known = true; break; }
++    d2_ot_register(ot, n);
++    const unsigned lo = (unsigned)((b & 0x7FFFFF) >> 3), hi = lo + (unsigned)n - 1;
++    if (!known || hi > 0xFFFFF)
++    {
++        memset(ot, 0, (size_t)n * sizeof(OT_TAG));
++        if (hi <= 0xFFFFF) for (unsigned w = lo >> 5; w <= (hi >> 5); w++) d2_otbits[w] = 0;
++        return;
++    }
++    unsigned int *bk = (unsigned int *)ot;
++    for (unsigned w = lo >> 5; w <= (hi >> 5); w++)
++    {
++        unsigned m = d2_otbits[w];
++        if (!m) continue;
++        unsigned keep = 0;
++        if (w == (lo >> 5)) keep |= (1u << (lo & 31)) - 1;
++        if (w == (hi >> 5) && (hi & 31) != 31) keep |= ~((2u << (hi & 31)) - 1);
++        d2_otbits[w] = m & keep;
++        m &= ~keep;
++        while (m)
++        {
++            const int bt = d2_hibit(m); m &= ~(1u << bt);
++            const unsigned i = ((w << 5) + bt) - lo;
++            bk[2 * i] = 0; bk[2 * i + 1] = 0;
++        }
++    }
++}
+ static const D2OtReg *d2_ot_find(uintptr_t p)
+ {
+     for (int i = 0; i < s_otRegN; i++)
+@@ -1968,18 +2128,27 @@ extern "C" void d2_native_draw_ot(u_long *ot)
+         const int top = (int)(((uintptr_t)ot - rg->base) / sizeof(OT_TAG));
+         const OT_TAG *slots = (const OT_TAG*)rg->base;
+         int nextOrd = t3d_ordered ? d2_t3d_order_peek_bucket() : -1;
+-        for (int sl = top; sl >= 0; --sl) {
+-            if (!(sl & 63)) d2_audio_mix();      // o quadro leva ~90 ms: sem isso o buffer de audio esvazia no meio do desenho
+-            {
+-                const int bucket = 0x107F - (top - sl);
+-                if (t3d_ordered) {
+-                    if (nextOrd >= bucket && bucket >= 0 && bucket <= 0x107F) { d2_t3d_draw_world_until(bucket); nextOrd = d2_t3d_order_peek_bucket(); }
+-                } else if (!t3d_drawn && bucket >= 0 && bucket < 0x1070) {
+-                    t3d_drawn = true;
+-                    d2_t3d_draw_queued_buildings();
++        const unsigned lo = (unsigned)((rg->base & 0x7FFFFF) >> 3), hi = lo + (unsigned)top;
++        int lastBlk = -1;
++        for (int w = (int)(hi >> 5); w >= (int)(lo >> 5); --w) {
++            unsigned m = d2_otbits[w];
++            if (w == (int)(hi >> 5) && (hi & 31) != 31) m &= (2u << (hi & 31)) - 1;
++            if (w == (int)(lo >> 5)) m &= ~((1u << (lo & 31)) - 1);
++            while (m) {
++                const int bt = d2_hibit(m); m &= ~(1u << bt);
++                const int sl = (int)(((unsigned)w << 5) + bt - lo);
++                if ((sl >> 6) != lastBlk) { lastBlk = sl >> 6; d2_audio_mix(); }   // o quadro leva ~90 ms: sem isso o buffer de audio esvazia no meio do desenho
++                {
++                    const int bucket = 0x107F - (top - sl);
++                    if (t3d_ordered) {
++                        if (nextOrd >= bucket && bucket >= 0 && bucket <= 0x107F) { d2_t3d_draw_world_until(bucket); nextOrd = d2_t3d_order_peek_bucket(); }
++                    } else if (!t3d_drawn && bucket >= 0 && bucket < 0x1070) {
++                        t3d_drawn = true;
++                        d2_t3d_draw_queued_buildings();
++                    }
+                 }
++                for (P_TAG *pk = (P_TAG*)slots[sl].addr; pk; pk = (P_TAG*)nextPrim(pk)) d2_ot_node(pk);
+             }
+-            for (P_TAG *pk = (P_TAG*)slots[sl].addr; pk; pk = (P_TAG*)nextPrim(pk)) d2_ot_node(pk);
+         }
+     } else {
+     // cadeia avulsa (ex.: texto de debug do FntFlush): lista de pacotes terminada em 0
+diff --git a/tools/hot_layout.py b/tools/hot_layout.py
+new file mode 100644
+index 0000000..37ed74f
+--- /dev/null
++++ b/tools/hot_layout.py
+@@ -0,0 +1,79 @@
++#!/usr/bin/env python3
++"""Layout das funcoes quentes sem conflito no cache de instrucoes do VR4300 (16 KB, mapeamento direto, linhas de 32 bytes).
++Entrada: ELF e perfil (PC ciclos) do MESMO build. Saida: hot.ld (ordem) + port/n64/d2_hotpad.cpp (espacos entre funcoes).
++Escolhe ordem e espacos (multiplos de 32 bytes) por recozimento simulado, minimizando o peso das linhas que caem no mesmo
++conjunto do cache (soma - maior), usando as linhas realmente executadas de cada funcao (ciclos do perfil por instrucao)."""
++import sys, subprocess, bisect, random, math, collections
++elf, prof, hot_out, pad_out = sys.argv[1:5]
++budget = int(sys.argv[5]) if len(sys.argv) > 5 else 28000       # bytes das funcoes quentes
++maxpad = int(sys.argv[6]) if len(sys.argv) > 6 else 24576       # bytes totais de espaco permitidos
++seed = int(sys.argv[7]) if len(sys.argv) > 7 else 1
++random.seed(seed)
++NM = '/opt/libdragon/bin/mips64-elf-nm'
++syms = []
++for l in subprocess.run([NM, '-S', '-n', elf], capture_output=True, text=True).stdout.split('\n'):
++    p = l.split()
++    if len(p) == 4 and p[2] in 'Tt': syms.append((int(p[0], 16) & 0xFFFFFFFF, int(p[1], 16), p[3]))
++syms.sort(); addrs = [s[0] for s in syms]
++instr = collections.defaultdict(list)       # funcao -> [(offset, ciclos)]
++tot = 0
++for l in open(prof):
++    a, c = l.split(); a = int(a, 16) & 0xFFFFFFFF; c = int(c); tot += c
++    i = bisect.bisect_right(addrs, a) - 1
++    if i >= 0 and a < syms[i][0] + syms[i][1]: instr[syms[i][2]].append((a - syms[i][0], c))
++size = {s[2]: s[1] for s in syms}
++cnt = {n: sum(c for _, c in v) for n, v in instr.items()}
++names = []; used = 0; acc = 0
++for n, c in sorted(cnt.items(), key=lambda x: -x[1]):
++    sz = (size[n] + 31) & ~31
++    if used + sz > budget or n.startswith('.') : continue
++    names.append(n); used += sz; acc += c
++print('funcoes=%d bytes=%d cobertura=%.1f%%' % (len(names), used, 100 * acc / tot))
++# peso por linha de 32 bytes dentro de cada funcao (so as quentes: executadas de fato)
++W = {}
++for n in names:
++    lw = collections.Counter()
++    for off, c in instr[n]: lw[off >> 5] += c
++    W[n] = list(lw.items())
++SZ = {n: (size[n] + 31) & ~31 for n in names}
++BASE = 0x400 >> 5
++def cost(order, gaps):
++    sets = collections.defaultdict(lambda: [0, 0])
++    pos = BASE
++    for n, g in zip(order, gaps):
++        pos += g >> 5
++        for li, w in W[n]:
++            s = sets[(pos + li) & 511]; s[0] += w; s[1] = max(s[1], w)
++        pos += SZ[n] >> 5
++    return sum(a - b for a, b in sets.values()) + 0.0
++order = list(names); gaps = [0] * len(order)
++cur = cost(order, gaps); best = (cur, order[:], gaps[:]); T0 = cur / 20 + 1
++print('custo inicial %.0f (%.1f%% do total)' % (cur, 100 * cur / tot))
++N = 60000
++for it in range(N):
++    T = T0 * (1 - it / N) + 1
++    o2 = order[:]; g2 = gaps[:]
++    r = random.random()
++    if r < 0.4:
++        i, j = random.randrange(len(o2)), random.randrange(len(o2)); o2[i], o2[j] = o2[j], o2[i]
++    elif r < 0.6:
++        i = random.randrange(len(o2)); x = o2.pop(i); j = random.randrange(len(o2) + 1); o2.insert(j, x)
++    else:
++        i = random.randrange(len(g2)); g2[i] = random.choice((0, 0, 32 * random.randrange(0, 512)))
++    if sum(g2) > maxpad: continue
++    c = cost(o2, g2)
++    if c < cur or random.random() < math.exp((cur - c) / T):
++        order, gaps, cur = o2, g2, c
++        if c < best[0]: best = (c, o2[:], g2[:])
++c, order, gaps = best
++print('custo final %.0f (%.1f%% do total) espacos=%d bytes' % (c, 100 * c / tot, sum(gaps)))
++with open(hot_out, 'w') as f:
++    f.write('.text : {\n')
++    for k, (n, g) in enumerate(zip(order, gaps)):
++        if g: f.write('  *(.text.d2pad%d)\n' % k)
++        f.write('  *(.text.%s)\n' % n)
++    f.write('}\n')
++with open(pad_out, 'w') as f:
++    f.write('// gerado por tools/hot_layout.py: espacos entre funcoes quentes (evita conflitos no cache de instrucoes)\n')
++    for k, g in enumerate(gaps):
++        if g: f.write('__asm__(".section .text.d2pad%d,\\"ax\\",@progbits\\n.skip %d\\n.text\\n");\n' % (k, g))
+diff --git a/tools/libdragon-rspq-buffer.patch b/tools/libdragon-rspq-buffer.patch
+new file mode 100644
+index 0000000..23e17bb
+--- /dev/null
++++ b/tools/libdragon-rspq-buffer.patch
+@@ -0,0 +1,13 @@
++diff --git a/include/rspq_constants.h b/include/rspq_constants.h
++index b8231cd..04b7906 100644
++--- a/include/rspq_constants.h
+++++ b/include/rspq_constants.h
++@@ -10,7 +10,7 @@
++ #define RSPQ_DEBUG                     1       ///< Enable RSPQ debug mode
++ #define RSPQ_PROFILE                   0       ///< Enable RSPQ profiling
++ 
++-#define RSPQ_DRAM_LOWPRI_BUFFER_SIZE   0x200   ///< Size of each RSPQ RDRAM buffer for lowpri queue (in 32-bit words)
+++#define RSPQ_DRAM_LOWPRI_BUFFER_SIZE   0x1000  ///< Size of each RSPQ RDRAM buffer for lowpri queue (in 32-bit words)
++ #define RSPQ_DRAM_HIGHPRI_BUFFER_SIZE  0x200   ///< Size of each RSPQ RDRAM buffer for highpri queue (in 32-bit words)
++ 
++ #define RSPQ_DMEM_BUFFER_SIZE          0x100   ///< Size of the RSPQ DMEM buffer (in bytes)
+diff --git a/tools/nuvem/LEIA.md b/tools/nuvem/LEIA.md
+index 80588a2..7f5f098 100644
+--- a/tools/nuvem/LEIA.md
++++ b/tools/nuvem/LEIA.md
+@@ -40,3 +40,18 @@ Todos os scripts em `tools/nuvem/` e na raiz respeitam essas variáveis de ambie
+ - O Ares do harness e determinista: repetir a mesma ROM da exatamente o mesmo numero. A incerteza vem de mudar o layout do codigo (hot.ld, tamanho das funcoes), que desloca o resultado por alguns por cento; so aceite ganho do quadro inteiro acima de 3% ou confirmado por timer de regiao.
+ - Log do jogador x harness: as janelas iniciais (cc 32..96, mesma rua parada) dao 3,4M x 3,3M ticks (+2%); as diferencas maiores aparecem so depois, quando o jogador dirige para outra area com mais transito. Nao compare cenas diferentes.
+ - Em medidas de nova versao, rode tambem a versao anterior no mesmo instante; nao reutilize numeros de outra sessao.
++
++## libdragon: fila RSPQ mais funda (referencia: Half-Life N64, halo-64)
++`tools/libdragon-rspq-buffer.patch` sobe RSPQ_DRAM_LOWPRI_BUFFER_SIZE de 0x200 para 0x1000 palavras (2 KB -> 16 KB por buffer, +32 KB de RAM).
++Aplicar no checkout do libdragon (`git apply`), `make libdragon && make install`, e recompilar o jogo. Sem o patch o jogo funciona, so com a fila padrao.
++
++## Telemetria no log (uma linha por 300 quadros)
++`[frametime]` (VBlanks entre apresentacoes: mediana, p95, >2 VB, histograma), `[heap]` (usado, livre aproximado, menor livre) e `[custo]` (ticks CP0/quadro em carros, predios e tiles).
++
++## Otimizacoes desta rodada (perfil de gameplay no Ares headless, `D2_PROF=1`)
++- Perfil da cena de jogo: submissao de poligonos (`d2_native_ft4_inner`, `rdpq_triangle_rsp` + `floor/floorf`, `tri_core`) ~35%, projecao `vc_proj` ~10%, trocas de paleta/janela ~8%, `memset` ~5%.
++- `rsp_ft4` agora divide quads com extensao de UV > 64 texels em grade bilinear (cada celula cabe na janela CI4 64x64); antes ~17-20% dos quads iam para o caminho da CPU (`tri_core` + `rdpq_triangle_rsp`). `[ft4_stat]` mostra `rej_dim`.
++- `draw_ground_perspective` monta os triangulos com perspectiva direto (sem `floorf` e sem a divisao por triangulo do `rdpq_triangle`).
++- `memset` rapido (`--wrap=memset`, 64 bits por store) para a limpeza da OT e dos buffers do RSPQ (~80 KB/quadro).
++- Contadores `[ft4_stat]` (rsp/cpu/rej_*) corrigidos.
++- Resultado no mesmo roteiro (`/tmp/in_gp.txt`: menu -> jogo, Ares headless): 2,947M -> 2,702M ticks/quadro (media dos 6 ultimos [cyc]); mediana de 4 VB -> 3 VB.
+diff --git a/tools/patch_engine.py b/tools/patch_engine.py
+index b01f79c..f508d1a 100644
+--- a/tools/patch_engine.py
++++ b/tools/patch_engine.py
+@@ -1058,6 +1058,18 @@ PATCHES[:] = [x for x in PATCHES if not (x[0].endswith('LIBGPU.C') and "initiali
+ PATCHES[:] = [x for x in PATCHES if x[0] not in patch_gte_removal.GONE]
+ REGEX[:] = [x for x in REGEX if x[0] not in patch_gte_removal.GONE]
+ 
++# --- telemetria: ticks por regiao (carros/predios/tiles), lidos em psyx_rdp.cpp ([custo]) ---
++P("Game/C/draw.c", '#include "event.h"', '#include "event.h"\n#include "d2_ticks.h"')
++P("Game/C/draw.c", '    DrawCpuSample cpuSample(cpuWindow, "cars");\n#endif', '    DrawCpuSample cpuSample(cpuWindow, "cars");\n#endif\n\tD2TickScope d2TkCars(&d2_tk_cars);')
++P("Game/C/draw.c", '    DrawCpuSample cpuSample(cpuWindow, "buildings");\n#endif', '    DrawCpuSample cpuSample(cpuWindow, "buildings");\n#endif\n\tD2TickScope d2TkBlds(&d2_tk_blds);')
++P("Game/C/tile.c", '#include "d2_ground.h"\n#include "psx/gtereg.h"', '#include "d2_ground.h"\n#include "d2_ticks.h"\n#include "psx/gtereg.h"')
++P("Game/C/tile.c", "void DrawTILES(PACKED_CELL_OBJECT** tiles, int tile_amount)\n{", "void DrawTILES(PACKED_CELL_OBJECT** tiles, int tile_amount)\n{\n\tD2TickScope d2TkT(&d2_tk_tiles);")
++
++# --- chao: quad nao subdividido quando a perspectiva correta do RDP ja cobre (cantos alem do plano proximo, UV <= 63) ---
++P("Game/C/tile.c", "\tplotContext.ot += ofse;\n\n\tmakeMesh((MVERTEX(*)[5][5])subdivVerts, m, n);",
++  "\tplotContext.ot += ofse;\n\n\tif (n >= 2 && (plotContext.flags & D2_PLOT_GROUND) && d2_ground_single_ok((MVERTEX(*)[5][5])subdivVerts))\n\t\tn = 1;\n\n\tmakeMesh((MVERTEX(*)[5][5])subdivVerts, m, n);")
++P("Game/C/tile.c", '#include "d2_ground.h"\n#include "d2_ticks.h"', '#include "d2_ground.h"\nint d2_ground_single_ok(MVERTEX (*VSP)[5][5]);\n#include "d2_ticks.h"')
++
+ def prune():
+     import shutil
+     for d in patch_gpu_native.DEAD:
+diff --git a/tools/patch_ot_native.py b/tools/patch_ot_native.py
+index fde4122..7778515 100644
+--- a/tools/patch_ot_native.py
++++ b/tools/patch_ot_native.py
+@@ -16,15 +16,14 @@ def register(P, R):
+ #ifdef __cplusplus
+ extern "C"
+ #endif
+-void d2_ot_register(void* ot, int n);
++void d2_ot_clear(void* ot, int n);
+ 
+ /* OT nativo: n baldes de 8 bytes, cada um com a cabeca da lista de comandos do slot (0 = vazio) */
+ u_long* ClearOTag(u_long* ot, int n)
+ {
+ 	if (n == 0)
+ 		return NULL;
+-	d2_ot_register(ot, n);
+-	memset(ot, 0, (size_t)n * sizeof(OT_TAG));
++	d2_ot_clear(ot, n);
+ 	return NULL;
+ }
+ 
+@@ -37,3 +36,23 @@ u_long* ClearOTagR(u_long* ot, int n)
+     R('PsyCross/src/gpu/PsyX_GPU.cpp', r'OT_TAG prim_terminator = \{ -1, 0 \};[^\n]*\r?\n', '')
+     R('PsyCross/src/gpu/PsyX_GPU.h', r'extern OT_TAG prim_terminator;[^\n]*\r?\n', '')
+     R('PsyCross/include/psx/libgpu.h', r'extern OT_TAG prim_terminator;[^\n]*\r?\n', '')
++    # arvore ja patchada (versao anterior com memset): troca por d2_ot_clear
++    P('PsyCross/src/psx/LIBGPU.C',
++      "void d2_ot_register(void* ot, int n);\n\n/* OT nativo",
++      "void d2_ot_clear(void* ot, int n);\n\n/* OT nativo")
++    P('PsyCross/src/psx/LIBGPU.C',
++      "\td2_ot_register(ot, n);\n\tmemset(ot, 0, (size_t)n * sizeof(OT_TAG));\n\treturn NULL;",
++      "\td2_ot_clear(ot, n);\n\treturn NULL;")
++    # addPrim/addPrims marcam o balde ocupado (bitmap d2_otbits, 1 bit por balde de 8 bytes)
++    P('PsyCross/include/psx/libgpu.h',
++      "#if USE_PGXP && USE_EXTENDED_PRIM_POINTERS\n#define setpgxpindex",
++      "#ifdef __cplusplus\nextern \"C\" unsigned int d2_otbits[];\n#else\nextern unsigned int d2_otbits[];\n#endif\n#define D2_OT_MARK(ot) (d2_otbits[(((uintptr_t)(ot)) & 0x7FFFFFu) >> 8] |= 1u << ((((uintptr_t)(ot)) >> 3) & 31))\n#if USE_PGXP && USE_EXTENDED_PRIM_POINTERS\n#define setpgxpindex")
++    P('PsyCross/include/psx/libgpu.h',
++      "#define addPrim(ot, p)\t\tsetaddr(p, getaddr(ot)), setaddr(ot, p), setpgxpindex",
++      "#define addPrim(ot, p)\t\tD2_OT_MARK(ot), setaddr(p, getaddr(ot)), setaddr(ot, p), setpgxpindex")
++    P('PsyCross/include/psx/libgpu.h',
++      "#define addPrim(ot, p)\t\tsetaddr(p, getaddr(ot)), setaddr(ot, p)\n",
++      "#define addPrim(ot, p)\t\tD2_OT_MARK(ot), setaddr(p, getaddr(ot)), setaddr(ot, p)\n")
++    P('PsyCross/include/psx/libgpu.h',
++      "#define addPrims(ot, p0, p1)\tsetaddr(p1, getaddr(ot)),setaddr(ot, p0)",
++      "#define addPrims(ot, p0, p1)\tD2_OT_MARK(ot), setaddr(p1, getaddr(ot)),setaddr(ot, p0)")
