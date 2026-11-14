@@ -124,3 +124,31 @@ e python3-lz4 no WSL. So copia a ROM apos verificar tamanho <=64 MiB, quatro cid
 no pacote e 33 videos no staging. Fontes atuais e ROM principal ficam preservados.
 Nenhuma compilacao MIPS ou validacao visual desta variante foi feita nesta sessao
 porque o WSL devolveu Wsl/E_ACCESSDENIED. Nao ha ganho de desempenho declarado.
+
+## Diagnostico da integracao sobre a base historica
+
+Executar no PowerShell: powershell -ExecutionPolicy Bypass -File .\testar_integracao.ps1
+O comando prepara/compila uma arvore isolada, gera d2_n64_a30b79d_diagnostico.z64,
+e abre o Ares por 180 s. Log: telemetria_a30b79d_diagnostico.log. As outras ROMs
+nao sao substituidas. WSL bloqueado nesta sessao: a compilacao MIPS permanece
+pendente de execucao no PowerShell do usuario.
+
+Instrumentacao especifica adicionada sobre a30b79d + conteudo completo:
+- [content]: ticks inclusivos por janela de 30 quadros; fs_total e chamadas
+  externas do carregador, find e busca/inicializacao, map e troca de tabela,
+  seek, read, decode LZ4 e copy do bloco para o destino final.
+- [content_calls]: numero de chamadas dessas categorias.
+- [content_audio]: CPU nos callbacks de VBlank, CPU em mixer_try_play e
+  quantidade de quadros amostrados com XA efetivamente tocando.
+
+Ticks CP0 / 46875 = milissegundos. Dividir por n para media por quadro.
+fs_total inclui seus filhos; find/map tambem incluem suas leituras. Nao somar
+categorias inclusivas. A instrumentacao acrescenta custo e altera o layout.
+Tempo do mixer inclui esperas, nao mede sozinho execucao assincrona do RSP.
+Tempos fora das categorias nao podem ser atribuidos automaticamente a layout.
+O diagnostico orienta a proxima variante isolada; nao garante atribuir toda
+regressao a um unico subsistema sem comparacao adicional.
+
+Verificados preparacao, sintaxe Python/PowerShell e sintaxe C++ do carregador
+instrumentado e do coletor com stubs de plataforma. Ainda sem validacao MIPS
+ou visual no Ares desta variante. Sem mudancas no renderer de producao.

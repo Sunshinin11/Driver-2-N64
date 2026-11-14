@@ -56,3 +56,4 @@ submodules/silent-hill-decomp/
 # Resumos de coletas nomeadas (gerados pelo teste LEVPACK)
 /telemetria_*_resumo.txt
 /build_a30b79d_completo_manifest.json
+/build_a30b79d_diagnostico_manifest.json

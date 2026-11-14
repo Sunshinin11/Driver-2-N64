@@ -24,7 +24,7 @@ Start-Sleep -Seconds $Segundos
 if (-not $p.HasExited) { Stop-Process -Id $p.Id -Force }
 
 $resumo = Join-Path $here "${NomeLog}_resumo.txt"
-Select-String -Path $log, $err -Pattern "\[lpk\]|\[frametime\]|\[heap\]|\[custo\]|\[cyc\]|\[fps\]|\[tex\]|TRAVADO|exception|bad_alloc|assert" |
+Select-String -Path $log, $err -Pattern "\[content[^\]]*\]|\[lpk\]|\[frametime\]|\[heap\]|\[custo\]|\[cyc\]|\[fps\]|\[tex\]|TRAVADO|exception|bad_alloc|assert" |
   ForEach-Object { $_.Line } | Set-Content -Encoding utf8 $resumo
 
 Write-Host ""
