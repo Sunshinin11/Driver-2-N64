@@ -66,12 +66,16 @@ struct LpkFile { char name[48]; uint32_t size, nsec, mapIdx; };
 enum { LPK_BLOCK_BYTES = 8 * 2048, LPK_MAX_MAP = 5400, LPK_MAX_BLOCKS = 4200, LPK_MAX_FILES = 128, LPK_MARGIN = 256 };
 // tudo em .bss (~40 KB): o heap do N64 esta no limite, nada e alocado em tempo de execucao
 // Cache fixo: nenhuma alocacao no heap; o padrao preserva um bloco.
+// Isola buffers/tabelas exclusivos do LEVPACK em .gnu.linkonce.b.lpk: no n64.ld essa secao fica dentro da .bss
+// (zerada no boot antes de __bss_end/end), porem apos *(.bss) e *(.bss*) do renderizador e do audio.
+#define D2_LPK_BSS __attribute__((section(".gnu.linkonce.b.lpk")))
+
 struct LpkCacheSlot {
     unsigned char data[LPK_BLOCK_BYTES + LPK_MARGIN] __attribute__((aligned(16)));
     uint32_t block, lastUse;
     bool valid;
 };
-LpkCacheSlot lpkCache[D2_LPK_CACHE_BLOCKS];
+D2_LPK_BSS LpkCacheSlot lpkCache[D2_LPK_CACHE_BLOCKS];
 #if D2_LPK_CACHE_BLOCKS > 1
 uint32_t lpkCacheClock;
 #endif
@@ -79,9 +83,12 @@ uint32_t lpkCacheClock;
 struct LpkStats {
     uint32_t hits, misses, evictions, decoded, raw, errors;
     uint32_t ioTicks, decodeTicks, inputBytes, outputBytes;
-} lpkStats;
+};
+D2_LPK_BSS LpkStats lpkStats;
 #endif
-uint16_t lpkMapBuf[LPK_MAX_MAP]; uint32_t lpkBlocks[LPK_MAX_BLOCKS + 1]; LpkFile lpkFiles[LPK_MAX_FILES];
+D2_LPK_BSS uint16_t lpkMapBuf[LPK_MAX_MAP];
+D2_LPK_BSS uint32_t lpkBlocks[LPK_MAX_BLOCKS + 1];
+D2_LPK_BSS LpkFile lpkFiles[LPK_MAX_FILES];
 FILE *lpkFp; bool lpkTried, lpkOk;
 uint32_t lpkNFiles, lpkNBlocks, lpkNPool, lpkDataOff, lpkMapOff; const LpkFile *lpkMapFile;
 
