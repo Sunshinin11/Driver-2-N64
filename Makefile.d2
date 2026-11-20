@@ -60,6 +60,9 @@ D2_OPT += -DD2_VADPCM=1
 # ritmo de apresentacao: 3 = padrao (intervalo minimo de 3 VBlanks: no maximo 20 FPS, sem oscilar), 0 = livre, 1 = adaptativo, 2..5 = intervalo minimo fixo em VBlanks
 FRAME_PACE ?= 3
 D2_OPT += -DD2_FRAME_PACE=$(FRAME_PACE)
+# log/telemetria por ISViewer/USB: 0 na ROM de jogar (no flashcart sem PC o USB trava o jogo), 1 para medir
+D2_LOG ?= 0
+D2_OPT += -DD2_LOG=$(D2_LOG)
 # LEVPACK: perfil e cache ampliado somente por opt-in para medicao A/B.
 LPK_CACHE_BLOCKS ?= 1
 LPK_PROFILE ?= 0

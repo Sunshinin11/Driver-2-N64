@@ -63,8 +63,12 @@ static void d2_exc_handler(exception_t *exc)
 int main(void)
 {
     register_exception_handler(d2_exc_handler);
+#if D2_LOG
+    // log/telemetria (ISViewer no emulador, USB no flashcart). Fica fora da ROM de jogar (D2_LOG=0): num EverDrive sem PC
+    // cada linha de log pode travar o jogo por ate ~0,1 s (relato do Half-Life 64).
     debug_init_isviewer();
     debug_init_usblog();
+#endif
     display_init(RESOLUTION_320x240, DEPTH_16_BPP, 2, GAMMA_NONE, FILTERS_RESAMPLE);
     /* sem console_init(): ele recria o display em 640x240 (614 KB transitorios - estoura a RAM) e a imagem do jogo ficava cortada na metade
        esquerda. O printf/debugf de depuracao vai pelo ISViewer/USB. Use -DD2_FB640 para o console em 640x240. */

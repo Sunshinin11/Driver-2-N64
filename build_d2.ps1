@@ -15,7 +15,10 @@ param(
     # Flags extras para o compilador (D2_EXTRA), ex.: '-DD2_TEST_MISSION=50' (entra direto no free ride de Chicago)
     [string]$Extra = '',
     # Variaveis extras do Makefile, ex.: 'D2_T3D_WORLD=1'
-    [string]$MakeVars = ''
+    [string]$MakeVars = '',
+    # Liga log/telemetria (ISViewer/USB) para medir com coletar_telemetria.ps1. Sem ele (e sem -Bench) sai a ROM de jogar,
+    # sem log: no flashcart sem PC conectado o log por USB trava o jogo.
+    [switch]$Log
 )
 $ErrorActionPreference = 'Stop'
 $here = $PSScriptRoot
@@ -34,8 +37,9 @@ $flags = @()
 if ($Bench) { $flags += '-DD2_BENCH_ROUTE' }
 if ($Extra -ne '') { $flags += $Extra }
 $extra = if ($flags.Count) { "D2_EXTRA='" + ($flags -join ' ') + "'" } else { "" }
-Write-Host "LEVPACK: blocos=$LpkCacheBlocks perfil=$profileValue ritmo=$FramePace roteiro=$([int]$Bench.IsPresent)" -ForegroundColor Cyan
-wsl --cd "$here" bash -lc "set -o pipefail; bash build.sh LPK_CACHE_BLOCKS=$LpkCacheBlocks LPK_PROFILE=$profileValue FRAME_PACE=$FramePace $MakeVars $extra 2>&1 | tee build_d2.log"
+$logValue = if ($Log -or $Bench -or $LpkProfile) { 1 } else { 0 }
+Write-Host "LEVPACK: blocos=$LpkCacheBlocks perfil=$profileValue ritmo=$FramePace roteiro=$([int]$Bench.IsPresent) log=$logValue" -ForegroundColor Cyan
+wsl --cd "$here" bash -lc "set -o pipefail; bash build.sh LPK_CACHE_BLOCKS=$LpkCacheBlocks LPK_PROFILE=$profileValue FRAME_PACE=$FramePace D2_LOG=$logValue $MakeVars $extra 2>&1 | tee build_d2.log"
 if ($LASTEXITCODE -ne 0) { throw 'BUILD FALHOU. Confira a saida e build_d2.log, se atualizado.' }
 $romPath = Join-Path $here 'd2_n64.z64'
 if (-not (Test-Path -LiteralPath $romPath)) { throw 'Build terminou sem gerar d2_n64.z64.' }
