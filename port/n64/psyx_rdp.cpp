@@ -123,6 +123,7 @@ enum {
     D2G_CMD_POLY_GT3       = 8,
     D2G_CMD_LOAD_WIN       = 9,
     D2G_CMD_SET_ALPHA      = 10,
+    D2G_CMD_GROUND_QUAD    = 11,
 };
 
 static void rdp_init_once(void)
@@ -1933,6 +1934,41 @@ static bool draw_ground_perspective(const POLY_FT4 *p, const unsigned short *dep
         !upload_region(p->tpage, p->clut, umin, vmin, width, height, 1))
         return false;
 
+    if (!s_perspOn) { rdpq_mode_persp(true); s_perspOn = true; }   // fica ligado entre quads de chao seguidos
+    __rdpq_autosync_use(AUTOSYNC_PIPE | AUTOSYNC_TILE(0) | AUTOSYNC_TMEM(0));
+#ifdef D2_GROUND_RSP
+    if (__builtin_expect(s_d2gpuOvl && s_ctxSx16 == 65536 && s_ctxSy16 == 65536, 1))
+    {   // o RSP monta os 4 vertices e os 2 triangulos (D2G_Cmd_GroundQuad): um comando de 13 palavras no overlay do jogo,
+        // em vez de 6x TRIANGLE_DATA + 2x TRIANGLE no overlay do rdpq. Opcional: medido sem ganho (-0,7%, ruido de layout)
+        // e a imagem nao fica bit a bit igual ao caminho do rdpq; fica para quando a projecao tambem for para o RSP.
+        if (s_rspOfx != ofx || s_rspOfy != ofy)
+        {
+            s_rspOfx = ofx; s_rspOfy = ofy;
+            track_ovl_switch(s_d2gpuOvl);
+            rspq_write(s_d2gpuOvl, D2G_CMD_SET_OFFSET, 0, ((uint32_t)(int16_t)ofx << 16) | ((uint32_t)(int16_t)ofy & 0xFFFF));
+        }
+        if (s_rspTexOu != s_upOu || s_rspTexOv != s_upOv)
+        {
+            s_rspTexOu = s_upOu; s_rspTexOv = s_upOv;
+            track_ovl_switch(s_d2gpuOvl);
+            rspq_write(s_d2gpuOvl, D2G_CMD_SET_TEX_ORIGIN, 0, ((uint32_t)(uint16_t)s_upOu << 16) | ((uint32_t)(uint16_t)s_upOv & 0xFFFF));
+        }
+        uint32_t iw[4];
+        for (int i = 0; i < 4; ++i) { const unsigned d = depth[i] ? depth[i] : 1u; iw[i] = 65536u / d; }
+        const uint32_t col = ((uint32_t)s_shadeLut[p->r0] << 16) | ((uint32_t)s_shadeLut[p->g0] << 8) | s_shadeLut[p->b0];
+        track_ovl_switch(s_d2gpuOvl);
+        rspq_write(s_d2gpuOvl, D2G_CMD_GROUND_QUAD, col,
+                   ((uint32_t)(uint16_t)x[0] << 16) | (uint16_t)y[0], ((uint32_t)(uint16_t)x[1] << 16) | (uint16_t)y[1],
+                   ((uint32_t)(uint16_t)x[2] << 16) | (uint16_t)y[2], ((uint32_t)(uint16_t)x[3] << 16) | (uint16_t)y[3],
+                   ((uint32_t)u[0] << 24) | ((uint32_t)v[0] << 16) | ((uint32_t)u[1] << 8) | v[1],
+                   ((uint32_t)u[2] << 24) | ((uint32_t)v[2] << 16) | ((uint32_t)u[3] << 8) | v[3],
+                   iw[0], iw[1], iw[2], iw[3],
+                   ((uint32_t)depth[0] << 16) | depth[1], ((uint32_t)depth[2] << 16) | depth[3]);
+        s_triCount += 2;
+        s_texTriCount += 2;
+        return true;
+    }
+#endif
     // triangulos com perspectiva montados direto (sem floorf/divisao por triangulo de rdpq_triangle): mesmos dados que
     // rdpq_triangle_rsp enviaria (x,y s13.2; cor; s,t s10.5; w e 1/w em s16.16), 4 vertices computados uma vez para os 2 triangulos
     const uint32_t rgbaG = ((uint32_t)s_shadeLut[p->r0] << 24) | ((uint32_t)s_shadeLut[p->g0] << 16) | ((uint32_t)s_shadeLut[p->b0] << 8) | 255u;
@@ -1946,8 +1982,6 @@ static bool draw_ground_perspective(const POLY_FT4 *p, const unsigned short *dep
         gv[i].w = d >= 32768u ? 0x7FFFFFFF : (int32_t)(d << 16);
         gv[i].iw = (int32_t)(65536u / d);
     }
-    if (!s_perspOn) { rdpq_mode_persp(true); s_perspOn = true; }   // fica ligado entre quads de chao seguidos
-    __rdpq_autosync_use(AUTOSYNC_PIPE | AUTOSYNC_TILE(0) | AUTOSYNC_TMEM(0));
     static const unsigned char tri[2][3] = { { 0, 1, 2 }, { 1, 3, 2 } };
     for (int k = 0; k < 2; ++k)
     {
@@ -2444,6 +2478,15 @@ int d2_direct_poly(P_TAG *tag)
         calc_primitive_colors(&rg0, 1, shadeOn ? cr : NULL, shadeOn ? cg : NULL, shadeOn ? cb : NULL, bm, true);
         if (rsp_ft4(xs, ys, us, vs, tpage, clut, rg0 >> 8, ofx, ofy, (int)(rg0 & 255))) return len;
     }
+#ifndef D2_FT3_CPU
+    if (tex && !quad && !gour && bm == BM_NONE && texOk)
+    {   // POLY_FT3 (cor unica) pelo comando GT3 do RSP com a mesma cor nos 3 vertices, em vez do tri_core da CPU
+        const uint32_t c = shadeOn ? ((uint32_t)s_shadeLut[cr[0]] << 16) | ((uint32_t)s_shadeLut[cg[0]] << 8) | s_shadeLut[cb[0]]
+                                   : ((uint32_t)s_shadeLut[128] << 16) | ((uint32_t)s_shadeLut[128] << 8) | s_shadeLut[128];
+        const uint32_t col[3] = { c, c, c };
+        if (rsp_gt3(xs, ys, us, vs, tpage, clut, col, ofx, ofy)) return len;
+    }
+#endif
     if (tex && !quad && gour && bm == BM_NONE && texOk)
     {
         uint32_t col[3];
