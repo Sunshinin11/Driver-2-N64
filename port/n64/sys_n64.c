@@ -104,7 +104,8 @@ volatile unsigned d2_bench_shot;        // muda a cada ponto de foto; o harness 
 #define D2_PROF_TO 1700
 #endif
 #define SP_BASE 0x80000000u
-#define SP_LINES (0x180000u >> 5)
+#define SP_SHIFT 6                                  // linhas de 64 bytes: 40 KB de histograma (a RAM esta no limite)
+#define SP_LINES (0x140000u >> SP_SHIFT)
 static uint16_t s_spHist[SP_LINES];
 static volatile int s_spOn;
 static int s_spState;                   // 0 = esperando, 1 = amostrando, 2 = impresso
@@ -114,8 +115,8 @@ static void sp_tick(int ovfl)
     (void)ovfl;
     if (!s_spOn) return;
     const uint32_t pc = (uint32_t)C0_EPC() - SP_BASE;
-    if (pc >= SP_LINES * 32u) { s_spOut++; return; }
-    uint16_t *c = &s_spHist[pc >> 5];
+    if (pc >= (SP_LINES << SP_SHIFT)) { s_spOut++; return; }
+    uint16_t *c = &s_spHist[pc >> SP_SHIFT];
     if (*c != 0xFFFF) (*c)++;
     s_spTotal++;
 }
@@ -133,7 +134,7 @@ static void sp_update(void)
         s_spOn = 0; s_spState = 2;
         debugf("[prof] fim cc=%d amostras=%u fora=%u\n", CameraCnt, s_spTotal, s_spOut);
         for (unsigned i = 0; i < SP_LINES; i++)
-            if (s_spHist[i]) debugf("[prof] %08lx %u\n", (unsigned long)(SP_BASE + i * 32u), (unsigned)s_spHist[i]);
+            if (s_spHist[i]) debugf("[prof] %08lx %u\n", (unsigned long)(SP_BASE + (i << SP_SHIFT)), (unsigned)s_spHist[i]);
         debugf("[prof] fim_lista\n");
     }
 }
