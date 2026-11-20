@@ -1,5 +1,3 @@
-> **Referencia de performance:** o commit `a30b79d` (10/11/2026) e o melhor resultado historico informado pelo autor. Consulte [PERFORMANCE_BASELINE.md](PERFORMANCE_BASELINE.md) antes de otimizar ou reverter o port.
-
 # Driver 2 — Nintendo 64 Port
 
 [🇧🇷 Português](#-driver-2-para-nintendo-64) | [🇺🇸 English](#-driver-2-for-nintendo-64)
@@ -56,7 +54,7 @@ O código original em C/C++ executa diretamente no processador MIPS VR4300 do N6
 - **Correção de texturas embaralhadas**: Prédios que ficavam com textura trocada depois de muito tempo na mesma fase (validação de paleta usava a posição errada).
 - **Texto dos menus legível**: O texto do frontend é desenhado sólido, sem a semitransparência que o deixava apagado.
 - **ROM de jogar limpa**: Sem log na tela durante o carregamento e os vídeos, sem aviso de travamento e sem contador de FPS. Tudo isso só existe nos builds de medição (`-Log` / `-Bench`, `D2_LOG=1`).
-- **Ferramentas de medição**: Benchmark automático e determinístico no Ares (`tools/testar_auto.ps1`, `tools/comparar_bench.ps1`), perfil por amostragem (`D2_SAMPLE_PROF`) e hash de quadro como teste visual.
+- **Repositório enxuto**: Só ficam os arquivos necessários para compilar a ROM (código do port, patches do motor, conversores de mídia e scripts de build).
 
 ---
 
@@ -166,7 +164,6 @@ bash build.sh clean
 
 No Windows, `build_d2.ps1` chama o build pelo WSL. Opções úteis:
 - `-Log`: liga a telemetria (ISViewer/USB) e o contador de FPS.
-- `-Bench`: build de medição com a rota automática.
 - `-Extra '-DFLAG'` / `-MakeVars 'VAR=valor'`: sinalizadores extras (ex.: `-MakeVars 'DIST_BAL=0 FRAME_PACE=0'`).
 
 ---
@@ -268,7 +265,7 @@ The game's original C/C++ logic runs natively on the N64's MIPS VR4300 processor
 - **Garbled texture fix**: Buildings that ended up with swapped textures after a long time in the same level (palette validation used the wrong position).
 - **Readable menu text**: Frontend text is drawn solid, without the semi-transparency that made it look faded.
 - **Clean play ROM**: No on-screen log during loading or videos, no hang warning and no FPS counter. These only exist in measurement builds (`-Log` / `-Bench`, `D2_LOG=1`).
-- **Measurement tools**: Deterministic automated benchmark in Ares (`tools/testar_auto.ps1`, `tools/comparar_bench.ps1`), sampling profiler (`D2_SAMPLE_PROF`) and framebuffer hashes as a visual test.
+- **Lean repository**: Only the files needed to build the ROM are kept (port code, engine patches, media converters and build scripts).
 
 ---
 
@@ -378,7 +375,6 @@ bash build.sh clean
 
 On Windows, `build_d2.ps1` runs the build through WSL. Useful options:
 - `-Log`: enables telemetry (ISViewer/USB) and the FPS counter.
-- `-Bench`: measurement build with the automated route.
 - `-Extra '-DFLAG'` / `-MakeVars 'VAR=value'`: extra flags (e.g. `-MakeVars 'DIST_BAL=0 FRAME_PACE=0'`).
 
 ---
