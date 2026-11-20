@@ -44,14 +44,22 @@ D2_OPT += -DD2_RSP_GPU=1
 PLAT_OBJS += $(BUILD_DIR)/port/n64/rsp_d2gpu.o
 OBJS += $(BUILD_DIR)/port/n64/rsp_d2gpu.o
 
+D2_T3D_WORLD ?= 0
+ifeq ($(D2_T3D_WORLD),1)
 T3D_DIR = submodules/tiny3d
 N64_LDFLAGS := $(T3D_DIR)/build/libt3d.a $(N64_LDFLAGS)
 D2_OPT += -DD2_T3D_WORLD=1
 D2_INC += -I$(T3D_DIR)/src
 PLAT_OBJS += $(OBJ_DIR)/port/n64/d2_t3d_world.o
 OBJS += $(OBJ_DIR)/port/n64/d2_t3d_world.o
+else
+D2_OPT += -DD2_T3D_WORLD=0
+endif
 
 D2_OPT += -DD2_VADPCM=1
+# ritmo de apresentacao: 3 = padrao (intervalo minimo de 3 VBlanks: no maximo 20 FPS, sem oscilar), 0 = livre, 1 = adaptativo, 2..5 = intervalo minimo fixo em VBlanks
+FRAME_PACE ?= 3
+D2_OPT += -DD2_FRAME_PACE=$(FRAME_PACE)
 # LEVPACK: perfil e cache ampliado somente por opt-in para medicao A/B.
 LPK_CACHE_BLOCKS ?= 1
 LPK_PROFILE ?= 0
@@ -136,10 +144,14 @@ endif
 	$(N64_MKDFS) $@ $(FS_STAGE)
 	@if [ "$$(wc -c < "$@")" -gt 65011712 ]; then rm -f "$@"; echo "DragonFS exceeds 62 MiB. Reduce FMV_IDS or CITIES."; exit 1; fi
 
+ifeq ($(D2_T3D_WORLD),1)
 $(T3D_DIR)/build/libt3d.a:
 	$(MAKE) -C $(T3D_DIR)
 
 $(BUILD_DIR)/d2_n64.elf: $(OBJS) $(wildcard $(HOT_LD)) | $(T3D_DIR)/build/libt3d.a
+else
+$(BUILD_DIR)/d2_n64.elf: $(OBJS) $(wildcard $(HOT_LD))
+endif
 
 -include $(OBJS:.o=.d)
 

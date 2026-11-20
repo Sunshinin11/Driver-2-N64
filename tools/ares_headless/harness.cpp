@@ -152,6 +152,15 @@ int main(int argc, char** argv) {
     for(int d : dumpAt) if(d == fr) { char w[32]; snprintf(w, sizeof w, "quadro %d", fr); dump_state(w); }
     { auto& scc = ares::Nintendo64::cpu.scc;
       if(scc.cause.exceptionCode != 0 && scc.status.exceptionLevel && !stopped) { stopped = true; dump_state("excecao"); if(stopOnExc) { total = fr + 2; } } }
+    {   // fotos alinhadas ao jogo: o ROM muda uma palavra (d2_bench_shot) ao congelar a logica; 20 quadros depois a imagem e salva
+      static u32 shotAddr = getenv("D2_SHOT_ADDR") ? (u32)strtoul(getenv("D2_SHOT_ADDR"), nullptr, 16) : 0;
+      static u32 lastShot = 0; static int shotAt = -1; static u32 shotVal = 0;
+      if(shotAddr) {
+        u32 v = (u32)ares::Nintendo64::cpu.readDebug<4>((s32)shotAddr);
+        if(v != lastShot) { lastShot = v; if(v) { shotAt = fr + 20; shotVal = v; } }
+        if(fr == shotAt && host.fw) { char name[512]; snprintf(name, sizeof name, "%s/shot_%02u.ppm", outDir.c_str(), shotVal); save_ppm(host, name); shotAt = -1; }
+      }
+    }
     static int capFrom = getenv("D2_CAP_FROM") ? atoi(getenv("D2_CAP_FROM")) : 0, capTo = getenv("D2_CAP_TO") ? atoi(getenv("D2_CAP_TO")) : 1<<30;
     if(every > 0 && (fr % every) == 0 && host.fw && fr >= capFrom && fr <= capTo) {
       char name[512]; snprintf(name, sizeof name, "%s/frame_%05d.ppm", outDir.c_str(), fr);

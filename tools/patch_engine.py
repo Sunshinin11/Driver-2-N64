@@ -412,6 +412,11 @@ P('Game/C/main.c', "\t_CutRec_Draw();\n\tDrawGame();\n\t\n\tif (game_over)",
 P('Game/C/main.c',
   "#else\n\tcnt = FastForward ? 7 : 1;\n\twhile (--cnt >= 0)\n\t\tStepGame();\n#endif",
   "#else\n\t{\n\t\tstatic int lastStepVbl = -1;\n\t\tconst int nowVbl = VSync(-1);\n\t\tcnt = FastForward ? 7 : 1;\n#ifndef D2_NO_MULTISTEP\n\t\tif (!FastForward)\n\t\t{\n\t\t\tif (lastStepVbl < 0) lastStepVbl = nowVbl - 2;\n\t\t\tint owed = (nowVbl - lastStepVbl) >> 1;\n\t\t\tif (owed < 1) owed = 1;\n\t\t\tif (CameraCnt < 100) { owed = 1; lastStepVbl = nowVbl; }\n\t\t\telse if (owed > D2_MULTISTEP_MAX) { owed = D2_MULTISTEP_MAX; lastStepVbl = nowVbl; }\n\t\t\telse lastStepVbl += owed * 2;\n\t\t\tcnt = owed;\n\t\t}\n#endif\n\t\twhile (--cnt >= 0)\n\t\t{\n\t\t\tif (cnt != 0)\n\t\t\t\tInitCamera(&MainPlayer);\n\t\t\tStepGame();\n\t\t\tif (cnt != 0)\n\t\t\t\tClearCurrentDrawBuffers();\n\t\t}\n\t\t{ static int logN = 0; if ((++logN % 120) == 0) fprintf(stderr, \"[passos] CameraCnt=%d vbl=%d\\n\", CameraCnt, nowVbl); }\n\t}\n#endif")
+# medicao: congela a logica por alguns quadros nos pontos fixos do roteiro de medicao (D2_BENCH_ROUTE) para o harness
+# fotografar a mesma cena em builds diferentes (comparacao de imagem)
+P('Game/C/main.c',
+  "#endif\n\t\twhile (--cnt >= 0)\n\t\t{\n\t\t\tif (cnt != 0)\n\t\t\t\tInitCamera(&MainPlayer);",
+  "#endif\n#ifdef D2_BENCH_ROUTE\n\t\t{ extern volatile int d2_bench_freeze; if (d2_bench_freeze > 0) cnt = 0; }\n#endif\n\t\twhile (--cnt >= 0)\n\t\t{\n\t\t\tif (cnt != 0)\n\t\t\t\tInitCamera(&MainPlayer);")
 # captura de movimento (Tanner/pedestres): lump inteiro e int16 little-endian
 P('Game/C/motion_c.c',
   "\t\tmemcpy((u_char*)MotionCaptureData[ThisMotion], (u_char*)lump_ptr, size);\n",
@@ -1227,7 +1232,32 @@ P("Game/C/tile.c", "void DrawTILES(PACKED_CELL_OBJECT** tiles, int tile_amount)\
 # --- chao: quad nao subdividido quando a perspectiva correta do RDP ja cobre (cantos alem do plano proximo, UV <= 63) ---
 P("Game/C/tile.c", "\tplotContext.ot += ofse;\n\n\tmakeMesh((MVERTEX(*)[5][5])subdivVerts, m, n);",
   "\tplotContext.ot += ofse;\n\n\tif (n >= 2 && (plotContext.flags & D2_PLOT_GROUND) && d2_ground_single_ok((MVERTEX(*)[5][5])subdivVerts))\n\t\tn = 1;\n\n\tmakeMesh((MVERTEX(*)[5][5])subdivVerts, m, n);")
+P("Game/C/tile.c",
+  "\tif (n >= 2 && (plotContext.flags & D2_PLOT_GROUND) && d2_ground_single_ok((MVERTEX(*)[5][5])subdivVerts))\n\t\tn = 1;\n\n\tmakeMesh((MVERTEX(*)[5][5])subdivVerts, m, n);",
+  "\tif (n >= 2 && (plotContext.flags & D2_PLOT_GROUND) && d2_ground_single_ok((MVERTEX(*)[5][5])subdivVerts))\n\t\tn = 1;\n\telse\n\t\tmakeMesh((MVERTEX(*)[5][5])subdivVerts, m, n);")
 P("Game/C/tile.c", '#include "d2_ground.h"\n#include "d2_ticks.h"', '#include "d2_ground.h"\nint d2_ground_single_ok(MVERTEX (*VSP)[5][5]);\n#include "d2_ticks.h"')
+
+# --- spool fatiado: UpdateSpoolPC processa a fila com orcamento de tempo por quadro (como o CD do PS1, que lia ao longo
+# de varios quadros), em vez de carregar uma area/regiao inteira num quadro so (picos de 5-18 M ticks). Orcamento,
+# telemetria [spool] e D2_SPOOL_SLICE=0 (comportamento antigo) em port/n64/sys_n64.c.
+P('Game/C/spool.c',
+  "#define SIMPLE_SPOOL\nextern int gContentOverride;\n#endif\n",
+  "#define SIMPLE_SPOOL\nextern int gContentOverride;\n#endif\n\n#if defined(D2_N64) && defined(SIMPLE_SPOOL)\nint UpdateSpoolPC(void);\n#ifdef __cplusplus\nextern \"C\" {\n#endif\nvoid d2_spool_slice_begin(void);\nint d2_spool_slice_yield(int done, int force);\nvoid d2_spool_slice_end(int done);\nvoid d2_spool_set_drain(int on);\nvoid d2_spool_note_drain(void);\n#ifdef __cplusplus\n}\n#endif\n#endif\n")
+P('Game/C/spool.c',
+  "void SpoolSYNC(void)\n{\n\tdo {",
+  "void SpoolSYNC(void)\n{\n#if defined(D2_N64) && defined(SIMPLE_SPOOL)\n\t// spool fatiado: termina agora o que falta da fila\n\twhile (spoolactive != 0)\n\t{\n\t\td2_spool_set_drain(1);\n\t\tconst int r = UpdateSpoolPC();\n\t\td2_spool_set_drain(0);\n\t\tif (!r)\n\t\t\tbreak;\n\t}\n\treturn;\n#endif\n\tdo {")
+P('Game/C/spool.c',
+  "void CheckValidSpoolData(void)\n{\n\tif (models_ready)\n\t\tinit_spooled_models();\n\t\n#ifdef PSX",
+  "void CheckValidSpoolData(void)\n{\n\tif (models_ready)\n\t\tinit_spooled_models();\n\t\n#if defined(D2_N64) && defined(SIMPLE_SPOOL)\n\t// spool fatiado: continua a fila em andamento (uma fatia por passo de logica, antes do ControlMap)\n\tif (spoolactive)\n\t{\n\t\tUpdateSpoolPC();\n\t\tif (FastForward)\n\t\t\tSpoolSYNC();\n\t}\n\t// a regiao de que o jogador precisa ainda esta na fila: termina a carga agora (o PS1 parava o jogo com o icone do CD)\n\tif (spoolactive && check_regions_present())\n\t{\n\t\td2_spool_note_drain();\n\t\tSpoolSYNC();\n\t}\n#endif\n#ifdef PSX")
+P('Game/C/spool.c',
+  "\tLoadingArea = 1;\n\n\tLoadInAreaTSets(LoadedArea);",
+  "#if defined(D2_N64) && defined(SIMPLE_SPOOL)\n\t// nunca sobrepor duas cargas de area: termina a anterior antes de liberar os slots de modelo\n\tif (spoolactive)\n\t{\n\t\td2_spool_note_drain();\n\t\tSpoolSYNC();\n\t}\n#endif\n\tLoadingArea = 1;\n\n\tLoadInAreaTSets(LoadedArea);")
+P('Game/C/spool.c',
+  "\tfor (; spoolpos_reading < spoolcounter; spoolpos_reading++)\n\t{\n\t\tint spoolSector;\n\t\tSPOOLQ* current;",
+  "#ifdef D2_N64\n\tint d2Done = 0;\n\td2_spool_slice_begin();\n#endif\n\tfor (; spoolpos_reading < spoolcounter; spoolpos_reading++)\n\t{\n#ifdef D2_N64\n\t\t// orcamento do quadro esgotado: o resto da fila segue nos proximos quadros (StartSpooling em ControlMap)\n\t\tif (d2_spool_slice_yield(d2Done++, FastForward || quickSpool == 1))\n\t\t\treturn 1;\n#endif\n\t\tint spoolSector;\n\t\tSPOOLQ* current;")
+P('Game/C/spool.c',
+  "#undef SPL_READ\n\t}\n\n\tspoolcounter = 0;\n\tspoolpos_reading = 0;\n\tspoolactive = 0;\n",
+  "#undef SPL_READ\n\t}\n\n#ifdef D2_N64\n\td2_spool_slice_end(d2Done);\n#endif\n\tspoolcounter = 0;\n\tspoolpos_reading = 0;\n\tspoolactive = 0;\n")
 
 def prune():
     import shutil
@@ -1259,6 +1289,302 @@ P('Game/C/system.c',
 P('Game/C/main.c',
   "#ifdef D2_TEST_MISSION\n#ifndef D2_TEST_TYPE",
   "#ifdef D2_TEST_FMV\n\t{\n\t\tstatic const unsigned char d2_ids[] = { 0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20,21,22,23,24,25,26,27,28,96,97,98,99 };\n\t\tint d2i;\n\t\tfor (d2i = 0; d2i < (int)sizeof(d2_ids); d2i++)\n\t\t{\n\t\t\tfprintf(stderr, \"[fmvtest] inicio id=%d\\n\", d2_ids[d2i]);\n\t\t\tPlayFMV(d2_ids[d2i]);\n\t\t\tfprintf(stderr, \"[fmvtest] fim id=%d\\n\", d2_ids[d2i]);\n\t\t}\n\t}\n#endif\n#ifdef D2_TEST_MISSION\n#ifndef D2_TEST_TYPE")
+
+# ---- marcas de pneu: projecao direta via D2XCam pre-carregada e vertices conectados sem recomputacao ----
+P('Game/C/shadow.c',
+  """// [D] [T]
+void DrawTyreTracks(void)
+{
+	char last_duff;
+	POLY_FT4 *poly;
+	TYRE_TRACK *tt_p;
+	int index, loop;
+	int player_id, wheel_loop;
+	POLY_FT4 *lasttyre;
+	SVECTOR ps[4];
+	int z;
+
+	d2x_SetRotMatrix(&inv_camera_matrix);
+	d2x_SetTransVector(&dummy);
+
+	for (player_id = 0; player_id < MAX_TYRE_TRACK_PLAYERS; player_id++)
+	{
+		for (wheel_loop = 0; wheel_loop < MAX_TYRE_TRACK_WHEELS; wheel_loop++)
+		{
+			lasttyre = NULL;
+			last_duff = 1;
+			index = tyre_track_offset[player_id][wheel_loop];
+
+			for (loop = 0; loop < num_tyre_tracks[player_id][wheel_loop]; loop++)
+			{
+				tt_p = track_buffer[player_id][wheel_loop] + index;
+
+				index++;
+				index &= 63;
+
+				if (tt_p->type == 2)
+					continue;
+
+				ps[0].vx = tt_p->p1.vx - camera_position.vx;
+				ps[0].vy = -camera_position.vy - tt_p->p1.vy;
+				ps[0].vz = tt_p->p1.vz - camera_position.vz;
+
+				ps[1].vx = tt_p->p2.vx - camera_position.vx;
+				ps[1].vy = -camera_position.vy - tt_p->p2.vy;
+				ps[1].vz = tt_p->p2.vz - camera_position.vz;
+
+				ps[2].vx = tt_p->p3.vx - camera_position.vx;
+				ps[2].vy = -camera_position.vy - tt_p->p3.vy;
+				ps[2].vz = tt_p->p3.vz - camera_position.vz;
+
+				ps[3].vx = tt_p->p4.vx - camera_position.vx;
+				ps[3].vy = -camera_position.vy - tt_p->p4.vy;
+				ps[3].vz = tt_p->p4.vz - camera_position.vz;
+
+				poly = (POLY_FT4*)current->primptr;
+
+				z = 0;
+
+				if (lasttyre != NULL && tt_p->type != 0 && !last_duff)
+				{
+					last_duff = 1;
+
+					if (ps[2].vx + 9000 <= 18000 && ps[2].vz + 9000 <= 18000)
+					{
+						d2x_ldv0(&ps[2]);
+						d2x_rtps();
+
+						d2x_stsxy(&poly->x2);
+
+						d2x_stsz(&z);
+
+						d2x_ldv0(&ps[3]);
+						d2x_rtps();
+
+						*(u_int*)&poly->x0 = *(u_int*)&lasttyre->x2;
+						*(u_int*)&poly->x1 = *(u_int*)&lasttyre->x3;
+
+						d2x_stsxy(&poly->x3);
+					}
+				}
+				else
+				{
+					last_duff = 1;
+
+					if (ps[0].vx + 0x5000 <= 0xa000 && ps[0].vz + 0x5000 <= 0xa000)
+					{
+						d2x_ldv3(&ps[0], &ps[1], &ps[2]);
+						d2x_rtpt();
+
+						d2x_stsxy3(&poly->x0, &poly->x1, &poly->x2);
+
+						d2x_stsz(&z);
+
+						d2x_ldv0(&ps[3]);
+						d2x_rtps();
+
+						d2x_stsxy(&poly->x3);
+					}
+					else
+					{
+						tt_p->type = 2;
+					}
+				}
+
+				if (z > 50)
+				{
+					setPolyFT4(poly);
+					setSemiTrans(poly, 1);
+
+					if (tt_p->surface == 1)
+					{
+						poly->r0 = poly->g0 = poly->b0 = 26;
+					}
+					else
+					{
+						poly->r0 = 17;
+						poly->g0 = poly->b0 = 35;
+					}
+
+					*(ushort*)&poly->u0 = *(ushort*)&gTyreTexture.coords.u0;
+					*(ushort*)&poly->u1 = *(ushort*)&gTyreTexture.coords.u1;
+					*(ushort*)&poly->u2 = *(ushort*)&gTyreTexture.coords.u2;
+					*(ushort*)&poly->u3 = *(ushort*)&gTyreTexture.coords.u3;
+
+					poly->tpage = gTyreTexture.tpageid | 0x40;
+					poly->clut = gTyreTexture.clutid;
+
+					addPrim(current->ot + (z >> 3), poly);
+					current->primptr += sizeof(POLY_FT4);
+
+					lasttyre = poly;
+					last_duff = 0;
+				}
+			}
+		}
+	}
+
+}""",
+  """// [D] [T]
+void DrawTyreTracks(void)
+{
+	char last_duff;
+	POLY_FT4 *poly;
+	TYRE_TRACK *tt_p;
+	int index, loop;
+	int player_id, wheel_loop;
+	POLY_FT4 *lasttyre;
+	int z;
+
+	d2x_SetRotMatrix(&inv_camera_matrix);
+	d2x_SetTransVector(&dummy);
+
+	D2XCam cam;
+	d2x_cam(&cam);
+
+	const u_short tyre_u0 = *(u_short*)&gTyreTexture.coords.u0;
+	const u_short tyre_u1 = *(u_short*)&gTyreTexture.coords.u1;
+	const u_short tyre_u2 = *(u_short*)&gTyreTexture.coords.u2;
+	const u_short tyre_u3 = *(u_short*)&gTyreTexture.coords.u3;
+	const u_short tyre_tpage = gTyreTexture.tpageid | 0x40;
+	const u_short tyre_clut = gTyreTexture.clutid;
+
+	for (player_id = 0; player_id < MAX_TYRE_TRACK_PLAYERS; player_id++)
+	{
+		for (wheel_loop = 0; wheel_loop < MAX_TYRE_TRACK_WHEELS; wheel_loop++)
+		{
+			lasttyre = NULL;
+			last_duff = 1;
+			index = tyre_track_offset[player_id][wheel_loop];
+
+			const int ntracks = num_tyre_tracks[player_id][wheel_loop];
+			for (loop = 0; loop < ntracks; loop++)
+			{
+				tt_p = track_buffer[player_id][wheel_loop] + index;
+
+				index = (index + 1) & 63;
+
+				if (tt_p->type == 2)
+					continue;
+
+				poly = (POLY_FT4*)current->primptr;
+				z = 0;
+
+				int sx, sy, a1, a2, a3;
+				unsigned int sz, h;
+
+				if (lasttyre != NULL && tt_p->type != 0 && !last_duff)
+				{
+					last_duff = 1;
+
+					const int vx2 = (short)(tt_p->p3.vx - camera_position.vx);
+					const int vz2 = (short)(tt_p->p3.vz - camera_position.vz);
+
+					if (vx2 + 9000 <= 18000 && vz2 + 9000 <= 18000)
+					{
+						const int vy2 = (short)(-camera_position.vy - tt_p->p3.vy);
+						d2x_proj(&cam, vx2, vy2, vz2, &sx, &sy, &sz, &h, &a1, &a2, &a3);
+						poly->x2 = (short)sx;
+						poly->y2 = (short)sy;
+						z = (int)sz;
+
+						const int vx3 = (short)(tt_p->p4.vx - camera_position.vx);
+						const int vy3 = (short)(-camera_position.vy - tt_p->p4.vy);
+						const int vz3 = (short)(tt_p->p4.vz - camera_position.vz);
+						d2x_proj(&cam, vx3, vy3, vz3, &sx, &sy, &sz, &h, &a1, &a2, &a3);
+						poly->x3 = (short)sx;
+						poly->y3 = (short)sy;
+
+						*(u_int*)&poly->x0 = *(u_int*)&lasttyre->x2;
+						*(u_int*)&poly->x1 = *(u_int*)&lasttyre->x3;
+					}
+				}
+				else
+				{
+					last_duff = 1;
+
+					const int vx0 = (short)(tt_p->p1.vx - camera_position.vx);
+					const int vz0 = (short)(tt_p->p1.vz - camera_position.vz);
+
+					if (vx0 + 0x5000 <= 0xa000 && vz0 + 0x5000 <= 0xa000)
+					{
+						const int vy0 = (short)(-camera_position.vy - tt_p->p1.vy);
+						d2x_proj(&cam, vx0, vy0, vz0, &sx, &sy, &sz, &h, &a1, &a2, &a3);
+						poly->x0 = (short)sx;
+						poly->y0 = (short)sy;
+
+						const int vx1 = (short)(tt_p->p2.vx - camera_position.vx);
+						const int vy1 = (short)(-camera_position.vy - tt_p->p2.vy);
+						const int vz1 = (short)(tt_p->p2.vz - camera_position.vz);
+						d2x_proj(&cam, vx1, vy1, vz1, &sx, &sy, &sz, &h, &a1, &a2, &a3);
+						poly->x1 = (short)sx;
+						poly->y1 = (short)sy;
+
+						const int vx2 = (short)(tt_p->p3.vx - camera_position.vx);
+						const int vy2 = (short)(-camera_position.vy - tt_p->p3.vy);
+						const int vz2 = (short)(tt_p->p3.vz - camera_position.vz);
+						d2x_proj(&cam, vx2, vy2, vz2, &sx, &sy, &sz, &h, &a1, &a2, &a3);
+						poly->x2 = (short)sx;
+						poly->y2 = (short)sy;
+						z = (int)sz;
+
+						const int vx3 = (short)(tt_p->p4.vx - camera_position.vx);
+						const int vy3 = (short)(-camera_position.vy - tt_p->p4.vy);
+						const int vz3 = (short)(tt_p->p4.vz - camera_position.vz);
+						d2x_proj(&cam, vx3, vy3, vz3, &sx, &sy, &sz, &h, &a1, &a2, &a3);
+						poly->x3 = (short)sx;
+						poly->y3 = (short)sy;
+					}
+					else
+					{
+						tt_p->type = 2;
+					}
+				}
+
+				if (z > 50)
+				{
+					setPolyFT4(poly);
+					setSemiTrans(poly, 1);
+
+					if (tt_p->surface == 1)
+					{
+						poly->r0 = poly->g0 = poly->b0 = 26;
+					}
+					else
+					{
+						poly->r0 = 17;
+						poly->g0 = poly->b0 = 35;
+					}
+
+					*(ushort*)&poly->u0 = tyre_u0;
+					*(ushort*)&poly->u1 = tyre_u1;
+					*(ushort*)&poly->u2 = tyre_u2;
+					*(ushort*)&poly->u3 = tyre_u3;
+
+					poly->tpage = tyre_tpage;
+					poly->clut = tyre_clut;
+
+					addPrim(current->ot + (z >> 3), poly);
+					current->primptr += sizeof(POLY_FT4);
+
+					lasttyre = poly;
+					last_duff = 0;
+				}
+			}
+		}
+	}
+
+}""")
+
+# --- experimento: predios/tiles na fila do mundo Tiny3D (RSP faz transformacao/recorte). So com D2_T3D_WORLD=1 e
+# -DD2_T3D_QUEUE (ganchos de aafba73, desligados em a30b79d sem registro do motivo); no build padrao nada muda.
+P("Game/C/draw.c", '#include "event.h"\n#include "d2_ticks.h"', '#include "event.h"\n#include "d2_t3d_world.h"\n#include "d2_ticks.h"')
+P("Game/C/draw.c",
+  "\t\telse\n\t\t\tPlotBuildingModel(model, cop->yang, &plotContext);",
+  "\t\telse\n\t\t{\n#ifdef D2_T3D_QUEUE\n\t\t\tint t3dIdx = cop->type;\n\t\t\tif (Z > DRAW_LOD_DIST_LOW + DRAW_LOD_DIST_LOW / 4 && Low2LowerDetailTable && Low2LowerDetailTable[t3dIdx] != 0xFFFF)\n\t\t\t\tt3dIdx = Low2LowerDetailTable[t3dIdx];\n\t\t\tif (d2_t3d_has_model(t3dIdx))\n\t\t\t\td2_t3d_queue_building(t3dIdx, cop->yang, Z, d2xf.tr[0], d2xf.tr[1], d2xf.tr[2]);\n\t\t\telse\n#endif\n\t\t\tPlotBuildingModel(model, cop->yang, &plotContext);\n\t\t}")
+P("Game/C/tile.c",
+  "#ifdef DYNAMIC_LIGHTING\n\t\t\t(gEnableDlights ? Tile1x1Lit : Tile1x1)(pModel);",
+  "#ifdef D2_T3D_QUEUE\n\t\t\tif (d2_t3d_has_model(Z > DRAW_LOD_DIST_LOW ? (Low2LowerDetailTable[model_number] != 0xFFFF ? Low2LowerDetailTable[model_number] : model_number) : model_number))\n\t\t\t{\n\t\t\t\tint t3dIdx = Z > DRAW_LOD_DIST_LOW ? (Low2LowerDetailTable[model_number] != 0xFFFF ? Low2LowerDetailTable[model_number] : model_number) : model_number;\n\t\t\t\td2_t3d_set_tile_tint(plotContext.colour);\n\t\t\t\td2_t3d_queue_tile(t3dIdx, yang, Z, d2xf.tr[0], d2xf.tr[1], d2xf.tr[2]);\n\t\t\t\tcontinue;\n\t\t\t}\n#endif\n#ifdef DYNAMIC_LIGHTING\n\t\t\t(gEnableDlights ? Tile1x1Lit : Tile1x1)(pModel);")
 
 def main():
     ok = skipped = missing = 0

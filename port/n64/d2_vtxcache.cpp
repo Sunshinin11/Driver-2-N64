@@ -269,12 +269,21 @@ static inline void mesh_project(MVERTEX (*VSP)[5][5], int numPolys, unsigned int
 	for (int k = 0; k < 9; k++) { src[k] = u[k]; vc_proj((const SVECTOR *)u[k], &xy[k], &z[k], cam ? cam[k] : 0); }
 }
 
+// Cache das projecoes calculadas em d2_ground_single_ok para reaproveitamento em draw_mesh
+static const MVERTEX (*s_ground_vsp)[5][5] = nullptr;
+static unsigned int s_ground_xy[4], s_ground_z[4];
+static int s_ground_single_cached = 0;
+
 static void draw_mesh(MVERTEX (*VSP)[5][5], int n, _pct *pc,
                       const VCEnt *const *corners)
 {
 	POLY_FT4 *prim = (POLY_FT4 *)pc->primptr;
 	const int numPolys = n < 2 ? 1 : 4;
 	unsigned int xy[9], z[9];
+	// consome o cache de d2_ground_single_ok em qualquer caminho: so vale para a chamada logo em seguida
+	const int groundCached = numPolys == 1 && s_ground_single_cached && s_ground_vsp == VSP;
+	s_ground_single_cached = 0;
+	s_ground_vsp = nullptr;
 #ifdef D2_TEST_BUILDING_CACHE
 	if (corners)
 	{
@@ -293,6 +302,14 @@ static void draw_mesh(MVERTEX (*VSP)[5][5], int n, _pct *pc,
 	}
 	else
 #endif
+	if (groundCached)
+	{
+		xy[0] = s_ground_xy[0]; xy[1] = s_ground_xy[1];
+		xy[2] = s_ground_xy[2]; xy[3] = s_ground_xy[3];
+		z[0] = s_ground_z[0]; z[1] = s_ground_z[1];
+		z[2] = s_ground_z[2]; z[3] = s_ground_z[3];
+	}
+	else
 	{
 		const MVERTEX *src[9];
 		mesh_project(VSP, numPolys, xy, z, nullptr, src);
@@ -344,15 +361,25 @@ int d2_ground_single_ok(MVERTEX (*VSP)[5][5])
 	d2x_cam(&s_vcCam0);
 	const unsigned int near = d2xf.h / 2 + 1;
 	int umin = 255, umax = 0, vmin = 255, vmax = 0;
+	s_ground_single_cached = 0;
+	s_ground_vsp = nullptr;
 	for (int k = 0; k < 4; k++)
 	{
 		unsigned int xy, z;
 		vc_proj((const SVECTOR *)&(*VSP)[0][k], &xy, &z, nullptr);
 		if (z < near) return 0;
+		s_ground_xy[k] = xy;
+		s_ground_z[k] = z;
 		const int u = (*VSP)[0][k].uv.s.u0, v = (*VSP)[0][k].uv.s.v0;
 		if (u < umin) umin = u; if (u > umax) umax = u; if (v < vmin) vmin = v; if (v > vmax) vmax = v;
 	}
-	return (umax - umin) <= 63 && (vmax - vmin) <= 63;
+	if ((umax - umin) <= 63 && (vmax - vmin) <= 63)
+	{
+		s_ground_vsp = VSP;
+		s_ground_single_cached = 1;
+		return 1;
+	}
+	return 0;
 }
 
 void drawMesh(MVERTEX (*VSP)[5][5], int, int n, _pct *pc)
@@ -366,6 +393,8 @@ void drawMeshLit(MVERTEX (*VSP)[5][5], int m, int n, _pct *pc)
 	POLY_GT4 *prim = (POLY_GT4 *)pc->primptr;
 	const int numPolys = n < 2 ? 1 : 4;
 	unsigned int xy[9], z[9]; short cam[9][3]; const MVERTEX *src[9];
+	s_ground_single_cached = 0;   // precisa de cam[]: nao usa o cache do chao, so o invalida
+	s_ground_vsp = nullptr;
 	mesh_project(VSP, numPolys, xy, z, cam, src);
 
 	for (int index = 0; index < numPolys; index++)

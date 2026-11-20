@@ -30,8 +30,13 @@ extern "C" void *__wrap_memset(void *p, int c, size_t n)
     const unsigned long long v = 0x0101010101010101ull * (unsigned char)c;
     while (((uintptr_t)d & 7) && n) { *d++ = (unsigned char)c; n--; }
     unsigned long long *q = (unsigned long long *)d;
-    while (n >= 32) { q[0] = v; q[1] = v; q[2] = v; q[3] = v; q += 4; n -= 32; }
-    while (n >= 8) { *q++ = v; n -= 8; }
+    while (n >= 64) {
+        q[0] = v; q[1] = v; q[2] = v; q[3] = v;
+        q[4] = v; q[5] = v; q[6] = v; q[7] = v;
+        q += 8; n -= 64;
+    }
+    while (n >= 16) { q[0] = v; q[1] = v; q += 2; n -= 16; }
+    if (n >= 8) { *q++ = v; n -= 8; }
     d = (unsigned char *)q;
     while (n--) *d++ = (unsigned char)c;
     return p;
@@ -41,6 +46,7 @@ extern DISPENV activeDispEnv;
 void d2_sys_note_frame(void);      // sys_n64.c
 void d2_log_push(const char *);
 int d2_sys_vbl_count(void);
+void d2_sys_wait_vbl_until(int target);
 }
 
 #define D2DBG(...) ((void)0)
@@ -60,6 +66,10 @@ static TexFormat s_texFormat;
 static bool s_textured, s_offscreen;
 static BlendMode s_blend;
 static int s_modeKey = -1;
+static int s_batchKey = -1;           // chave do ultimo begin_batch: zerar sempre que outro codigo trocar o modo do RDP
+static int s_ctxCx0, s_ctxCx1, s_ctxCy0, s_ctxCy1;   // scissor em quartos de pixel (GR_SetupClipMode / begin_batch)
+extern "C" { static void persp_off(void); }
+static bool s_perspOn;               // perspectiva do RDP ligada (so o chao usa); a proxima primitiva que nao e chao desliga
 static int s_benchTris, s_benchTex;
 static int s_triCount, s_texTriCount, s_subTri, s_calls; static unsigned s_areaH[6];
 static int s_scx0, s_scy0, s_scx1 = SCREEN_W, s_scy1 = SCREEN_H;
@@ -129,22 +139,41 @@ static void rdp_init_once(void)
 // grade de 16 x 16 celulas: 64 palavras de largura x 32 linhas de altura
 static unsigned int s_cellVer[16 * 16];
 static unsigned int s_vramWrites;
+static unsigned int s_cellPref[17][17];
+static bool s_cellPrefDirty = true;
+
 extern "C" void d2_vram_touch(int x, int y, int w, int h)
 {
     s_vramWrites++;
+    s_cellPrefDirty = true;
     if (w <= 0 || h <= 0) return;
     int cx0 = x >> 6, cx1 = (x + w - 1) >> 6, cy0 = y >> 5, cy1 = (y + h - 1) >> 5;
     if (cx0 < 0) cx0 = 0; if (cy0 < 0) cy0 = 0; if (cx1 > 15) cx1 = 15; if (cy1 > 15) cy1 = 15;
     for (int cy = cy0; cy <= cy1; cy++)
         for (int cx = cx0; cx <= cx1; cx++) s_cellVer[cy * 16 + cx]++;
 }
-static unsigned int cell_signature(int wx, int wy, int ww, int wh)
+static void update_cell_pref(void)
 {
-    int cx0 = (wx & 1023) >> 6, cx1 = ((wx + ww - 1) & 1023) >> 6, cy0 = (wy & 511) >> 5, cy1 = ((wy + wh - 1) & 511) >> 5;
-    unsigned int sig = 0;
-    for (int cy = cy0; cy <= cy1; cy++)
-        for (int cx = cx0; cx <= cx1; cx++) sig += s_cellVer[cy * 16 + cx];
-    return sig;
+    for (int cy = 0; cy < 16; cy++)
+    {
+        unsigned int row_sum = 0;
+        for (int cx = 0; cx < 16; cx++)
+        {
+            row_sum += s_cellVer[cy * 16 + cx];
+            s_cellPref[cy + 1][cx + 1] = s_cellPref[cy][cx + 1] + row_sum;
+        }
+    }
+    s_cellPrefDirty = false;
+}
+static inline unsigned int cell_signature(int wx, int wy, int ww, int wh)
+{
+    const int cx0 = (wx & 1023) >> 6, cx1 = ((wx + ww - 1) & 1023) >> 6;
+    const int cy0 = (wy & 511) >> 5, cy1 = ((wy + wh - 1) & 511) >> 5;
+    if (__builtin_expect(cx0 == cx1 && cy0 == cy1, 1))
+        return s_cellVer[cy0 * 16 + cx0];
+    if (__builtin_expect(s_cellPrefDirty, 0))
+        update_cell_pref();
+    return s_cellPref[cy1 + 1][cx1 + 1] - s_cellPref[cy0][cx1 + 1] - s_cellPref[cy1 + 1][cx0] + s_cellPref[cy0][cx0];
 }
 
 // ---------------------------------------------------------------- cache de regioes de textura decodificadas
@@ -208,7 +237,7 @@ static inline unsigned short pal_word(int x, int y)
     return (unsigned short)(psx_to_rgba32(d2_vram_rd(x, y)) & 255);   // IA16: intensidade 0, alfa = max(r,g,b) como no RGBA32
 }
 
-struct PalEnt { int clut; unsigned int sig, gen, use, vw; int valid, bank; unsigned short pal[16] __attribute__((aligned(16))); };
+struct PalEnt { int clut; unsigned int sig, gen, use, vw, cver; int valid, bank; unsigned short pal[16] __attribute__((aligned(16))); };
 #define PAL_CACHE 1024
 static PalEnt s_palCache[PAL_CACHE];
 
@@ -432,7 +461,7 @@ static bool s_tmemDirty = true;       // TMEM ou TILE alterado: requer sincroniz
 static struct { int clut; unsigned int gen, lru; } s_bank[16];
 static unsigned int s_bankLru;
 static int s_curBank = -1;            // banco configurado no TILE0 da janela (-1 = desconhecido)
-static int s_pbClut = -1; static unsigned int s_pbVw;
+static int s_pbClut = -1; static unsigned int s_pbVw, s_pbCver;
 static void banks_invalidate(void)
 {
     for (int i = 0; i < 16; i++) s_bank[i].clut = -1;
@@ -444,6 +473,10 @@ static void banks_invalidate(void)
 }
 
 // ---------------------------------------------------------------- modos do RDP
+static int s_lastTexFmt = -1;
+static int s_lastTexRgbaMode = -1;
+static int s_lastPalIA = -1;
+
 static void set_mode(bool textured, int fmt, BlendMode blend)
 {
     int rgba_mode = 0;
@@ -454,28 +487,42 @@ static void set_mode(bool textured, int fmt, BlendMode blend)
     const bool ciSub = textured && fmt == TF_4_BIT && blend == BM_SUBTRACT;
     const int modeBlend = rgba_mode;
     if (ciSub) rgba_mode = 0;
-    s_palIA = ciSub ? 1 : 0;
+    const int newPalIA = ciSub ? 1 : 0;
 
-    if (rgba_mode != s_curRgbaMode)
-    {
-        s_lastUp.clut = -1;
-        s_lastUp.palEnt = 0;
-        banks_invalidate();
-        s_curRgbaMode = rgba_mode;
-    }
-    s_curBlend = blend;
     int key = textured ? (1 + fmt) * 8 + (int)blend : (int)blend;
     if (key == s_modeKey) return;
     s_modeKey = key;
-    s_lastUp.slot = 0;     // o estado de textura se perde ao trocar de modo (palette/tlut)
-    s_lastUp.clut = -1;
-    s_lastUp.palEnt = 0;
-    s_leanTiles = false;
-    s_tmemWin = false;
-    s_winBase = -1;
-    s_curBank = -1;
-    s_pbClut = -1;
+    s_curBlend = blend;
+
+    if (textured)
+    {
+        const bool texIncompatible = (fmt != s_lastTexFmt) || (rgba_mode != s_lastTexRgbaMode) ||
+                                     (newPalIA != s_lastPalIA) || (s_lastTexFmt < 0);
+        if (texIncompatible)
+        {
+            s_lastUp.slot = 0;     // o estado de textura se perde se formato, modo RGBA ou modo TLUT mudar
+            s_lastUp.clut = -1;
+            s_lastUp.palEnt = 0;
+            s_leanTiles = false;
+            s_tmemWin = false;
+            s_winBase = -1;
+            s_curBank = -1;
+            s_pbClut = -1;
+            if (rgba_mode != s_curRgbaMode || newPalIA != s_palIA)
+            {
+                banks_invalidate();
+            }
+            s_curRgbaMode = rgba_mode;
+            s_palIA = newPalIA;
+            s_lastTexFmt = fmt;
+            s_lastTexRgbaMode = rgba_mode;
+            s_lastPalIA = newPalIA;
+        }
+    }
+    // Modos nao texturizados (F3/F4/linhas) comprovadamente nao tocam TMEM, tiles nem TLUT: preserva o estado ativo
+
     rdpq_set_mode_standard();
+    s_perspOn = false;
     rdpq_mode_antialias(AA_NONE);
     rdpq_mode_dithering(DITHER_NONE_NONE);
     rdpq_mode_filter(FILTER_POINT);
@@ -547,8 +594,13 @@ extern "C" void d2_rdp_invalidate_backend_cache(void)
     rdpq_set_scissor(s_scx0, s_scy0, s_scx1, s_scy1);
 
     s_modeKey = -1;
+    s_batchKey = -1;
+    s_perspOn = false;
     s_curRgbaMode = -1;
     s_curBlend = (BlendMode)-1;
+    s_lastTexFmt = -1;
+    s_lastTexRgbaMode = -1;
+    s_lastPalIA = -1;
 
     memset(&s_lastUp, 0, sizeof(s_lastUp));
     s_lastUp.clut = -1;
@@ -568,29 +620,43 @@ extern "C" void d2_rdp_invalidate_backend_cache(void)
 
 
 static __attribute__((noinline)) void upload_pal_bank_slow(int pkey, int clut);
+static void pal_select_bank(int b);
+// mapa direto CLUT -> banco da TMEM (validado pela versao da celula da VRAM e pelo dono atual do banco): as quads alternam entre
+// poucas paletas, e sem o mapa cada troca passava pelo caminho lento (cache de paletas + varredura dos 15 bancos)
+static struct { int pkey; unsigned int vw, cver; int bank; } s_pbMap[256];
 static inline void upload_pal_bank(int clut)
 {
     const int pkey = clut | (s_palIA ? 0x10000 : 0);
-    if (__builtin_expect(pkey == s_pbClut && s_pbVw == s_vramWrites && s_curBank > 0 && s_bank[s_curBank].clut == pkey, 1)) { s_bank[s_curBank].lru = ++s_bankLru; return; }
+    const unsigned int cver = s_cellVer[((clut >> 7) & 0xF0) | ((clut >> 2) & 0x0F)];
+    if (__builtin_expect(pkey == s_pbClut && s_pbCver == cver && s_curBank > 0 && s_bank[s_curBank].clut == pkey, 1)) { s_bank[s_curBank].lru = ++s_bankLru; return; }
+    const int mi = (pkey ^ (pkey >> 4)) & 255;
+    const int mb = s_pbMap[mi].bank;
+    if (s_pbMap[mi].pkey == pkey && s_pbMap[mi].cver == cver && mb > 0 && s_bank[mb].clut == pkey)
+    {
+        s_pbClut = pkey; s_pbCver = cver;
+        s_bank[mb].lru = ++s_bankLru; s_cBankHitX++;
+        if (mb != s_curBank) pal_select_bank(mb);
+        return;
+    }
     upload_pal_bank_slow(pkey, clut);
 }
 static void upload_pal_bank_slow(int pkey, int clut)
 {
-    s_pbClut = pkey; s_pbVw = s_vramWrites;
+    const unsigned int cver = s_cellVer[((clut >> 7) & 0xF0) | ((clut >> 2) & 0x0F)];
+    s_pbClut = pkey; s_pbCver = cver; s_pbVw = s_vramWrites;
     PalEnt *e = &s_palCache[(pkey ^ (pkey >> 8)) & (PAL_CACHE - 1)];
     int cx, cy; d2_clut_xy((unsigned)clut & 0xFFFF, &cx, &cy);
     bool ok = e->valid && e->clut == pkey;
-    if (ok && e->vw != s_vramWrites)
+    if (ok && e->cver != cver)
     {
-        const unsigned int sig = cell_signature(cx, cy, 16, 1);
-        if (sig != e->sig) ok = false; else e->vw = s_vramWrites;
+        ok = false;
     }
     if (!ok)
     {
         if (e->valid && e->use > s_doneCounter) rdp_wait_idle_s(3);      // o RDP ainda pode estar lendo esta paleta
         for (int i = 0; i < 16; i++) e->pal[i] = pal_word(cx + i, cy);
         data_cache_hit_writeback(e->pal, 32);
-        e->clut = pkey; e->sig = cell_signature(cx, cy, 16, 1); e->vw = s_vramWrites; e->valid = 1; e->gen = ++s_genCounter;
+        e->clut = pkey; e->sig = cell_signature(cx, cy, 16, 1); e->cver = cver; e->vw = s_vramWrites; e->valid = 1; e->gen = ++s_genCounter;
     }
     int b = 0;
     if (e->bank > 0 && e->bank < 16 && s_bank[e->bank].clut == pkey && s_bank[e->bank].gen == e->gen)
@@ -620,23 +686,25 @@ static void upload_pal_bank_slow(int pkey, int clut)
     }
     e->bank = b;
     s_bank[b].lru = ++s_bankLru;
-    if (b != s_curBank)
+    { const int mi = (pkey ^ (pkey >> 4)) & 255; s_pbMap[mi].pkey = pkey; s_pbMap[mi].vw = s_vramWrites; s_pbMap[mi].cver = cver; s_pbMap[mi].bank = b; }
+    if (b != s_curBank) pal_select_bank(b);
+}
+static void pal_select_bank(int b)
+{
+    if (s_d2gpuOvl)
     {
-        if (s_d2gpuOvl)
-        {
-            track_ovl_switch(s_d2gpuOvl);
-            rspq_write(s_d2gpuOvl, D2G_CMD_SET_TILE_PAL, 0, (uint32_t)b);
-            s_curBank = b;
-            s_tmemDirty = true;
-        }
-        else
-        {
-            track_ovl_switch(0);
-            rdpq_tileparms_t tp = {}; tp.palette = b;
-            rdpq_set_tile(TILE0, FMT_CI4, 0, 32, &tp);
-            s_curBank = b;
-            s_tmemDirty = true;
-        }
+        track_ovl_switch(s_d2gpuOvl);
+        rspq_write(s_d2gpuOvl, D2G_CMD_SET_TILE_PAL, 0, (uint32_t)b);
+        s_curBank = b;
+        s_tmemDirty = true;
+    }
+    else
+    {
+        track_ovl_switch(0);
+        rdpq_tileparms_t tp = {}; tp.palette = b;
+        rdpq_set_tile(TILE0, FMT_CI4, 0, 32, &tp);
+        s_curBank = b;
+        s_tmemDirty = true;
     }
 }
 
@@ -730,15 +798,8 @@ static bool upload_win(int px, int py, int clut, int u0, int v0, int w, int h)
     return true;
 }
 
-// carrega a regiao (u0,v0,w,h, passo step) da pagina de textura na TMEM (paleta inclusa). Retorna false se nao coube.
-static bool upload_region(int page, int clut, int u0, int v0, int w, int h, int step)
+static __attribute__((noinline, cold)) bool upload_region_slow(int page, int clut, int u0, int v0, int w, int h, int step, int px, int py)
 {
-    if (w <= 0 || h <= 0) return false;
-    const int px = (page & 15) * 64, py = ((page >> 4) & 1) * 256;
-    if (!s_curRgbaMode && s_texFormat == TF_4_BIT && step == 1 && w <= 64 && h <= 64)
-    {
-        return upload_win(px, py, clut, u0, v0, w, h);
-    }
     s_upOu = u0; s_upOv = v0;
     int sw, sh, wpad;
     bool useShadow = false;
@@ -843,6 +904,18 @@ static bool upload_region(int page, int clut, int u0, int v0, int w, int h, int 
         s_lastUp.slot = slot; s_lastUp.gen = slot->gen;
     }
     return true;
+}
+
+// carrega a regiao (u0,v0,w,h, passo step) da pagina de textura na TMEM (paleta inclusa). Retorna false se nao coube.
+static bool upload_region(int page, int clut, int u0, int v0, int w, int h, int step)
+{
+    if (w <= 0 || h <= 0) return false;
+    const int px = (page & 15) * 64, py = ((page >> 4) & 1) * 256;
+    if (!s_curRgbaMode && s_texFormat == TF_4_BIT && step == 1 && w <= 64 && h <= 64)
+    {
+        return upload_win(px, py, clut, u0, v0, w, h);
+    }
+    return upload_region_slow(page, clut, u0, v0, w, h, step, px, py);
 }
 
 // Share the original game's live VRAM pages with native 3D. No frozen sprite
@@ -978,6 +1051,8 @@ char PsyX_BeginScene(void)
     rdpq_set_mode_fill(RGBA32(r, g, b, 255));
     rdpq_fill_rectangle(0, 0, SCREEN_W, SCREEN_H);
     s_modeKey = -1;
+    s_batchKey = -1;
+    s_perspOn = false;
     s_scene = true;
     s_lastUp.slot = 0;
     s_leanTiles = false;
@@ -994,22 +1069,22 @@ void PsyX_EndScene(void)
     s_scene = false;
     D2DBG("[rdp] EndScene f=%d vbl=%d tris=%d tex=%d\n", d2_rdp_frames, d2_sys_vbl_count(), s_triCount, s_texTriCount);
     {   // telemetria: VBlanks entre apresentacoes (mediana, p95, proporcao > 2 VBlanks), heap e custo por regiao; janela de 300 quadros
-        static int lastVbl = -1; static unsigned int hist[8]; static unsigned int n, slow;
+        static int lastVbl = -1, prevD = 0; static unsigned int hist[8]; static unsigned int n, slow, jitter;
         const int v = d2_sys_vbl_count();
-        if (lastVbl >= 0) { int d = v - lastVbl; if (d < 1) d = 1; if (d > 7) d = 7; hist[d]++; n++; if (d > 2) slow++; }
+        if (lastVbl >= 0) { int d = v - lastVbl; if (d < 1) d = 1; if (d > 7) d = 7; hist[d]++; n++; if (d > 2) slow++; if (d != prevD) jitter++; prevD = d; }
         lastVbl = v;
         if (n >= 300)
         {
             unsigned int acc = 0, med = 0, p95 = 0;
             for (int i = 1; i < 8; i++) { acc += hist[i]; if (!med && acc * 2 >= n) med = i; if (!p95 && acc * 100 >= n * 95) p95 = i; }
-            debugf("[frametime] n=%u mediana=%uVB p95=%uVB >2VB=%u.%u%% h=%u,%u,%u,%u,%u,%u,%u\n", n, med, p95, slow * 100 / n, (slow * 1000 / n) % 10, hist[1], hist[2], hist[3], hist[4], hist[5], hist[6], hist[7]);
+            debugf("[frametime] n=%u mediana=%uVB p95=%uVB >2VB=%u.%u%% h=%u,%u,%u,%u,%u,%u,%u trocas=%u\n", n, med, p95, slow * 100 / n, (slow * 1000 / n) % 10, hist[1], hist[2], hist[3], hist[4], hist[5], hist[6], hist[7], jitter);
             { struct mallinfo mi = mallinfo(); static int minFree = 0x7FFFFFFF; int fr = (int)(0x800000 - mi.uordblks); if (fr < minFree) minFree = fr; debugf("[heap] usado=%d livre_aprox=%d menor_livre=%d quadros=%d\n", (int)mi.uordblks, fr, minFree, d2_rdp_frames); }
             debugf("[janela] missPagina=%u missFaixa=%u w>32=%u h>32=%u (por quadro)\n", s_dbgMissPage / 300, s_dbgMissRange / 300, s_dbgBigW / 300, s_dbgBigH / 300); s_dbgMissPage = s_dbgMissRange = s_dbgBigW = s_dbgBigH = 0;
             debugf("[prims] chao n=%u tk=%u | ft4 n=%u tk=%u | direto n=%u tk=%u (por quadro; tk=ticks)\n", s_nGround / 300, s_tkGround / 300, s_nFt4 / 300, s_tkFt4 / 300, s_nDirect / 300, s_tkDirect / 300);
             s_tkGround = s_tkFt4 = s_tkDirect = s_nGround = s_nFt4 = s_nDirect = 0;
             d2_lpk_report();
             debugf("[custo] carros=%u predios=%u tiles=%u ticks/quadro\n", d2_tk_cars / 300, d2_tk_blds / 300, d2_tk_tiles / 300); d2_tk_cars = d2_tk_blds = d2_tk_tiles = 0;
-            memset(hist, 0, sizeof hist); n = slow = 0;
+            memset(hist, 0, sizeof hist); n = slow = jitter = 0;
         }
     }
     if ((d2_rdp_frames % 30) == 0) { static unsigned int lastc; unsigned int cc; __asm__ volatile("mfc0 %0,$9" : "=r"(cc)); debugf("[cyc] %u ticks/frame\n", (cc - lastc) / 30); lastc = cc; }
@@ -1050,6 +1125,7 @@ void PsyX_EndScene(void)
         if (fpsOn) {
         track_ovl_switch(0);
         rdpq_set_mode_fill(RGBA32(0, 0, 0, 255));
+        s_modeKey = -1; s_batchKey = -1;
         rdpq_fill_rectangle(x0 - 2, y0 - 2, x0 + 40, y0 + 16);
         rdpq_set_fill_color(RGBA32(255, 255, 255, 255));
         int dx = x0;
@@ -1065,6 +1141,32 @@ void PsyX_EndScene(void)
         }
     }
     track_ovl_switch(0);
+#ifndef D2_FRAME_PACE
+#define D2_FRAME_PACE 3
+#endif
+#if D2_FRAME_PACE
+    {   // ritmo de apresentacao (opcional; medido no Ares: menos troca de intervalo entre quadros, porem FPS medio menor).
+        // D2_FRAME_PACE=1: adaptativo. Entrega a cada N VBlanks (N = 2..5): N sobe na hora quando 2 dos ultimos 8 quadros
+        //   passaram de N; desce depois de 45 quadros seguidos cabendo em N-1; carregamento (> 8 VBlanks) volta para N = 2.
+        // D2_FRAME_PACE=2..5: intervalo minimo fixo de N VBlanks (ex.: 3 = no maximo 20 FPS, sem picos de 30).
+        // Como a logica anda 1 passo por quadro, ritmo constante tambem e velocidade de jogo constante.
+        static int paceN = D2_FRAME_PACE > 1 ? D2_FRAME_PACE : 2, lastShow = -1, lateBits = 0, calm = 0;
+        int now = d2_sys_vbl_count();
+        if (lastShow >= 0) {
+            const int d = now - lastShow;                       // VBlanks que este quadro levou para ficar pronto
+#if D2_FRAME_PACE == 1
+            if (d > 8) { paceN = 2; lateBits = 0; calm = 0; }
+            lateBits = ((lateBits << 1) | (d > paceN && d <= 8)) & 0xFF;
+            if (__builtin_popcount(lateBits) >= 2) { paceN = d > 5 ? 5 : d; lateBits = 0; calm = 0; }
+            else if (d <= paceN - 1 && paceN > 2) { if (++calm >= 45) { paceN--; calm = 0; } }
+            else calm = 0;
+#endif
+            if (d < paceN) d2_sys_wait_vbl_until(lastShow + paceN);
+            now = d2_sys_vbl_count();
+        }
+        lastShow = now;
+    }
+#endif
     rdpq_detach_show();
     d2_audio_pump();
     {   // medicao alinhada ao jogo: janelas de 32 passos de CameraCnt (media, p95, pior quadro, atrasos e posicao)
@@ -1135,6 +1237,7 @@ void GR_Clear(int x, int y, int w, int h, unsigned char r, unsigned char g, unsi
     rdpq_set_mode_fill(RGBA32(r, g, b, 255));
     rdpq_fill_rectangle(x0, y0, x1, y1);
     s_modeKey = -1;
+    s_batchKey = -1;
 }
 
 void GR_SwapWindow() {}
@@ -1172,6 +1275,7 @@ void GR_SetupClipMode(const RECT16 *r, int enable)
         if (x1 <= x0 || y1 <= y0) { x0 = y0 = 0; x1 = y1 = 1; }
     }
     s_scx0 = x0; s_scy0 = y0; s_scx1 = x1; s_scy1 = y1;
+    s_ctxCx0 = x0 * 4; s_ctxCy0 = y0 * 4; s_ctxCx1 = x1 * 4; s_ctxCy1 = y1 * 4;
     if (s_scene) rdpq_set_scissor(x0, y0, x1, y1);
 }
 void GR_SetViewPort(int, int, int, int) {}
@@ -1188,12 +1292,11 @@ static int s_subTu, s_subTv;                  // bloco de textura (alinhado) do 
 #define D2_SUBQ_EDGE(a) s_subq   // s32/t32 = u/v em 1/32 de texel (permite subdividir quads)
 static bool s_ctxTex;                         // contexto do lote atual (definido por begin_batch)
 static int s_ctxTileW, s_ctxTileH;
-static int s_ctxCx0, s_ctxCx1, s_ctxCy0, s_ctxCy1;
 static int s_ctxSx16 = 65536, s_ctxSy16 = 65536;
 
-static bool ensure_slots(void)
+static inline bool ensure_slots(void)
 {
-    if (s_slots) return true;
+    if (__builtin_expect(s_slots != NULL, 1)) return true;
     s_slots = (TexSlot *)malloc(sizeof(TexSlot) * TEX_SLOTS);
     assertf(s_slots != NULL, "FALHA CRITICA: Memoria insuficiente no Heap para o cache de texturas (%d bytes)!\n", (int)(sizeof(TexSlot) * TEX_SLOTS));
     memset(s_slots, 0, sizeof(TexSlot) * TEX_SLOTS);
@@ -1203,6 +1306,9 @@ static bool ensure_slots(void)
 
 static inline void begin_batch(bool tex, BlendMode bm)
 {
+    const int bkey = (tex ? (1 + (int)s_texFormat) * 8 + (int)bm : (int)bm);
+    if (__builtin_expect(bkey == s_batchKey, 1)) return;
+    s_batchKey = bkey;
     set_mode(tex, (int)s_texFormat, bm);
     s_ctxTex = tex;
     if (tex && (bm == BM_ADD || bm == BM_ADD_QUATER_SOURCE || bm == BM_SUBTRACT))
@@ -1216,13 +1322,21 @@ static inline void begin_batch(bool tex, BlendMode bm)
     s_ctxCx0 = s_scx0 * 4; s_ctxCx1 = s_scx1 * 4; s_ctxCy0 = s_scy0 * 4; s_ctxCy1 = s_scy1 * 4;
     // escala tela do PS1 -> 320x240: so recalcula quando o tamanho do display muda (divisoes em float custam caro)
     static int lw = -1, lh = -1;
-    if (activeDispEnv.disp.w != lw || activeDispEnv.disp.h != lh)
+    if (__builtin_expect(activeDispEnv.disp.w != lw || activeDispEnv.disp.h != lh, 0))
     {
         lw = activeDispEnv.disp.w; lh = activeDispEnv.disp.h;
         const float sx = lw > 0 ? (float)SCREEN_W / (float)lw : 1.0f;
         const float sy = lh > 0 ? (float)SCREEN_H / (float)lh : 1.0f;
         s_ctxSx16 = (int)(sx * 65536.0f + 0.5f); s_ctxSy16 = (int)(sy * 65536.0f + 0.5f);
     }
+}
+
+static inline void check_clip(void)
+{
+    const RECT16 &c = activeDrawEnv.clip;
+    if (__builtin_expect(c.x != s_clipKey[0] || c.y != s_clipKey[1] || c.w != s_clipKey[2] || c.h != s_clipKey[3] ||
+        (activeDispEnv.disp.x | (activeDispEnv.disp.w << 16)) != s_clipKey[4] || (activeDispEnv.disp.y | (activeDispEnv.disp.h << 16)) != s_clipKey[5], 0))
+        GR_SetupClipMode(&c, 1);
 }
 
 static bool s_noSizeLimit = false;
@@ -1783,19 +1897,36 @@ static bool draw_ground_perspective(const POLY_FT4 *p, const unsigned short *dep
         if (v[i] < vmin) vmin = v[i];
         if (v[i] > vmax) vmax = v[i];
     }
-    const float sx = s_ctxSx16 * (1.0f / 65536), sy = s_ctxSy16 * (1.0f / 65536);
-    float left = (x[0] + ofx) * sx, right = left;
-    float top = (y[0] + ofy) * sy, bottom = top;
-    for (int i = 1; i < 4; ++i) {
-        const float px = (x[i] + ofx) * sx, py = (y[i] + ofy) * sy;
-        if (px < left) left = px;
-        if (px > right) right = px;
-        if (py < top) top = py;
-        if (py > bottom) bottom = py;
+    int X4[4], Y4[4];                 // posicoes em 1/4 de pixel (s13.2), como o rdpq espera
+    if (__builtin_expect(s_ctxSx16 == 65536 && s_ctxSy16 == 65536, 1))
+    {   // escala 1 (o caso normal): conta inteira exata, sem float (floor((x+ofx)*4) == (x+ofx)<<2)
+        int l, r, t, b;
+        for (int i = 0; i < 4; ++i) { X4[i] = (x[i] + ofx) << 2; Y4[i] = (y[i] + ofy) << 2; }
+        l = r = X4[0]; t = b = Y4[0];
+        for (int i = 1; i < 4; ++i) {
+            if (X4[i] < l) l = X4[i]; if (X4[i] > r) r = X4[i];
+            if (Y4[i] < t) t = Y4[i]; if (Y4[i] > b) b = Y4[i];
+        }
+        if (r < s_ctxCx0 || l >= s_ctxCx1 || b < s_ctxCy0 || t >= s_ctxCy1)
+            return true;
     }
-    if (right * 4 < s_ctxCx0 || left * 4 >= s_ctxCx1 ||
-        bottom * 4 < s_ctxCy0 || top * 4 >= s_ctxCy1)
-        return true;
+    else
+    {
+        const float sx = s_ctxSx16 * (1.0f / 65536), sy = s_ctxSy16 * (1.0f / 65536);
+        float left = (x[0] + ofx) * sx, right = left;
+        float top = (y[0] + ofy) * sy, bottom = top;
+        for (int i = 1; i < 4; ++i) {
+            const float px = (x[i] + ofx) * sx, py = (y[i] + ofy) * sy;
+            if (px < left) left = px;
+            if (px > right) right = px;
+            if (py < top) top = py;
+            if (py > bottom) bottom = py;
+        }
+        if (right * 4 < s_ctxCx0 || left * 4 >= s_ctxCx1 ||
+            bottom * 4 < s_ctxCy0 || top * 4 >= s_ctxCy1)
+            return true;
+        for (int i = 0; i < 4; ++i) { X4[i] = fl4((x[i] + ofx) * sx); Y4[i] = fl4((y[i] + ofy) * sy); }
+    }
 
     const int width = umax - umin + 1, height = vmax - vmin + 1;
     if (width > 64 || height > 64 ||
@@ -1807,15 +1938,15 @@ static bool draw_ground_perspective(const POLY_FT4 *p, const unsigned short *dep
     const uint32_t rgbaG = ((uint32_t)s_shadeLut[p->r0] << 24) | ((uint32_t)s_shadeLut[p->g0] << 16) | ((uint32_t)s_shadeLut[p->b0] << 8) | 255u;
     struct GV { int16_t x, y; int16_t s, t; int32_t w, iw; } gv[4];
     for (int i = 0; i < 4; ++i) {
-        gv[i].x = (int16_t)fl4((x[i] + ofx) * sx);
-        gv[i].y = (int16_t)fl4((y[i] + ofy) * sy);
+        gv[i].x = (int16_t)X4[i];
+        gv[i].y = (int16_t)Y4[i];
         gv[i].s = (int16_t)((u[i] - s_upOu) * 32);
         gv[i].t = (int16_t)((v[i] - s_upOv) * 32);
         const unsigned d = depth[i] ? depth[i] : 1u;
         gv[i].w = d >= 32768u ? 0x7FFFFFFF : (int32_t)(d << 16);
         gv[i].iw = (int32_t)(65536u / d);
     }
-    rdpq_mode_persp(true);
+    if (!s_perspOn) { rdpq_mode_persp(true); s_perspOn = true; }   // fica ligado entre quads de chao seguidos
     __rdpq_autosync_use(AUTOSYNC_PIPE | AUTOSYNC_TILE(0) | AUTOSYNC_TMEM(0));
     static const unsigned char tri[2][3] = { { 0, 1, 2 }, { 1, 3, 2 } };
     for (int k = 0; k < 2; ++k)
@@ -1828,7 +1959,6 @@ static bool draw_ground_perspective(const POLY_FT4 *p, const unsigned short *dep
         }
         rdpq_write(20, RDPQ_OVL_ID, RDPQ_CMD_TRIANGLE, 0xC000 | ((RDPQ_CMD_TRI | 6) << 8));
     }
-    rdpq_mode_persp(false);
     s_triCount += 2;
     s_texTriCount += 2;
     return true;
@@ -1869,11 +1999,7 @@ static int d2_native_ft4_inner(POLY_FT4 *p, const unsigned short *depth)
 {
     if (!activeDrawEnv.dfe || !s_scene) return 9;
     if (!ensure_slots()) return 9;
-
-    const RECT16 &c = activeDrawEnv.clip;
-    if (c.x != s_clipKey[0] || c.y != s_clipKey[1] || c.w != s_clipKey[2] || c.h != s_clipKey[3] ||
-        (activeDispEnv.disp.x | (activeDispEnv.disp.w << 16)) != s_clipKey[4] ||
-        (activeDispEnv.disp.y | (activeDispEnv.disp.h << 16)) != s_clipKey[5]) GR_SetupClipMode(&c, 1);
+    check_clip();
     activeDrawEnv.tpage = p->tpage;
     s_texFormat = (TexFormat)((p->tpage >> 7) & 3);
     begin_batch(s_texFormat != TF_32_BIT_RGBA, BM_NONE);
@@ -1882,6 +2008,7 @@ static int d2_native_ft4_inner(POLY_FT4 *p, const unsigned short *depth)
 
     s_ft4Total++;
     if (depth && draw_ground_perspective(p, depth, ofx, ofy)) return 9;
+    if (__builtin_expect(s_perspOn, 0)) persp_off();     // quad de chao que nao coube na janela: segue pelo caminho sem perspectiva
     {
         const short xs[4] = { p->x0, p->x1, p->x2, p->x3 }, ys[4] = { p->y0, p->y1, p->y2, p->y3 };
         const unsigned char us[4] = { p->u0, p->u1, p->u2, p->u3 }, vs[4] = { p->v0, p->v1, p->v2, p->v3 };
@@ -1908,11 +2035,7 @@ int d2_native_rect(P_TAG *tag)
     else return 0;
     if (!activeDrawEnv.dfe || !s_scene || w <= 0 || h <= 0) return len;
     if (!ensure_slots()) return len;
-
-    const RECT16 &clip = activeDrawEnv.clip;
-    if (clip.x != s_clipKey[0] || clip.y != s_clipKey[1] || clip.w != s_clipKey[2] || clip.h != s_clipKey[3] ||
-        (activeDispEnv.disp.x | (activeDispEnv.disp.w << 16)) != s_clipKey[4] ||
-        (activeDispEnv.disp.y | (activeDispEnv.disp.h << 16)) != s_clipKey[5]) GR_SetupClipMode(&clip, 1);
+    check_clip();
     const BlendMode bm = (code & 2) ? (BlendMode)(((activeDrawEnv.tpage >> 5) & 3) + 1) : BM_NONE;
     if (tex) s_texFormat = (TexFormat)((activeDrawEnv.tpage >> 7) & 3);
     begin_batch(tex && s_texFormat != TF_32_BIT_RGBA, bm);
@@ -1958,9 +2081,7 @@ int d2_native_line(P_TAG *tag)
     if(type==0x50 && sub!=0) return sub==8 ? 7 : sub==12 ? 9 : 0;
     const int len=type==0x50?4:(sub==0?3:sub==8?5:6);
     if (!activeDrawEnv.dfe || !s_scene || !ensure_slots()) return len;
-
-    const RECT16 &c=activeDrawEnv.clip;
-    if(c.x!=s_clipKey[0]||c.y!=s_clipKey[1]||c.w!=s_clipKey[2]||c.h!=s_clipKey[3]||(activeDispEnv.disp.x|(activeDispEnv.disp.w<<16))!=s_clipKey[4]||(activeDispEnv.disp.y|(activeDispEnv.disp.h<<16))!=s_clipKey[5]) GR_SetupClipMode(&c,1);
+    check_clip();
     const BlendMode bm=(tag->code&2)?(BlendMode)(((activeDrawEnv.tpage>>5)&3)+1):BM_NONE;
     if(type==0x50){
         LINE_G2 *p=(LINE_G2*)tag;
@@ -2021,18 +2142,20 @@ int d2_native_vram_packet(P_TAG *tag)
     }
     return 0;
 }
+static __attribute__((noinline)) void persp_off(void)
+{ rdpq_mode_persp(false); s_perspOn = false; s_batchKey = -1; }
 extern "C" int d2_native_dispatch(P_TAG *tag)
 {
-    if (__builtin_expect(tag->code == 0xB3 || tag->code == 0x2C, 1)) { const unsigned t0 = cnt0(); const int r = d2_native_ft4((POLY_FT4*)tag); s_tkFt4 += cnt0() - t0; s_nFt4++; return r; }
+    if (__builtin_expect(s_perspOn, 0) && !(tag->code == D2_GROUND_CODE && getlen(tag) == D2_GROUND_WORDS)) persp_off();
+    if (__builtin_expect(tag->code == 0xB3 || tag->code == 0x2C, 1)) { s_nFt4++; return d2_native_ft4((POLY_FT4*)tag); }
     if (tag->code == D2_GROUND_CODE && getlen(tag) == D2_GROUND_WORDS) {
         D2GroundQuad *quad = (D2GroundQuad *)tag;
-        const unsigned t0 = cnt0();
         d2_native_ft4_inner(&quad->prim, quad->depth);
-        s_tkGround += cnt0() - t0; s_nGround++;
+        s_nGround++;
         return D2_GROUND_WORDS;
     }
     const int type = tag->code & 0xF0;
-    if (__builtin_expect(type == 0x20 || type == 0x30, 1)) { const unsigned t0 = cnt0(); const int r = d2_direct_poly(tag); s_tkDirect += cnt0() - t0; s_nDirect++; return r; }
+    if (__builtin_expect(type == 0x20 || type == 0x30, 1)) { s_nDirect++; return d2_direct_poly(tag); }
     if (type == 0xE0) return d2_native_drawenv(tag);
     if (type == 0x40 || type == 0x50) return d2_native_line(tag);
     if (type == 0x60 || type == 0x70) return d2_native_rect(tag);
@@ -2196,9 +2319,72 @@ extern "C" void d2_native_draw_ot(u_long *ot)
     }
     if (s_d2gpuOvl) rspq_write(s_d2gpuOvl, D2G_CMD_DRAW_END);
 }
+
 int d2_direct_poly(P_TAG *tag)
 {
     const int code = tag->code;
+
+    // Fast-path dedicado para POLY_GT3 (carros: triangulos sombreados gouraud texturizados de 4 bits)
+    if (__builtin_expect(code == 0x34, 1))
+    {
+        POLY_GT3 *p = (POLY_GT3 *)tag;
+        const int tpage = p->tpage;
+        const int clut = p->clut;
+        activeDrawEnv.tpage = tpage;
+        if (__builtin_expect(!activeDrawEnv.dfe || !s_scene, 0)) return 9;
+        if (!ensure_slots()) return 9;
+        check_clip();
+        s_texFormat = (TexFormat)((tpage >> 7) & 3);
+        const bool texOk = (s_texFormat != TF_32_BIT_RGBA);
+        begin_batch(texOk, BM_NONE);
+        s_dCnt++;
+        const int ofx = activeDrawEnv.ofs[0] - activeDispEnv.disp.x, ofy = activeDrawEnv.ofs[1] - activeDispEnv.disp.y;
+        if (texOk)
+        {
+            const short xs[3] = { p->x0, p->x1, p->x2 };
+            const short ys[3] = { p->y0, p->y1, p->y2 };
+            const unsigned char us[3] = { p->u0, p->u1, p->u2 };
+            const unsigned char vs[3] = { p->v0, p->v1, p->v2 };
+            const uint32_t col[3] = {
+                ((uint32_t)s_shadeLut[p->r0] << 16) | ((uint32_t)s_shadeLut[p->g0] << 8) | s_shadeLut[p->b0],
+                ((uint32_t)s_shadeLut[p->r1] << 16) | ((uint32_t)s_shadeLut[p->g1] << 8) | s_shadeLut[p->b1],
+                ((uint32_t)s_shadeLut[p->r2] << 16) | ((uint32_t)s_shadeLut[p->g2] << 8) | s_shadeLut[p->b2]
+            };
+            if (rsp_gt3(xs, ys, us, vs, tpage, clut, col, ofx, ofy)) return 9;
+        }
+    }
+    // Fast-path dedicado para POLY_FT4 semi-transparente (marcas de pneu e sombras: quads SUBTRACT texturizados)
+    else if (__builtin_expect(code == 0x2E, 0))
+    {
+        POLY_FT4 *p = (POLY_FT4 *)tag;
+        const int tpage = p->tpage;
+        const int clut = p->clut;
+        activeDrawEnv.tpage = tpage;
+        if (__builtin_expect(!activeDrawEnv.dfe || !s_scene, 0)) return 9;
+        if (!ensure_slots()) return 9;
+        check_clip();
+        s_directFt4Total++;
+        s_texFormat = (TexFormat)((tpage >> 7) & 3);
+        const BlendMode bm = (BlendMode)(((activeDrawEnv.tpage >> 5) & 3) + 1);
+        const bool texOk = (s_texFormat != TF_32_BIT_RGBA);
+        begin_batch(texOk, bm);
+        s_dCnt++;
+        const int ofx = activeDrawEnv.ofs[0] - activeDispEnv.disp.x, ofy = activeDrawEnv.ofs[1] - activeDispEnv.disp.y;
+        if (bm == BM_SUBTRACT && texOk)
+        {
+            const short xs[4] = { p->x0, p->x1, p->x2, p->x3 };
+            const short ys[4] = { p->y0, p->y1, p->y2, p->y3 };
+            const unsigned char us[4] = { p->u0, p->u1, p->u2, p->u3 };
+            const unsigned char vs[4] = { p->v0, p->v1, p->v2, p->v3 };
+            const uint8_t cr[4] = { p->r0, p->r0, p->r0, p->r0 };
+            const uint8_t cg[4] = { p->g0, p->g0, p->g0, p->g0 };
+            const uint8_t cb[4] = { p->b0, p->b0, p->b0, p->b0 };
+            uint32_t rg0;
+            calc_primitive_colors(&rg0, 1, cr, cg, cb, bm, true);
+            if (rsp_ft4(xs, ys, us, vs, tpage, clut, rg0 >> 8, ofx, ofy, (int)(rg0 & 255))) return 9;
+        }
+    }
+
     const bool tex = (code & 0x04) != 0, quad = (code & 0x08) != 0, gour = (code & 0x10) != 0;
     const bool semi = (code & 0x02) != 0, shadeOn = (code & 0x01) == 0;
     const int len = gour ? (tex ? (quad ? 12 : 9) : (quad ? 8 : 6)) : (tex ? (quad ? 9 : 7) : (quad ? 5 : 4));
@@ -2238,12 +2424,7 @@ int d2_direct_poly(P_TAG *tag)
 
 
     // recorte (clip) do ambiente de desenho
-    {
-        const RECT16 &c = activeDrawEnv.clip;
-        if (c.x != s_clipKey[0] || c.y != s_clipKey[1] || c.w != s_clipKey[2] || c.h != s_clipKey[3] ||
-            (activeDispEnv.disp.x | (activeDispEnv.disp.w << 16)) != s_clipKey[4] || (activeDispEnv.disp.y | (activeDispEnv.disp.h << 16)) != s_clipKey[5])
-            GR_SetupClipMode(&c, 1);
-    }
+    check_clip();
     s_texFormat = tex ? (TexFormat)((tpage >> 7) & 3) : s_texFormat;
     const BlendMode bm = semi ? (BlendMode)(((activeDrawEnv.tpage >> 5) & 3) + 1) : BM_NONE;
     const bool texOk = tex && s_texFormat != TF_32_BIT_RGBA;

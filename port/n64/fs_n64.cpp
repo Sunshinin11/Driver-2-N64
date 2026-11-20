@@ -61,6 +61,15 @@ extern FILE *d2_fopen(const char *path, const char *mode);
 #else
 #define LPK_STAT(expr) do {} while (0)
 #endif
+// No N64: blocos lidos por DMA direto da ROM (sem stdio/DFS por leitura) e LZ4 em assembly da libdragon.
+// Fora do N64 (tools/test_lpk_cache.py) ou com -DD2_LPK_STDIO: fseek/fread e o lz4_decode em C abaixo.
+#if defined(N64) && !defined(D2_LPK_STDIO)
+#define D2_LPK_DMA 1
+#include <libdragon.h>
+extern "C" int decompress_lz4_full_inplace(const uint8_t *src, size_t src_size, uint8_t *dst, size_t dst_size);
+#else
+#define D2_LPK_DMA 0
+#endif
 namespace {
 struct LpkFile { char name[48]; uint32_t size, nsec, mapIdx; };
 enum { LPK_BLOCK_BYTES = 8 * 2048, LPK_MAX_MAP = 5400, LPK_MAX_BLOCKS = 4200, LPK_MAX_FILES = 128, LPK_MARGIN = 256 };
@@ -91,9 +100,12 @@ D2_LPK_BSS uint32_t lpkBlocks[LPK_MAX_BLOCKS + 1];
 D2_LPK_BSS LpkFile lpkFiles[LPK_MAX_FILES];
 FILE *lpkFp; bool lpkTried, lpkOk;
 uint32_t lpkNFiles, lpkNBlocks, lpkNPool, lpkDataOff, lpkMapOff; const LpkFile *lpkMapFile;
+#if D2_LPK_DMA
+uint32_t lpkRom;   // endereco PI do LEVPACK.BIN (0: sem DMA direto, usa stdio)
+#endif
 
 // decodificador LZ4 (formato de bloco); a origem pode ficar no fim do mesmo buffer da saida (descompressao no lugar)
-bool lz4_decode(const unsigned char *src, int slen, unsigned char *dst, int dlen)
+__attribute__((unused)) bool lz4_decode(const unsigned char *src, int slen, unsigned char *dst, int dlen)
 {
     const unsigned char *se = src + slen; unsigned char *d = dst, *de = dst + dlen;
     while (src < se)
@@ -129,6 +141,10 @@ bool lpk_init()
     if (fseek(lpkFp, h[5], SEEK_SET) != 0 || fread(lpkFiles, sizeof(LpkFile), lpkNFiles, lpkFp) != lpkNFiles) return false;
     for (uint32_t i = 0; i < lpkNFiles; i++) if (lpkFiles[i].nsec > LPK_MAX_MAP) { debugf("[LPK] arquivo maior que o mapa\n"); return false; }
     if (fseek(lpkFp, h[7], SEEK_SET) != 0 || fread(lpkBlocks, 4, lpkNBlocks + 1, lpkFp) != lpkNBlocks + 1) return false;
+#if D2_LPK_DMA
+    lpkRom = (uint32_t)dfs_rom_addr("DRIVER2/LEVPACK.BIN");
+    debugf("[LPK] leitura %s\n", lpkRom ? "por DMA direto" : "por stdio");
+#endif
     return lpkOk = true;
 }
 // mapa de setores do arquivo (carregado sob demanda: so o do nivel atual fica na RAM)
@@ -160,7 +176,18 @@ static bool lpk_read_payload(uint32_t offset, void *dst, uint32_t bytes)
 #if D2_LPK_PROFILE
     const uint32_t t0 = (uint32_t)get_ticks();
 #endif
-    const bool ok = fseek(lpkFp, offset, SEEK_SET) == 0 && fread(dst, 1, bytes, lpkFp) == bytes;
+    bool ok;
+#if D2_LPK_DMA
+    // DMA exige RAM e ROM com a mesma paridade; o chamador alinha o destino quando pode, senao cai no stdio
+    if (lpkRom && (((uintptr_t)dst ^ (lpkRom + offset)) & 1) == 0)
+    {
+        data_cache_hit_writeback_invalidate(dst, bytes);
+        dma_read(dst, lpkRom + offset, bytes);
+        ok = true;
+    }
+    else
+#endif
+    ok = fseek(lpkFp, offset, SEEK_SET) == 0 && fread(dst, 1, bytes, lpkFp) == bytes;
     LPK_STAT(lpkStats.ioTicks += (uint32_t)get_ticks() - t0);
     LPK_STAT(if (ok) lpkStats.inputBytes += bytes; else lpkStats.errors++);
     return ok;
@@ -202,11 +229,20 @@ const unsigned char *lpk_block(uint32_t b)
         LPK_STAT(lpkStats.raw++);
     } else {
         unsigned char *cp = lpkSlot + rawBytes + LPK_MARGIN - csize;
+#if D2_LPK_DMA
+        // mesmo alinhamento de 8 bytes da origem na ROM (DMA rapido); recua no maximo 7 bytes dentro da margem
+        if (lpkRom) cp -= ((uintptr_t)cp - (lpkRom + lpkDataOff + (o0 & 0x7FFFFFFFu))) & 7;
+#endif
         if (!lpk_read_payload(lpkDataOff + (o0 & 0x7FFFFFFFu), cp, csize)) return NULL;
 #if D2_LPK_PROFILE
         const uint32_t t0 = (uint32_t)get_ticks();
 #endif
+#if D2_LPK_DMA
+        // descompressao no lugar: margem exigida (csize>>8)+32 <= 96 bytes, o slot reserva LPK_MARGIN (256) apos o bloco
+        const bool ok = decompress_lz4_full_inplace(cp, csize, lpkSlot, rawBytes) == (int)rawBytes;
+#else
         const bool ok = lz4_decode(cp, (int)csize, lpkSlot, (int)rawBytes);
+#endif
         LPK_STAT(lpkStats.decodeTicks += (uint32_t)get_ticks() - t0);
         if (!ok) { LPK_STAT(lpkStats.errors++); return NULL; }
         LPK_STAT(lpkStats.decoded++);

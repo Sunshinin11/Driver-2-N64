@@ -33,6 +33,43 @@ void d2_sys_pump_vbl_cb(void)
 }
 double d2_sys_now_ms(void) { return (double)timer_ticks() * 1000.0 / (double)TICKS_PER_SECOND; }
 
+// ---------------------------------------------------------------- spool fatiado (UpdateSpoolPC em spool.c)
+// Cada chamada processa itens da fila ate passar do orcamento (ticks CP0, 46,875 M/s); o resto segue no proximo quadro.
+// Sempre ao menos um item por chamada. SpoolSYNC, FastForward e quickSpool drenam tudo. D2_SPOOL_SLICE=0: tudo de uma vez.
+#ifndef D2_SPOOL_SLICE
+#define D2_SPOOL_SLICE 1
+#endif
+#ifndef D2_SPOOL_BUDGET_TICKS
+#define D2_SPOOL_BUDGET_TICKS 300000u
+#endif
+static uint32_t s_spT0;
+static int s_spDrain;
+static struct { int items, calls, slices, drains, lastVbl; uint32_t maxTicks; } s_sp;
+
+static void spool_note(int done)
+{
+    const uint32_t dt = C0_COUNT() - s_spT0;
+    s_sp.items += done;
+    if (dt > s_sp.maxTicks) s_sp.maxTicks = dt;
+    if (vbl_count - s_sp.lastVbl < 600) return;     // uma linha a cada ~300 quadros a 30 FPS
+    debugf("[spool] itens=%d chamadas=%d fatias=%d max_ticks=%lu drenos=%d\n",
+           s_sp.items, s_sp.calls, s_sp.slices, (unsigned long)s_sp.maxTicks, s_sp.drains);
+    const int v = vbl_count;
+    s_sp.items = s_sp.calls = s_sp.slices = s_sp.drains = 0; s_sp.maxTicks = 0; s_sp.lastVbl = v;
+}
+void d2_spool_set_drain(int on) { s_spDrain = on; }
+void d2_spool_note_drain(void) { s_sp.drains++; }
+void d2_spool_slice_begin(void) { s_spT0 = C0_COUNT(); s_sp.calls++; }
+void d2_spool_slice_end(int done) { spool_note(done); }
+int d2_spool_slice_yield(int done, int force)
+{
+    if (!D2_SPOOL_SLICE || done == 0 || force || s_spDrain) return 0;
+    if (C0_COUNT() - s_spT0 < D2_SPOOL_BUDGET_TICKS) return 0;
+    s_sp.slices++;
+    spool_note(done);
+    return 1;
+}
+
 // Espera ate o contador de vblank chegar em 'target' (com saida de seguranca se o VI parar: 100 ms por quadro).
 void d2_sys_wait_vbl_until(int target)
 {
@@ -51,8 +88,61 @@ typedef struct MAPPING MAPPING;
 typedef struct PAD PAD;
 #include "../redriver2/src_rebuild/Game/C/pad.h"
 
+#ifdef D2_BENCH_ROUTE
+volatile int d2_bench_freeze;           // quadros restantes com a logica parada (foto do harness)
+volatile unsigned d2_bench_shot;        // muda a cada ponto de foto; o harness le pelo endereco do mapa
+#endif
+
+#ifdef D2_SAMPLE_PROF
+// Perfil por amostragem (sem harness): um timer de ~2 kHz guarda o PC interrompido (EPC) por linha de 32 bytes do codigo,
+// entre os passos de logica D2_PROF_FROM e D2_PROF_TO; no fim imprime "[prof] <endereco> <amostras>" (entrada de
+// tools/hot_layout.py junto com o ELF do mesmo build).
+#ifndef D2_PROF_FROM
+#define D2_PROF_FROM 100
+#endif
+#ifndef D2_PROF_TO
+#define D2_PROF_TO 1700
+#endif
+#define SP_BASE 0x80000000u
+#define SP_LINES (0x180000u >> 5)
+static uint16_t s_spHist[SP_LINES];
+static volatile int s_spOn;
+static int s_spState;                   // 0 = esperando, 1 = amostrando, 2 = impresso
+static unsigned s_spTotal, s_spOut;
+static void sp_tick(int ovfl)
+{
+    (void)ovfl;
+    if (!s_spOn) return;
+    const uint32_t pc = (uint32_t)C0_EPC() - SP_BASE;
+    if (pc >= SP_LINES * 32u) { s_spOut++; return; }
+    uint16_t *c = &s_spHist[pc >> 5];
+    if (*c != 0xFFFF) (*c)++;
+    s_spTotal++;
+}
+static void sp_update(void)
+{
+    extern int CameraCnt;
+    if (s_spState == 0 && CameraCnt >= D2_PROF_FROM)
+    {
+        new_timer(TICKS_FROM_US(500), TF_CONTINUOUS, sp_tick);
+        s_spOn = 1; s_spState = 1;
+        debugf("[prof] inicio cc=%d\n", CameraCnt);
+    }
+    else if (s_spState == 1 && CameraCnt >= D2_PROF_TO)
+    {
+        s_spOn = 0; s_spState = 2;
+        debugf("[prof] fim cc=%d amostras=%u fora=%u\n", CameraCnt, s_spTotal, s_spOut);
+        for (unsigned i = 0; i < SP_LINES; i++)
+            if (s_spHist[i]) debugf("[prof] %08lx %u\n", (unsigned long)(SP_BASE + i * 32u), (unsigned)s_spHist[i]);
+        debugf("[prof] fim_lista\n");
+    }
+}
+#endif
 void d2_read_buttons(uint16_t buttons[2])
 {
+#ifdef D2_SAMPLE_PROF
+    sp_update();
+#endif
     joypad_poll();
     for (int i = 0; i < 2; i++) {
         joypad_port_t port = i == 0 ? JOYPAD_PORT_1 : JOYPAD_PORT_2;
@@ -76,6 +166,43 @@ void d2_read_buttons(uint16_t buttons[2])
         if (in.btn.c_left)                      buttons[i] |= MPAD_R2;
         if (in.btn.c_right)                     buttons[i] |= MPAD_SELECT;
     }
+#ifdef D2_BENCH_ROUTE
+    {   // roteiro de medicao preso ao passo de logica (CameraCnt): mesma direcao nos mesmos passos em qualquer build,
+        // assim duas ROMs com desempenho diferente percorrem a mesma cena (as entradas do harness ficam so para o menu)
+        extern int CameraCnt;
+        static int lastCc = -1; static unsigned seed; static int segEnd, turn;
+        const int cc = CameraCnt;
+        if (d2_bench_freeze > 0) d2_bench_freeze--;
+        if (d2_bench_freeze == 20)
+        {   // teste visual sem harness: hash (FNV-1a) do framebuffer exibido no meio da foto; builds com a mesma imagem dao o
+            // mesmo valor. As linhas 16..47 ficam de fora (contador de FPS no canto, muda com a velocidade).
+            const uint32_t org = (*(volatile uint32_t *)0xA4400004) & 0x00FFFFFF;
+            const volatile uint32_t *fb = (const volatile uint32_t *)(0xA0000000u | org);
+            uint32_t h = 2166136261u;
+            for (int y = 0; y < 240; y++)
+            {
+                if (y >= 16 && y < 48) continue;
+                const volatile uint32_t *row = fb + y * 160;
+                for (int x = 0; x < 160; x++) { h ^= row[x]; h *= 16777619u; }
+            }
+            debugf("[shot] id=%u cc=%d hash=%08lx\n", d2_bench_shot, cc, (unsigned long)h);
+        }
+        if (lastCc >= 30 && cc > lastCc && ((cc / 300) != (lastCc / 300))) { d2_bench_freeze = 40; d2_bench_shot = (unsigned)cc / 300; }
+        if (cc >= 30) {
+            if (cc < lastCc || lastCc < 30) { seed = 12345u; segEnd = cc; turn = 0; }
+            while (cc >= segEnd) {
+                seed = seed * 1103515245u + 12345u;
+                const unsigned r = (seed >> 16) & 0x7fff;
+                static int side;
+                // frente (0) / curta correcao (1,2) / re com volante (3): o carro nao fica preso numa parede
+                if (turn == 0) { side++; turn = (side % 3 == 2) ? 3 : ((side & 1) ? 1 : 2); segEnd += turn == 3 ? 36 + (int)(r % 20) : 4 + (int)(r % 5); }
+                else { turn = 0; segEnd += 60 + (int)(r % 40); }
+            }
+            buttons[0] = (turn == 3 ? (MPAD_SQUARE | MPAD_D_RIGHT) : MPAD_CROSS) | (turn == 1 ? MPAD_D_RIGHT : turn == 2 ? MPAD_D_LEFT : 0);
+        }
+        lastCc = cc;
+    }
+#endif
 }
 
 

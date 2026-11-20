@@ -55,5 +55,10 @@ submodules/silent-hill-decomp/
 
 # Resumos de coletas nomeadas (gerados pelo teste LEVPACK)
 /telemetria_*_resumo.txt
+# Medicao automatica (tools/testar_auto.ps1) e perfil por amostragem
+/*_resumo.txt
+/build_*.txt
+/perfil_amostras_*.txt
+/backups_otimizacao/
 /build_a30b79d_completo_manifest.json
 /build_a30b79d_diagnostico_manifest.json
