@@ -447,6 +447,9 @@ void drawMeshLit(MVERTEX (*VSP)[5][5], int m, int n, _pct *pc)
 #endif
 
 // ---------------------------------------------------------------- predios
+#ifdef D2_DIST_BAL
+extern "C" uint32_t d2_rdp_clut_avg(int clut);
+#endif
 void PlotBuildingModel(MODEL *model, int rot, _pct *pc)
 {
 	int Z, r, i;
@@ -460,6 +463,9 @@ void PlotBuildingModel(MODEL *model, int rot, _pct *pc)
 	combo = combointensity;
 	ConvertPolygonTypes(model, pc);
 	r = (rot >> 3) * 4;
+#if defined(D2_DIST_BAL) && defined(D2_FLAT_DIST)   // opt-in: predios distantes sem textura (rejeitado visualmente)
+	const bool far = d2xf.tr[2] > D2_FLAT_DIST;   // profundidade do predio (translacao ja na camera)
+#endif
 
 	i = model->num_polys;
 	while (i-- > 0)
@@ -483,6 +489,26 @@ void PlotBuildingModel(MODEL *model, int rot, _pct *pc)
 			const VCEnt *D = vc_get(polys->v2);
 			pc->tpage = (*pc->ptexture_pages)[polys->texture_set];
 			pc->clut = (*pc->ptexture_cluts)[polys->texture_set][polys->texture_id];
+#if defined(D2_DIST_BAL) && defined(D2_FLAT_DIST)
+			if (far)
+			{   // nivel mais distante: face sem textura, cor = media da paleta x cor da face / 128 (a modulacao do PS1)
+				const uint32_t avg = d2_rdp_clut_avg(pc->clut), c = pc->colour;
+				unsigned int fr = ((avg & 255) * (c & 255)) >> 7, fg = (((avg >> 8) & 255) * ((c >> 8) & 255)) >> 7, fb = (((avg >> 16) & 255) * ((c >> 16) & 255)) >> 7;
+				if (fr > 255) fr = 255; if (fg > 255) fg = 255; if (fb > 255) fb = 255;
+				POLY_F4 *pf = (POLY_F4 *)pc->primptr;
+				setlen(pf, 5); setcode(pf, 0x28);
+				pf->r0 = (u_char)fr; pf->g0 = (u_char)fg; pf->b0 = (u_char)fb;
+				d2_st_ss(&pf->x0, A->xy);
+				d2_st_ss(&pf->x1, B->xy);
+				d2_st_ss(&pf->x2, C->xy);
+				d2_st_ss(&pf->x3, D->xy);
+				Z = vc_avsz4(A->z, B->z, C->z, D->z);
+				addPrim(pc->ot + (Z >> 1), pf);
+				pc->primptr += sizeof(POLY_F4);
+				polys = (PL_POLYFT4 *)((char *)polys + pc->polySizes[ptype]);
+				continue;
+			}
+#endif
 
 			prims = (POLY_FT4 *)pc->primptr;
 			d2n_set_ft4(prims);

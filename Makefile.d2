@@ -63,6 +63,11 @@ D2_OPT += -DD2_FRAME_PACE=$(FRAME_PACE)
 # log/telemetria por ISViewer/USB: 0 na ROM de jogar (no flashcart sem PC o USB trava o jogo), 1 para medir
 D2_LOG ?= 0
 D2_OPT += -DD2_LOG=$(D2_LOG)
+# distancia equilibrada: predios ate 16000 (celula inteira), mobilia ate 7000, LOD de predio a partir de 6000. 0 = distancias originais do port
+DIST_BAL ?= 1
+ifeq ($(DIST_BAL),1)
+D2_OPT += -DD2_DIST_BAL
+endif
 # LEVPACK: perfil e cache ampliado somente por opt-in para medicao A/B.
 LPK_CACHE_BLOCKS ?= 1
 LPK_PROFILE ?= 0

@@ -35,9 +35,9 @@ O código original em C/C++ executa diretamente no processador MIPS VR4300 do N6
 ### O Que Funciona
 - **Lógica e Física do Jogo**: Simulação completa dos veículos, tráfego urbano, inteligência artificial da polícia e colisões 3D fielmente adaptadas.
 - **Exploração e Modo Praticar**: Navegação livre pela cidade de Chicago com renderização de edifícios, malha viária, cruzamentos e sinalização.
-- **Renderizador Híbrido RDP / Tiny3D**:
-  - **Edifícios e Cenário Urbano**: Processados e rasterizados via microcódigo RSP do **Tiny3D** (`d2_t3d_world.cpp`), com transformações matriciais em hardware e intercalação na Ordering Table (OT) do PS1.
-  - **Malha Viária e Pistas**: Renderizadas diretamente no RDP com correção de perspectiva de quads (`draw_ground_perspective`), eliminando distorções de mapeamento afim.
+- **Renderizador nativo CPU + RSP + RDP**:
+  - **Edifícios e Cenário Urbano**: Transformados na CPU com cache de vértices por modelo (`d2_vtxcache.cpp`) e enviados ao RDP por um microcódigo RSP próprio (`rsp_d2gpu.S`), mantendo a ordem da Ordering Table (OT) do PS1. O caminho Tiny3D (`d2_t3d_world.cpp`) continua no código como experimento opcional (`D2_T3D_WORLD=1`), desligado por padrão.
+  - **Malha Viária e Pistas**: Renderizadas diretamente no RDP com correção de perspectiva de quads, eliminando distorções de mapeamento afim.
   - **Veículos, Sprites e HUD**: Projetados na CPU VR4300 com comandos diretos ao RDP (`psyx_rdp.cpp`).
 - **Subdivisão e Clipping**: Projeção com clipping de planos próximos e subdivisão adaptativa de polígonos para contornar limitações de precisão de ponto fixo.
 - **Áudio e Efeitos Sonoros**: Motor de som VADPCM reproduzindo efeitos sonoros (SFX), música do jogo em tempo real e faixas de fala XA convertidas em formato WAV64.
@@ -47,6 +47,16 @@ O código original em C/C++ executa diretamente no processador MIPS VR4300 do N6
 - **Expansion Pak Obrigatório**: A memória padrão de 4 MB do console é insuficiente; o jogo exige a expansão de 8 MB RDRAM.
 - **Taxa de Quadros em Cenas Complexas**: Dependendo da densidade poligonal de prédios e do número de viaturas em perseguição, quedas de framerate podem ocorrer. Otimizações de pipeline continuam em desenvolvimento ativo.
 - **Suporte Multicidades**: O build padrão embute a cidade de Chicago para garantir estabilidade e tempos ágeis de compilação. As cidades de Havana, Rio de Janeiro e Las Vegas requerem ativação seletiva através de sinalizadores do Makefile.
+- **Teto do hardware**: A RAM está no limite (cerca de 10 KB livres em jogo), por isso os menus continuam em 320x240; o modo 512x480 existe como experimento (`-DD2_HIRES_FE`), mas não cabe na memória.
+
+### Atualizações Recentes (novembro de 2026)
+- **Ritmo de quadros estável**: O jogo trava em no máximo 20 FPS por padrão (`FRAME_PACE=3`, intervalo mínimo de 3 VBlanks), com menos oscilação entre quadros. `FRAME_PACE=0` libera o ritmo.
+- **Otimizações de CPU/RSP**: Paletas validadas por célula de VRAM, spool de fase fatiado entre quadros, leitura de LEVPACK por DMA, microcódigo RSP fatorado (mais IMEM livre) e POLY_FT3 transformado no RSP.
+- **Distância de desenho equilibrada** (`DIST_BAL=1`, padrão): prédios visíveis até 16.000 unidades e decididos pela célula inteira (nada de prédio aparecendo pela metade), mobília de rua (postes, árvores, objetos quebráveis) até 7.000, modelo simplificado do prédio a partir de 6.000 e detalhe completo de perto. O chão a pé não é afetado. `DIST_BAL=0` volta às distâncias originais.
+- **Correção de texturas embaralhadas**: Prédios que ficavam com textura trocada depois de muito tempo na mesma fase (validação de paleta usava a posição errada).
+- **Texto dos menus legível**: O texto do frontend é desenhado sólido, sem a semitransparência que o deixava apagado.
+- **ROM de jogar limpa**: Sem log na tela durante o carregamento e os vídeos, sem aviso de travamento e sem contador de FPS. Tudo isso só existe nos builds de medição (`-Log` / `-Bench`, `D2_LOG=1`).
+- **Ferramentas de medição**: Benchmark automático e determinístico no Ares (`tools/testar_auto.ps1`, `tools/comparar_bench.ps1`), perfil por amostragem (`D2_SAMPLE_PROF`) e hash de quadro como teste visual.
 
 ---
 
@@ -154,6 +164,11 @@ Para limpar os binários e recompilar:
 bash build.sh clean
 ```
 
+No Windows, `build_d2.ps1` chama o build pelo WSL. Opções úteis:
+- `-Log`: liga a telemetria (ISViewer/USB) e o contador de FPS.
+- `-Bench`: build de medição com a rota automática.
+- `-Extra '-DFLAG'` / `-MakeVars 'VAR=valor'`: sinalizadores extras (ex.: `-MakeVars 'DIST_BAL=0 FRAME_PACE=0'`).
+
 ---
 
 ## Como Jogar e Mapeamento de Controles
@@ -232,9 +247,9 @@ The game's original C/C++ logic runs natively on the N64's MIPS VR4300 processor
 ### What Works
 - **Game Engine & Vehicle Physics**: Full vehicle simulation, tire traction, city traffic, police AI pursuit logic, and 3D collision systems.
 - **Free-Roam & Practice Mode**: Exploration of the Chicago city map with full building geometry, roads, intersections, and street props.
-- **Hybrid RDP / Tiny3D Rendering**:
-  - **Buildings & Urban Scenery**: Rasterized via **Tiny3D** RSP microcode (`d2_t3d_world.cpp`), using hardware matrix transformations and interleaving with the PS1 Ordering Table (OT) buckets.
-  - **Roads & Ground Planes**: Rendered directly through RDP commands with hardware perspective quad correction (`draw_ground_perspective`), eliminating affine texture warping.
+- **Native CPU + RSP + RDP Rendering**:
+  - **Buildings & Urban Scenery**: Transformed on the CPU with a per-model vertex cache (`d2_vtxcache.cpp`) and sent to the RDP through a custom RSP microcode (`rsp_d2gpu.S`), keeping the PS1 Ordering Table (OT) order. The Tiny3D path (`d2_t3d_world.cpp`) remains as an optional experiment (`D2_T3D_WORLD=1`), off by default.
+  - **Roads & Ground Planes**: Rendered directly through RDP commands with perspective-correct quads, eliminating affine texture warping.
   - **Vehicles, Dynamic Props & HUD**: Projected on the VR4300 CPU and dispatched directly to RDPQ display lists (`psyx_rdp.cpp`).
 - **Clipping & Adaptive Subdivision**: Near-plane polygon clipping and adaptive subdivision to eliminate fixed-point coordinate overflow artifacts.
 - **Audio & Sound Effects**: VADPCM sound synthesis for sound effects (SFX), background music, and converted XA spoken mission dialogue via WAV64 streams.
@@ -244,6 +259,16 @@ The game's original C/C++ logic runs natively on the N64's MIPS VR4300 processor
 - **Expansion Pak Required**: The console's base 4 MB memory is insufficient; the port requires the 8 MB RDRAM expansion.
 - **Framerate in Dense Scenes**: In scenes with complex building clusters and multiple police cars in pursuit, framerate drops may occur. Profiling and microcode optimization remain ongoing.
 - **Multi-City Configuration**: The default build targets Chicago to maintain fast compilation and stability. Havana, Rio de Janeiro, and Las Vegas can be enabled through Makefile flags.
+- **Hardware ceiling**: RAM is at the limit (about 10 KB free in-game), so menus stay at 320x240; a 512x480 mode exists as an experiment (`-DD2_HIRES_FE`) but does not fit in memory.
+
+### Recent Updates (November 2026)
+- **Stable frame pacing**: The game is capped at 20 FPS by default (`FRAME_PACE=3`, minimum of 3 VBlanks per frame) for fewer ups and downs. `FRAME_PACE=0` uncaps it.
+- **CPU/RSP optimizations**: Palettes validated per VRAM cell, level spooling sliced across frames, LEVPACK reads via DMA, factored RSP microcode (more free IMEM) and POLY_FT3 transformed on the RSP.
+- **Balanced draw distance** (`DIST_BAL=1`, default): buildings visible up to 16,000 units and decided per whole map cell (no half-drawn buildings), street furniture (lamps, trees, smashables) up to 7,000, simplified building model from 6,000 and full detail up close. Ground on foot is unaffected. `DIST_BAL=0` restores the original distances.
+- **Garbled texture fix**: Buildings that ended up with swapped textures after a long time in the same level (palette validation used the wrong position).
+- **Readable menu text**: Frontend text is drawn solid, without the semi-transparency that made it look faded.
+- **Clean play ROM**: No on-screen log during loading or videos, no hang warning and no FPS counter. These only exist in measurement builds (`-Log` / `-Bench`, `D2_LOG=1`).
+- **Measurement tools**: Deterministic automated benchmark in Ares (`tools/testar_auto.ps1`, `tools/comparar_bench.ps1`), sampling profiler (`D2_SAMPLE_PROF`) and framebuffer hashes as a visual test.
 
 ---
 
@@ -350,6 +375,11 @@ To clean intermediate build files:
 ```bash
 bash build.sh clean
 ```
+
+On Windows, `build_d2.ps1` runs the build through WSL. Useful options:
+- `-Log`: enables telemetry (ISViewer/USB) and the FPS counter.
+- `-Bench`: measurement build with the automated route.
+- `-Extra '-DFLAG'` / `-MakeVars 'VAR=value'`: extra flags (e.g. `-MakeVars 'DIST_BAL=0 FRAME_PACE=0'`).
 
 ---
 

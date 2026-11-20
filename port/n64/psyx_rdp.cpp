@@ -50,8 +50,20 @@ void d2_sys_wait_vbl_until(int target);
 }
 
 #define D2DBG(...) ((void)0)
-#define SCREEN_W 320
-#define SCREEN_H 240
+// Tamanho da tela do N64: 320x240 no jogo; 512x480 entrelacado nos menus do PS1 (que desenham em 640x512), para o
+// texto nao perder colunas/linhas ao ser reduzido (d2_display_set). D2_NO_HIRES_FE desliga.
+static int s_scrW = 320, s_scrH = 240;
+#define SCREEN_W s_scrW
+#define SCREEN_H s_scrH
+static int s_dispLw = -1, s_dispLh = -1;   // ultimo tamanho de tela do PS1 visto por begin_batch (-1 = recalcular a escala)
+
+// Texto dos menus: no PS1 a semitransparencia "media" so vale nos texels cuja cor tem o bit STP; o miolo das letras
+// (sem STP) sai opaco. O N64 tem 1 bit de alfa (aqui usado para cor 0 = transparente) e aplicava 50% na letra inteira,
+// deixando o texto acinzentado. Nos menus (tela do PS1 em alta resolucao, 640x512) desenha esses sprites/quads opacos.
+static inline BlendMode fe_semi(BlendMode bm, bool tex)
+{
+    return (tex && bm == BM_AVERAGE && activeDispEnv.disp.w >= 512) ? BM_NONE : bm;
+}
 
 // ---------------------------------------------------------------- estado de cena
 static surface_t *s_fb;
@@ -175,6 +187,37 @@ static inline unsigned int cell_signature(int wx, int wy, int ww, int wh)
     if (__builtin_expect(s_cellPrefDirty, 0))
         update_cell_pref();
     return s_cellPref[cy1 + 1][cx1 + 1] - s_cellPref[cy0][cx1 + 1] - s_cellPref[cy1 + 1][cx0] + s_cellPref[cy0][cx0];
+}
+
+// versao da celula onde a paleta realmente mora. O clut e um identificador do pool nativo de paletas (d2_clut_xy da a
+// posicao); usar os bits do clut como coordenada do PS1 apontava para outra celula e a paleta trocada na carga de uma
+// area nunca era recarregada (texturas de predios com cores embaralhadas ate recarregar a fase).
+static inline unsigned int pal_cver(int clut)
+{
+    int cx, cy; d2_clut_xy((unsigned)clut & 0xFFFF, &cx, &cy);
+    return s_cellVer[((cy & 511) >> 5) * 16 + ((cx & 1023) >> 6)];
+}
+#define D2_PAL_CVER(clut) pal_cver(clut)
+
+// cor media (0x00BBGGRR) das 16 cores nao transparentes de uma paleta: predios distantes sem textura (d2_vtxcache.cpp)
+extern "C" uint32_t d2_rdp_clut_avg(int clut)
+{
+    static struct { int clut; unsigned int cver; uint32_t rgb; } s_avg[256];
+    const unsigned int cver = pal_cver(clut);
+    auto &e = s_avg[(clut ^ (clut >> 8)) & 255];
+    if (e.clut == clut && e.cver == cver) return e.rgb;
+    int cx, cy; d2_clut_xy((unsigned)clut & 0xFFFF, &cx, &cy);
+    unsigned int r = 0, g = 0, b = 0, n = 0;
+    for (int i = 0; i < 16; i++)
+    {
+        const unsigned short v = d2_vram_rd(cx + i, cy);
+        if (!v) continue;
+        r += v & 31; g += (v >> 5) & 31; b += (v >> 10) & 31; n++;
+    }
+    uint32_t rgb = 0x808080;
+    if (n) rgb = ((r * 255 / (31 * n)) & 255) | (((g * 255 / (31 * n)) & 255) << 8) | (((b * 255 / (31 * n)) & 255) << 16);
+    e.clut = clut; e.cver = cver; e.rgb = rgb;
+    return rgb;
 }
 
 // ---------------------------------------------------------------- cache de regioes de textura decodificadas
@@ -628,7 +671,7 @@ static struct { int pkey; unsigned int vw, cver; int bank; } s_pbMap[256];
 static inline void upload_pal_bank(int clut)
 {
     const int pkey = clut | (s_palIA ? 0x10000 : 0);
-    const unsigned int cver = s_cellVer[((clut >> 7) & 0xF0) | ((clut >> 2) & 0x0F)];
+    const unsigned int cver = D2_PAL_CVER(clut);
     if (__builtin_expect(pkey == s_pbClut && s_pbCver == cver && s_curBank > 0 && s_bank[s_curBank].clut == pkey, 1)) { s_bank[s_curBank].lru = ++s_bankLru; return; }
     const int mi = (pkey ^ (pkey >> 4)) & 255;
     const int mb = s_pbMap[mi].bank;
@@ -643,7 +686,7 @@ static inline void upload_pal_bank(int clut)
 }
 static void upload_pal_bank_slow(int pkey, int clut)
 {
-    const unsigned int cver = s_cellVer[((clut >> 7) & 0xF0) | ((clut >> 2) & 0x0F)];
+    const unsigned int cver = D2_PAL_CVER(clut);
     s_pbClut = pkey; s_pbCver = cver; s_pbVw = s_vramWrites;
     PalEnt *e = &s_palCache[(pkey ^ (pkey >> 8)) & (PAL_CACHE - 1)];
     int cx, cy; d2_clut_xy((unsigned)clut & 0xFFFF, &cx, &cy);
@@ -1037,11 +1080,65 @@ static inline void emit_tri(bool tex, const DV &a, const DV &b, const DV &c, flo
 extern "C" {
 
 extern "C" void d2_audio_pump(void);
+
+// Troca a resolucao do N64: 1 = 512x480 entrelacado (menus do PS1, que desenham em 640x512), 0 = 320x240 (jogo).
+// So troca se couber na RAM: libera as telas atuais primeiro e confere o heap antes de alocar as de 512x480;
+// se nao couber, fica (e continua) em 320x240. Chamado no inicio do quadro e antes da carga da fase.
+static bool s_hires, s_hiresFailed;
+static inline bool ensure_slots(void);
+extern "C" void d2_display_set(int hires)
+{
+#ifdef D2_HIRES_FE   // opt-in: no menu sobram ~1 MB mas fragmentado; duas telas contiguas de 480 KB nao cabem hoje
+    if ((hires != 0) == s_hires) return;
+    if (hires && s_hiresFailed) return;
+    ensure_slots();                                // o cache de texturas e alocado no 1o desenho: reservar antes das telas grandes
+    rspq_wait();                                   // o RDP ainda pode estar desenhando nas telas atuais
+    display_close();
+    bool ok = false;
+    if (hires)
+    {
+        // as telas precisam de blocos CONTIGUOS (~480 KB cada): o total livre nao basta (heap fragmentado), entao testa
+        // alocando de verdade (mais uma margem para o menu) e so chama display_init, que aborta sem memoria, se couber
+        const int fb = 512 * 480 * 2;
+        void *a = malloc_uncached_aligned(64, fb), *b = a ? malloc_uncached_aligned(64, fb) : NULL;
+        void *m = b ? malloc(48 * 1024) : NULL;
+        if (m) free(m);
+        if (b) free_uncached(b);
+        if (a) free_uncached(a);
+        if (m)
+        {
+            display_init(RESOLUTION_512x480, DEPTH_16_BPP, 2, GAMMA_NONE, FILTERS_RESAMPLE);
+            ok = true;
+        }
+        else s_hiresFailed = true;
+    }
+    if (!ok) display_init(RESOLUTION_320x240, DEPTH_16_BPP, 2, GAMMA_NONE, FILTERS_RESAMPLE);
+#ifndef N64_OVERSCAN_X
+#define N64_OVERSCAN_X 36
+#endif
+#ifndef N64_OVERSCAN_Y
+#define N64_OVERSCAN_Y 28
+#endif
+    vi_set_borders((vi_borders_t){ N64_OVERSCAN_X, N64_OVERSCAN_X, N64_OVERSCAN_Y, N64_OVERSCAN_Y });
+    s_hires = ok;
+    s_scrW = ok ? 512 : 320; s_scrH = ok ? 480 : 240;
+    s_dispLw = s_dispLh = -1;                      // recalcula a escala PS1 -> N64
+    s_clipKey[0] = -2; s_batchKey = -1; s_modeKey = -1;
+#if D2_LOG
+    debugf("[disp] N64 %dx%d%s\n", s_scrW, s_scrH, hires && !ok ? " (sem RAM para 512x480)" : "");
+#endif
+#else
+    (void)hires;
+#endif
+}
+
 char PsyX_BeginScene(void)
 {
     if (s_scene) return 0;
     d2_audio_pump();
     rdp_init_once();
+    // menus do PS1 em alta resolucao (640x512) ganham a tela de 512x480; o resto volta para 320x240
+    d2_display_set(activeDispEnv.disp.w >= 512 && activeDispEnv.disp.h >= 480);
     s_fb = display_get();
     if (s_endStamp[d2_rdp_frames & 1] > s_doneCounter) s_doneCounter = s_endStamp[d2_rdp_frames & 1];   // o quadro de 2 EndScene atras ja foi exibido => RDP terminou
     rdpq_attach(s_fb, NULL);
@@ -1109,6 +1206,7 @@ void PsyX_EndScene(void)
         track_ovl_switch(s_d2gpuOvl);
         rspq_write(s_d2gpuOvl, D2G_CMD_DRAW_END);
     }
+#if D2_LOG   // ROM de jogar: sem contador de FPS
     {   // contador de FPS (media de 8 quadros) em sete segmentos com retangulos de preenchimento (texto da rdpq custava ~6% do quadro)
         static unsigned t0f, nf, fps10; static bool fpsOn = true, comboPrev;
         {   // L + R + Start liga/desliga o contador (ligado por padrao; desligado nao custa nada)
@@ -1141,6 +1239,7 @@ void PsyX_EndScene(void)
         }
         }
     }
+#endif
     track_ovl_switch(0);
 #ifndef D2_FRAME_PACE
 #define D2_FRAME_PACE 3
@@ -1321,11 +1420,17 @@ static inline void begin_batch(bool tex, BlendMode bm)
         s_ctxTileW = 64; s_ctxTileH = s_texFormat == TF_4_BIT ? 64 : s_texFormat == TF_8_BIT ? 32 : 16;
     }
     s_ctxCx0 = s_scx0 * 4; s_ctxCx1 = s_scx1 * 4; s_ctxCy0 = s_scy0 * 4; s_ctxCy1 = s_scy1 * 4;
-    // escala tela do PS1 -> 320x240: so recalcula quando o tamanho do display muda (divisoes em float custam caro)
-    static int lw = -1, lh = -1;
+    // escala tela do PS1 -> tela do N64: so recalcula quando o tamanho de uma das duas muda (divisoes em float custam caro)
+    int &lw = s_dispLw, &lh = s_dispLh;
     if (__builtin_expect(activeDispEnv.disp.w != lw || activeDispEnv.disp.h != lh, 0))
     {
         lw = activeDispEnv.disp.w; lh = activeDispEnv.disp.h;
+#if D2_LOG
+        {   // medicao para os menus em alta resolucao: RAM livre quando a tela do PS1 muda de tamanho
+            heap_stats_t hs; sys_get_heap_stats(&hs);
+            debugf("[disp] PS1 %dx%d heap livre=%d KB (total %d KB)\n", lw, lh, (hs.total - hs.used) / 1024, hs.total / 1024);
+        }
+#endif
         const float sx = lw > 0 ? (float)SCREEN_W / (float)lw : 1.0f;
         const float sy = lh > 0 ? (float)SCREEN_H / (float)lh : 1.0f;
         s_ctxSx16 = (int)(sx * 65536.0f + 0.5f); s_ctxSy16 = (int)(sy * 65536.0f + 0.5f);
@@ -2070,7 +2175,7 @@ int d2_native_rect(P_TAG *tag)
     if (!activeDrawEnv.dfe || !s_scene || w <= 0 || h <= 0) return len;
     if (!ensure_slots()) return len;
     check_clip();
-    const BlendMode bm = (code & 2) ? (BlendMode)(((activeDrawEnv.tpage >> 5) & 3) + 1) : BM_NONE;
+    const BlendMode bm = fe_semi((code & 2) ? (BlendMode)(((activeDrawEnv.tpage >> 5) & 3) + 1) : BM_NONE, tex);
     if (tex) s_texFormat = (TexFormat)((activeDrawEnv.tpage >> 7) & 3);
     begin_batch(tex && s_texFormat != TF_32_BIT_RGBA, bm);
     TILE *base = (TILE *)tag;
@@ -2460,7 +2565,7 @@ int d2_direct_poly(P_TAG *tag)
     // recorte (clip) do ambiente de desenho
     check_clip();
     s_texFormat = tex ? (TexFormat)((tpage >> 7) & 3) : s_texFormat;
-    const BlendMode bm = semi ? (BlendMode)(((activeDrawEnv.tpage >> 5) & 3) + 1) : BM_NONE;
+    const BlendMode bm = fe_semi(semi ? (BlendMode)(((activeDrawEnv.tpage >> 5) & 3) + 1) : BM_NONE, tex);
     const bool texOk = tex && s_texFormat != TF_32_BIT_RGBA;
     begin_batch(texOk, bm);
     s_dCnt++;

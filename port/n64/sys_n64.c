@@ -331,16 +331,21 @@ void d2_sys_present(const char *who)
     if (who && (++beats % 120) == 0) { char b[32]; snprintf(b, sizeof b, "[%s] %d\n", who, beats); d2_log_push(b); }
     surface_t *d = display_get();
     graphics_fill_screen(d, 0);
+#if D2_LOG   /* ROM de jogar: tela preta, sem o log na tela */
     graphics_set_color(graphics_make_color(255, 255, 255, 255), 0);
     int first = log_count > D2_LOG_LINES ? log_count - D2_LOG_LINES : 0, y = 16;
     for (int n = first; n < log_count; n++, y += 8) graphics_draw_text(d, 24, y, log_lines[n % D2_LOG_LINES]);
     if (log_cur_len) { log_cur[log_cur_len] = 0; graphics_draw_text(d, 24, y, log_cur); }
+#endif
     display_show(d);
 }
 
 // ---- Vigia de travamento: se o jogo ficar >2 s sem apresentar quadro, desenha (direto no quadro exibido) o PC onde ele esta preso. ----
 static void d2_hang_report(void)
 {
+#if !D2_LOG
+    return;   /* ROM de jogar: sem aviso de travamento na tela (videos nao apresentam quadros do jogo) */
+#endif
     if (vbl_count - last_present_vbl < 120 || (vbl_count % 30) != 0) return;
     uint32_t epc = (uint32_t)C0_EPC();
     uint32_t org = (*(volatile uint32_t *)0xA4400004) & 0x00FFFFFF;
