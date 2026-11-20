@@ -1576,6 +1576,11 @@ void DrawTyreTracks(void)
 
 }""")
 
+# --- diagnostico: teto de ganho de uma reescrita do renderizador (o desenho do mundo nao custa nada; logica roda igual) ---
+P("Game/C/draw.c",
+  "\tif (drawData.tiles_found)\n\t\tDrawTILES((PACKED_CELL_OBJECT**)model_tile_ptrs, drawData.tiles_found);\n\n\tif (drawData.other_models_found)\n\t\tDrawAllBuildings((CELL_OBJECT**)model_object_ptrs, drawData.other_models_found);",
+  "#ifndef D2_DIAG_NO_TILES\n\tif (drawData.tiles_found)\n\t\tDrawTILES((PACKED_CELL_OBJECT**)model_tile_ptrs, drawData.tiles_found);\n#endif\n\n#ifndef D2_DIAG_NO_BUILDINGS\n\tif (drawData.other_models_found)\n\t\tDrawAllBuildings((CELL_OBJECT**)model_object_ptrs, drawData.other_models_found);\n#endif")
+
 # --- experimento: predios/tiles na fila do mundo Tiny3D (RSP faz transformacao/recorte). So com D2_T3D_WORLD=1 e
 # -DD2_T3D_QUEUE (ganchos de aafba73, desligados em a30b79d sem registro do motivo); no build padrao nada muda.
 P("Game/C/draw.c", '#include "event.h"\n#include "d2_ticks.h"', '#include "event.h"\n#include "d2_t3d_world.h"\n#include "d2_ticks.h"')
